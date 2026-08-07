@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 
@@ -35,10 +35,9 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
   }
 
   return (
-    <div className="toolbar">
+    // data-tauri-drag-region:无原生标题栏时,点击空白处可拖动窗口
+    <div className="toolbar" data-tauri-drag-region>
       <div className="toolbar-left">
-        <img src="/icon.svg" className="app-logo" alt="pUI 图标" />
-        <span className="brand">pUI</span>
         <button className="btn primary" onClick={pickFile} disabled={loading}>
           📂 打开文件
         </button>
@@ -70,7 +69,7 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
         </select>
       </div>
 
-      <div className="toolbar-center">
+      <div className="toolbar-center" data-tauri-drag-region>
         {meta && !loading && (
           <span className="meta" key={meta.fileName}>
             {meta.fileName} · {meta.packetCount} 报文 · {meta.interfaces} 接口 · {meta.timeStart.toFixed(2)}~{meta.timeEnd.toFixed(2)}s · {fmt(meta.fileSize)}
@@ -103,7 +102,51 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
             </button>
           </>
         )}
+        <WindowControls />
       </div>
+    </div>
+  )
+}
+
+/** 无原生标题栏时的自绘窗口控制(最小化/最大化/关闭),仅 Tauri 下渲染 */
+function WindowControls() {
+  const [max, setMax] = useState(false)
+  const winOf = () => import('@tauri-apps/api/window').then((m) => m.getCurrentWindow())
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let un: (() => void) | undefined
+    winOf().then(async (win) => {
+      if (disposed) return
+      un = await win.onResized(() => win.isMaximized().then(setMax))
+      win.isMaximized().then(setMax)
+    })
+    return () => {
+      disposed = true
+      un?.()
+    }
+  }, [])
+
+  if (!isTauri()) return null
+
+  return (
+    <div className="win-controls">
+      <button className="wc" onClick={() => winOf().then((w) => w.minimize())} title="最小化">
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" strokeWidth="1.2" /></svg>
+      </button>
+      <button
+        className="wc"
+        onClick={() => winOf().then(async (w) => { await w.toggleMaximize(); setMax(await w.isMaximized()) })}
+        title={max ? '还原' : '最大化'}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          {max ? <path d="M1.5 3.5h5v5h-5z M3.5 1.5h5v5" fill="none" stroke="currentColor" strokeWidth="1.2" /> : <rect x="1.2" y="1.2" width="7.6" height="7.6" rx="0.5" fill="none" stroke="currentColor" strokeWidth="1.2" />}
+        </svg>
+      </button>
+      <button className="wc wc-close" onClick={() => winOf().then((w) => w.close())} title="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.2" /></svg>
+      </button>
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { useApp } from '../state/appStore'
+import { FilterSelect } from './FilterSelect'
 import type { FilterCondition } from '../model/types'
 
 type FieldKey = 'protocol' | 'srcIp' | 'dstIp' | 'srcPort' | 'dstPort'
@@ -18,48 +19,30 @@ export function FilterPanel() {
     setFilter(p)
   }
 
-  const render = (title: string, key: FieldKey, values: string[], current: string[], disabled = false) => (
-    <label className={`field${disabled ? ' disabled' : ''}`} title={disabled ? '当前文件不含带端口报文(ARP 等)' : ''}>
-      {title}
-      <select
-        className="select"
-        disabled={disabled}
-        value=""
-        onChange={(e) => {
-          const v = e.target.value
-          if (v) patch(key, current.includes(v) ? current.filter((x) => x !== v) : [...current, v])
-        }}
-      >
-        <option value="">+ 添加</option>
-        {values.map((v) => (
-          <option key={v} value={v}>
-            {v}
-          </option>
-        ))}
-      </select>
-      <div>
-        {current.map((v) => (
-          <span
-            key={v}
-            className="badge chip"
-            style={{ background: '#eff6ff', color: '#1d4ed8', margin: 2, cursor: 'pointer' }}
-            onClick={() => patch(key, current.filter((x) => x !== v))}
-          >
-            {v} ✕
-          </span>
-        ))}
-      </div>
-    </label>
-  )
+  const toggle = (arr: string[], v: string) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v])
 
   return (
     <>
       <div className="pane-title">筛选</div>
-      {render('协议', 'protocol', options.protocols, filter.protocol)}
-      {render('源地址', 'srcIp', options.srcIps, filter.srcIp)}
-      {render('目的地址', 'dstIp', options.dstIps, filter.dstIp)}
-      {render('源端口', 'srcPort', options.ports.map(String), filter.srcPort.map(String), !portsEnabled)}
-      {render('目的端口', 'dstPort', options.ports.map(String), filter.dstPort.map(String), !portsEnabled)}
+      <FilterSelect title="协议" options={options.protocols} current={filter.protocol} onToggle={(v) => patch('protocol', toggle(filter.protocol, v))} />
+      <FilterSelect title="源地址" options={options.srcIps} current={filter.srcIp} onToggle={(v) => patch('srcIp', toggle(filter.srcIp, v))} />
+      <FilterSelect title="目的地址" options={options.dstIps} current={filter.dstIp} onToggle={(v) => patch('dstIp', toggle(filter.dstIp, v))} />
+      <FilterSelect
+        title="源端口"
+        options={options.ports.map(String)}
+        current={filter.srcPort.map(String)}
+        disabled={!portsEnabled}
+        hint="当前文件不含带端口报文(ARP 等)"
+        onToggle={(v) => patch('srcPort', toggle(filter.srcPort.map(String), v))}
+      />
+      <FilterSelect
+        title="目的端口"
+        options={options.ports.map(String)}
+        current={filter.dstPort.map(String)}
+        disabled={!portsEnabled}
+        hint="当前文件不含带端口报文(ARP 等)"
+        onToggle={(v) => patch('dstPort', toggle(filter.dstPort.map(String), v))}
+      />
       <label className="field">
         <input type="checkbox" checked={filter.negate} onChange={(e) => setFilter({ negate: e.target.checked })} /> 取反
       </label>

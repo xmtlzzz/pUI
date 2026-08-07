@@ -39,11 +39,16 @@ afterEach(() => {
 describe('FilterPanel auto-refresh', () => {
   it('adds a protocol chip and narrows the filtered list immediately', () => {
     const { container } = render(<FilterPanel />)
-    const select = container.querySelectorAll('select')[0] // 协议
+    const btn = container.querySelectorAll('.fselect')[0] // 协议
     expect(useApp.getState().filter.protocol).toEqual([])
     expect(useApp.getState().filtered).toHaveLength(2)
 
-    fireEvent.change(select, { target: { value: 'http' } })
+    fireEvent.click(btn)
+    const menu = document.getElementById('pui-filter-menu')
+    expect(menu).toBeTruthy()
+    const httpItem = Array.from(menu!.querySelectorAll('.fitem')).find((el) => el.textContent?.includes('http'))
+    expect(httpItem).toBeTruthy()
+    fireEvent.click(httpItem!)
 
     expect(useApp.getState().filter.protocol).toEqual(['http'])
     expect(useApp.getState().filtered).toHaveLength(1)

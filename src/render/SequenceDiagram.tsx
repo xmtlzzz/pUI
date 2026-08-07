@@ -1,23 +1,11 @@
 import { useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
 import { hostOf } from '../model/types'
+import { protocolColor } from '../model/protocolColors'
 import type { Conversation } from '../model/types'
 
-const PROTO_COLOR: Record<string, string> = {
-  tcp: '#2563eb',
-  http: '#16a34a',
-  https: '#7c3aed',
-  tls: '#7c3aed',
-  dns: '#0891b2',
-  udp: '#0d9488',
-  icmp: '#ea580c',
-  arp: '#64748b',
-}
 const DIR_COLOR: Record<string, string> = { request: '#3b82f6', response: '#f97316', other: '#94a3b8' }
 
-function protoColor(proto: string): string {
-  return PROTO_COLOR[proto] ?? '#6b7280'
-}
 function dirLabel(d: string): string {
   return d === 'request' ? '请求' : d === 'response' ? '响应' : '其他'
 }
@@ -72,7 +60,7 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
         </text>
 
         {layout.messages.map((m, i) => {
-          const line = protoColor(m.proto)
+          const line = protocolColor(m.proto)
           const dir = DIR_COLOR[m.direction]
           const isHover = hover?.id === m.id
           return (

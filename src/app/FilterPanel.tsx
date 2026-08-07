@@ -24,7 +24,7 @@ export function FilterPanel() {
   return (
     <>
       <div className="pane-title">筛选</div>
-      <FilterSelect title="协议" options={options.protocols} current={filter.protocol} onToggle={(v) => patch('protocol', toggle(filter.protocol, v))} />
+      <FilterSelect title="协议" colorize options={options.protocols} current={filter.protocol} onToggle={(v) => patch('protocol', toggle(filter.protocol, v))} />
       <FilterSelect title="源地址" options={options.srcIps} current={filter.srcIp} onToggle={(v) => patch('srcIp', toggle(filter.srcIp, v))} />
       <FilterSelect title="目的地址" options={options.dstIps} current={filter.dstIp} onToggle={(v) => patch('dstIp', toggle(filter.dstIp, v))} />
       <FilterSelect

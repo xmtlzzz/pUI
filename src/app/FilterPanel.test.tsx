@@ -44,7 +44,7 @@ describe('FilterPanel auto-refresh', () => {
     expect(useApp.getState().filtered).toHaveLength(2)
 
     fireEvent.click(btn)
-    const menu = document.getElementById('pui-filter-menu')
+    const menu = document.querySelector('.fmenu')
     expect(menu).toBeTruthy()
     const httpItem = Array.from(menu!.querySelectorAll('.fitem')).find((el) => el.textContent?.includes('http'))
     expect(httpItem).toBeTruthy()

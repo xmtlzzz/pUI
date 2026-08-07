@@ -1,20 +1,5 @@
 import { useApp, selectSelected } from '../state/appStore'
-
-const PROTO_COLOR: Record<string, string> = {
-  http: '#dcfce7 #15803d',
-  https: '#f3e8ff #7c3aed',
-  tls: '#f3e8ff #7c3aed',
-  dns: '#dbeafe #1d4ed8',
-  icmp: '#ffedd5 #c2410c',
-  arp: '#f1f5f9 #475569',
-  tcp: '#e0f2fe #0369a1',
-  udp: '#ccfbf1 #0f766e',
-}
-
-function color(proto: string): [string, string] {
-  const c = PROTO_COLOR[proto]
-  return c ? (c.split(' ') as [string, string]) : ['#f8fafc', '#64748b']
-}
+import { protocolStyle } from '../model/protocolColors'
 
 export function ConversationList() {
   const filtered = useApp((s) => s.filtered)
@@ -49,13 +34,13 @@ export function ConversationList() {
         {/* 筛选变化时重挂载 tbody,行逐条滑入,让刷新可见 */}
         <tbody key={JSON.stringify(filter)}>
           {filtered.map((c, i) => {
-            const [bg, fg] = color(c.protocol)
+            const st = protocolStyle(c.protocol)
             return (
               <tr key={c.id} className={`row-in${selected?.id === c.id ? ' sel' : ''}`} style={{ animationDelay: `${i * 28}ms` }} onClick={() => select(c.id)}>
                 <td title={c.client}>{c.client}</td>
                 <td title={c.server}>{c.server}</td>
                 <td>
-                  <span className="badge" style={{ background: bg, color: fg }}>
+                  <span className="badge" style={{ background: st.bg, color: st.fg }}>
                     {c.protocol}
                   </span>
                 </td>

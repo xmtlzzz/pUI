@@ -1,7 +1,5 @@
-import { useRef, useState } from 'react'
-import { useApp } from '../state/appStore'
+import { useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, type LayoutMessage } from './layout'
-import { exportSvgPng, defaultPngName } from '../export/exportPng'
 import type { Conversation } from '../model/types'
 
 const PROTO_COLOR: Record<string, string> = {
@@ -27,13 +25,12 @@ interface Props {
   conv: Conversation | null
   style: 'A' | 'B'
   onSelect: (n: number) => void
+  svgRef: RefObject<SVGSVGElement | null>
+  zoom: number
 }
 
-export function SequenceDiagram({ conv, style, onSelect }: Props) {
-  const [zoom, setZoom] = useState(1)
+export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) {
   const [hover, setHover] = useState<LayoutMessage | null>(null)
-  const svgRef = useRef<SVGSVGElement>(null)
-  const setDiagramStyle = useApp((s) => s.setDiagramStyle)
 
   if (!conv) {
     return <div className="empty">从左侧选择一个会话查看时序图</div>
@@ -41,45 +38,17 @@ export function SequenceDiagram({ conv, style, onSelect }: Props) {
 
   const layout = layoutSequence(conv.packets, style, conv.client, conv.server)
   const many = conv.packets.length > 2000
-  const onExport = async () => {
-    await exportSvgPng(svgRef.current, defaultPngName(conv.client, conv.server, conv.protocol))
-  }
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{conv.client.split(':')[0]}</span>
-        <span style={{ color: '#94a3b8' }}>⇄</span>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>{conv.server.split(':')[0]}</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-          {many && <span style={{ color: '#c2410c', fontSize: 11 }}>报文较多,建议风格 B / 缩放</span>}
-          <div style={{ display: 'inline-flex', border: '1px solid #cbd5e1', borderRadius: 6, overflow: 'hidden' }}>
-            <button
-              className="btn"
-              style={{ border: 'none', borderRadius: 0, background: style === 'A' ? '#2563eb' : '#fff', color: style === 'A' ? '#fff' : '#334155' }}
-              onClick={() => setDiagramStyle('A')}
-            >
-              A 斜线
-            </button>
-            <button
-              className="btn"
-              style={{ border: 'none', borderRadius: 0, background: style === 'B' ? '#2563eb' : '#fff', color: style === 'B' ? '#fff' : '#334155' }}
-              onClick={() => setDiagramStyle('B')}
-            >
-              B 行式
-            </button>
-          </div>
-          <button className="btn" onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))}>
-            −
-          </button>
-          <span style={{ fontSize: 12, color: '#64748b' }}>{Math.round(zoom * 100)}%</span>
-          <button className="btn" onClick={() => setZoom((z) => Math.min(3, z + 0.1))}>
-            +
-          </button>
-          <button className="btn primary" onClick={onExport}>
-            导出 PNG
-          </button>
-        </div>
+    <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
+      <div className="seq-header">
+        <span className="endpoint">{conv.client.split(':')[0]}</span>
+        <span className="arrow">⇄</span>
+        <span className="endpoint">{conv.server.split(':')[0]}</span>
+        <span className="seq-sub">
+          {conv.protocol} · {conv.packetCount} 包 · {fmt(conv.bytes)} · {conv.start.toFixed(2)}~{conv.end.toFixed(2)}s
+        </span>
+        {many && <span className="many-warn">报文较多,建议风格 B / 缩放</span>}
       </div>
       <svg
         ref={svgRef}
@@ -101,19 +70,19 @@ export function SequenceDiagram({ conv, style, onSelect }: Props) {
           {conv.packetCount} 包 · {fmt(conv.bytes)}
         </text>
 
-        {layout.messages.map((m) => {
+        {layout.messages.map((m, i) => {
           const line = protoColor(m.proto)
           const dir = DIR_COLOR[m.direction]
           return (
             <g
-              key={m.id}
+              key={`${style}-${m.id}`}
               className="msg"
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', animationDelay: `${i * 22}ms` }}
               onClick={() => onSelect(m.id)}
               onMouseEnter={() => setHover(m)}
               onMouseLeave={() => setHover(null)}
             >
-              <line x1={m.x1} y1={m.y1} x2={m.x2} y2={m.y2} stroke={line} strokeWidth={hover?.id === m.id ? 2.4 : 1.6} markerEnd={`url(#arr-${style})`} />
+              <line x1={m.x1} y1={m.y1} x2={m.x2} y2={m.y2} stroke={line} strokeWidth={hover?.id === m.id ? 2.6 : 1.6} markerEnd={`url(#arr-${style})`} />
               <circle cx={m.fromLeft ? CLIENT_X : SERVER_X} cy={m.y1 - 6} r={7} fill={dir} stroke="#fff" strokeWidth={1.5}>
                 <title>{dirLabel(m.direction)}</title>
               </circle>
@@ -137,6 +106,7 @@ export function SequenceDiagram({ conv, style, onSelect }: Props) {
       </svg>
       {hover && (
         <div
+          className="msg-tooltip"
           style={{
             position: 'absolute',
             left: (hover.x1 + hover.x2) / 2,

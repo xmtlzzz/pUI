@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
+import type { RefObject } from 'react'
 import { SequenceDiagram } from './SequenceDiagram'
 import type { Conversation, Packet } from '../model/types'
 
@@ -23,15 +24,17 @@ const conv: Conversation = {
 }
 
 describe('SequenceDiagram', () => {
+  const svgRef = { current: null } as RefObject<SVGSVGElement | null>
+
   it('renders one arrow group per packet', () => {
     const onSelect = vi.fn()
-    const { container } = render(<SequenceDiagram conv={conv} style="B" onSelect={onSelect} />)
+    const { container } = render(<SequenceDiagram conv={conv} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
     expect(container.querySelectorAll('.msg')).toHaveLength(3)
   })
 
   it('emits onSelect with packet number on click', () => {
     const onSelect = vi.fn()
-    const { container } = render(<SequenceDiagram conv={conv} style="B" onSelect={onSelect} />)
+    const { container } = render(<SequenceDiagram conv={conv} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
     const g = container.querySelectorAll('.msg')[0] as Element
     fireEvent.click(g)
     expect(onSelect).toHaveBeenCalledWith(1)
@@ -39,7 +42,7 @@ describe('SequenceDiagram', () => {
 
   it('renders an empty state when no conversation selected', () => {
     const onSelect = vi.fn()
-    const { getByText } = render(<SequenceDiagram conv={null} style="A" onSelect={onSelect} />)
+    const { getByText } = render(<SequenceDiagram conv={null} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
     expect(getByText(/选择一个会话/)).toBeTruthy()
   })
 })

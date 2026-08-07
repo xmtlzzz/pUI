@@ -1,5 +1,6 @@
 import { useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
+import { hostOf } from '../model/types'
 import type { Conversation } from '../model/types'
 
 const PROTO_COLOR: Record<string, string> = {
@@ -42,9 +43,9 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
       <div className="seq-header">
-        <span className="endpoint">{conv.client.split(':')[0]}</span>
+        <span className="endpoint">{hostOf(conv.client)}</span>
         <span className="arrow">⇄</span>
-        <span className="endpoint">{conv.server.split(':')[0]}</span>
+        <span className="endpoint">{hostOf(conv.server)}</span>
         <span className="seq-sub">
           {conv.protocol} · {conv.packetCount} 包 · {fmt(conv.bytes)} · {conv.start.toFixed(2)}~{conv.end.toFixed(2)}s
         </span>

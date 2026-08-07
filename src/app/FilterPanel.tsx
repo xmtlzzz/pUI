@@ -41,7 +41,7 @@ export function FilterPanel() {
         {current.map((v) => (
           <span
             key={v}
-            className="badge"
+            className="badge chip"
             style={{ background: '#eff6ff', color: '#1d4ed8', margin: 2, cursor: 'pointer' }}
             onClick={() => patch(key, current.filter((x) => x !== v))}
           >

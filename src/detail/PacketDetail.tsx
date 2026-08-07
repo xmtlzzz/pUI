@@ -23,22 +23,18 @@ export function PacketDetail() {
   const hex = getHex(packet.number)
 
   return (
-    <div style={{ borderTop: '1px solid #e2e8f0', padding: 10, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
+    <div className="detail-bar">
+      <div className="detail-title">报文详情 · #{packet.number}</div>
       <Row p={packet} />
       {busy && <div style={{ color: '#94a3b8' }}>加载 hex…</div>}
       {err && <div style={{ color: '#b91c1c' }}>hex 不可用</div>}
-      {hex && (
-        <pre style={{ background: '#0f172a', color: '#a5f3fc', borderRadius: 6, padding: 8, overflow: 'auto', font: '11px ui-monospace, monospace' }}>
-          {hex}
-        </pre>
-      )}
+      {hex && <pre className="detail-hex">{hex}</pre>}
     </div>
   )
 }
 
 function Row({ p }: { p: Packet }) {
   const kv: Array<[string, string]> = [
-    ['帧号', `#${p.number}`],
     ['时间', `${p.time.toFixed(3)}s`],
     ['长度', `${p.len}B`],
     ['协议', p.proto],
@@ -51,7 +47,7 @@ function Row({ p }: { p: Packet }) {
     ['DNS', p.dnsQuery ?? '—'],
   ]
   return (
-    <div>
+    <div style={{ marginBottom: 4 }}>
       {kv.map(([k, v]) => (
         <span key={k} style={{ marginRight: 12, color: '#475569' }}>
           <b style={{ color: '#94a3b8' }}>{k}</b> {v}

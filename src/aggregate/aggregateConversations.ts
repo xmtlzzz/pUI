@@ -1,4 +1,5 @@
 import type { Conversation, Packet } from '../model/types'
+import { hostOf } from '../model/types'
 
 function side(p: Packet): string {
   if (p.transport === 'tcp' || p.transport === 'udp') {
@@ -122,5 +123,5 @@ function sideOf(p: Packet, src: boolean): string {
 }
 
 function sideKey(s: string): string {
-  return s.split(':')[0] // 仅比较 IP/MAC 前缀,端口不影响方向归属
+  return hostOf(s) // 兼容 IPv4/IPv6/MAC,不按首个冒号截断
 }

@@ -46,7 +46,7 @@ describe('AppLayout smoke (real http fixture)', () => {
 
     // 点击第一个报文 → 详情条出现帧号
     fireEvent.click(msgs[0])
-    await waitFor(() => expect(getByText('#1')).toBeTruthy())
+    await waitFor(() => expect(getByText(/报文详情 · #1/)).toBeTruthy())
     expect(selectSelected(useApp.getState())?.packets.length).toBe(9)
 
     vi.unstubAllGlobals()

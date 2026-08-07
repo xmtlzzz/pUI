@@ -46,4 +46,16 @@ describe('aggregateConversations', () => {
     expect(c.packets.map((p) => p.number)).toEqual([1, 2, 3, 4])
     expect(c.duration).toBeCloseTo(0.05)
   })
+
+  it('assigns correct directions for ipv6 conversations', () => {
+    const c6: Packet = { number: 1, time: 0, len: 60, transport: 'tcp', proto: 'tcp', srcIp: '2001:db8::1', srcPort: 54321, dstIp: '2001:db8::2', dstPort: 443, tcpFlags: '0x0002', direction: 'other' }
+    const s6: Packet = { number: 2, time: 0.01, len: 60, transport: 'tcp', proto: 'http', srcIp: '2001:db8::2', srcPort: 443, dstIp: '2001:db8::1', dstPort: 54321, tcpFlags: '0x0012', direction: 'other' }
+    const convs = aggregateConversations([c6, s6])
+    expect(convs).toHaveLength(1)
+    const c = convs[0]
+    expect(c.client).toBe('2001:db8::1:54321')
+    expect(c.server).toBe('2001:db8::2:443')
+    expect(c.packets[0].direction).toBe('request')
+    expect(c.packets[1].direction).toBe('response')
+  })
 })

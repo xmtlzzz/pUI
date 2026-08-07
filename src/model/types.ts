@@ -66,3 +66,30 @@ export interface CaptureMeta {
   timeEnd: number
   fileSize: number
 }
+
+/**
+ * 从 "host:port" 中分离主机与端口,兼容 IPv4/IPv6/MAC:
+ * - "192.168.1.10:80"  → host "192.168.1.10", port "80"
+ * - "2001:db8::1:443"  → host "2001:db8::1", port "443"(取最后一个冒号)
+ * - "aa:bb:cc:dd:ee:ff"(MAC,无端口)→ host 整个字符串
+ * - "8.8.8.8"(无端口)→ host 整个字符串
+ */
+export function hostPort(s: string): { host: string; port?: string } {
+  const i = s.lastIndexOf(':')
+  if (i <= 0) return { host: s } // 无冒号或冒号在开头 → 整个即主机
+  const tail = s.slice(i + 1)
+  const rest = s.slice(0, i)
+  // MAC(6 组两位十六进制)整体视为主机,不拆分尾部
+  const isMac = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(s)
+  if (!isMac && /^\d+$/.test(tail)) {
+    const colonCount = (s.match(/:/g) ?? []).length
+    // 单冒号 → IPv4:port;多冒号且尾段 2-5 位 → IPv6:port
+    const isPort = colonCount === 1 || (tail.length >= 2 && tail.length <= 5)
+    if (isPort) return { host: rest, port: tail }
+  }
+  return { host: s }
+}
+
+export function hostOf(s: string): string {
+  return hostPort(s).host
+}

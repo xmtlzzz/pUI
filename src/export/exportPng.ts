@@ -1,7 +1,7 @@
+import { hostOf } from '../model/types'
+
 export function defaultPngName(client: string, server: string, proto: string): string {
-  const a = client.split(':')[0]
-  const b = server.split(':')[0]
-  return `${a}-${b}-${proto}.png`
+  return `${hostOf(client)}-${hostOf(server)}-${proto}.png`
 }
 
 export async function exportSvgPng(svgEl: SVGSVGElement | null, fileName: string): Promise<void> {

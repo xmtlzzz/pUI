@@ -18,6 +18,7 @@ function color(proto: string): [string, string] {
 
 export function ConversationList() {
   const filtered = useApp((s) => s.filtered)
+  const filter = useApp((s) => s.filter)
   const selected = useApp((s) => selectSelected(s))
   const select = useApp((s) => s.select)
   const hasData = useApp((s) => s.conversations.length > 0)
@@ -45,11 +46,12 @@ export function ConversationList() {
             <th>时长</th>
           </tr>
         </thead>
-        <tbody>
-          {filtered.map((c) => {
+        {/* 筛选变化时重挂载 tbody,行逐条滑入,让刷新可见 */}
+        <tbody key={JSON.stringify(filter)}>
+          {filtered.map((c, i) => {
             const [bg, fg] = color(c.protocol)
             return (
-              <tr key={c.id} className={selected?.id === c.id ? 'sel' : ''} onClick={() => select(c.id)}>
+              <tr key={c.id} className={`row-in${selected?.id === c.id ? ' sel' : ''}`} style={{ animationDelay: `${i * 28}ms` }} onClick={() => select(c.id)}>
                 <td title={c.client}>{c.client}</td>
                 <td title={c.server}>{c.server}</td>
                 <td>

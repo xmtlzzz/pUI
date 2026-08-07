@@ -71,4 +71,23 @@ describe('collectFilterOptions', () => {
     expect(o.ports).toContain(80)
     expect(o.ports).toContain(53)
   })
+
+  it('includes mac addresses for non-ip frames', () => {
+    const arp: Packet = { number: 1, time: 0, len: 42, transport: 'arp', proto: 'arp', srcMac: 'aa:bb:cc:dd:ee:01', dstMac: 'aa:bb:cc:dd:ee:02', direction: 'other' }
+    const o = collectFilterOptions([arp])
+    expect(o.srcIps).toContain('aa:bb:cc:dd:ee:01')
+    expect(o.dstIps).toContain('aa:bb:cc:dd:ee:02')
+  })
+})
+
+describe('filterConversations · mac', () => {
+  it('filters sessions by mac address for non-ip frames', () => {
+    const arp: Packet = { number: 1, time: 0, len: 42, transport: 'arp', proto: 'arp', srcMac: 'aa:bb:cc:dd:ee:01', dstMac: 'aa:bb:cc:dd:ee:02', direction: 'other' }
+    const convs = aggregateConversations([arp])
+    const f = emptyFilter()
+    f.srcIp = ['aa:bb:cc:dd:ee:01']
+    expect(filterConversations(convs, f)).toHaveLength(1)
+    f.srcIp = ['00:00:00:00:00:99']
+    expect(filterConversations(convs, f)).toHaveLength(0)
+  })
 })

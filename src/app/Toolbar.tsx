@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { useApp } from '../state/appStore'
+import { isTauri } from '../bridge/tauri'
 
 const EXAMPLES = ['http', 'dns', 'mixed']
 
@@ -10,9 +11,23 @@ export function Toolbar() {
   const loading = useApp((s) => s.loading)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const pickFile = async () => {
+    if (isTauri()) {
+      // Tauri 2 不再向 <input type=file> 注入 File.path,须用原生对话框取真实路径
+      const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+      const path = await openDialog({
+        multiple: false,
+        filters: [{ name: '抓包文件 (pcap/pcapng)', extensions: ['pcap', 'pcapng', 'gz'] }],
+      })
+      if (typeof path === 'string') openFile(path)
+    } else {
+      inputRef.current?.click()
+    }
+  }
+
   return (
     <div className="toolbar">
-      <button className="btn primary" onClick={() => inputRef.current?.click()} disabled={loading}>
+      <button className="btn primary" onClick={pickFile} disabled={loading}>
         📂 打开文件
       </button>
       <input
@@ -22,7 +37,7 @@ export function Toolbar() {
         style={{ display: 'none' }}
         onChange={(e) => {
           const f = e.target.files?.[0]
-          if (f) openFile((f as File & { path?: string }).path ?? f.name)
+          if (f) openFile(f.name)
           e.target.value = ''
         }}
       />

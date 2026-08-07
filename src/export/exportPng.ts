@@ -1,0 +1,53 @@
+export function defaultPngName(client: string, server: string, proto: string): string {
+  const a = client.split(':')[0]
+  const b = server.split(':')[0]
+  return `${a}-${b}-${proto}.png`
+}
+
+export async function exportSvgPng(svgEl: SVGSVGElement | null, fileName: string): Promise<void> {
+  if (!svgEl) return
+  const blob = await svgToBlob(svgEl)
+  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  if (isTauri) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const base64 = await blobToBase64(blob)
+    await invoke('save_png', { defaultName: fileName, base64Data: base64 })
+  } else {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+}
+
+function svgToBlob(svgEl: SVGSVGElement): Promise<Blob> {
+  const xml = new XMLSerializer().serializeToString(svgEl)
+  const svg64 = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml)
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const w = svgEl.viewBox.baseVal.width || svgEl.width.baseVal.value
+      const h = svgEl.viewBox.baseVal.height || svgEl.height.baseVal.value
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return reject(new Error('no 2d context'))
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.drawImage(img, 0, 0)
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png')
+    }
+    img.onerror = () => reject(new Error('svg load failed'))
+    img.src = svg64
+  })
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buf = new Uint8Array(await blob.arrayBuffer())
+  let bin = ''
+  for (const b of buf) bin += String.fromCharCode(b)
+  return btoa(bin)
+}

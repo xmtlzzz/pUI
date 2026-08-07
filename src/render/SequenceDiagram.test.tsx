@@ -21,6 +21,7 @@ const conv: Conversation = {
   end: 0.05,
   duration: 0.05,
   packets,
+  issues: [],
 }
 
 describe('SequenceDiagram', () => {

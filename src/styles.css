@@ -86,6 +86,11 @@ table.list tbody tr:hover { background: #f1f5f9; }
 table.list tr.sel { background: #eff6ff; }
 table.list tr.sel:hover { background: #dbeafe; }
 table.list tr.sel td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
+table.list tr.has-issue { background: #fffbeb; }
+table.list tr.has-issue:hover { background: #fef3c7; }
+table.list tr.has-issue.sel { background: #fef3c7; }
+table.list .col-issue { width: 24px; text-align: center; }
+.issue-mark { color: #d97706; cursor: help; font-size: 13px; }
 .badge { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 11px; }
 .badge.chip { animation: chipIn .18s ease; transition: transform .12s ease, box-shadow .12s ease; }
 .badge.chip:hover { transform: translateY(-1px); box-shadow: 0 1px 3px rgba(15, 23, 42, .15); }
@@ -98,6 +103,7 @@ table.list tr.sel td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
 .seq-header .arrow { color: #94a3b8; }
 .seq-header .seq-sub { color: #64748b; font-size: 12px; }
 .seq-header .many-warn { color: #c2410c; font-size: 11px; margin-left: 6px; }
+.issue-banner { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 6px; padding: 5px 8px; font-size: 11px; margin-bottom: 6px; animation: fadeSlideIn .2s ease; }
 .seq-legend { display: flex; gap: 8px; align-items: center; margin-left: auto; font-size: 10px; color: #64748b; flex-wrap: wrap; }
 .seq-legend span { display: inline-flex; align-items: center; gap: 3px; }
 .seq-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }

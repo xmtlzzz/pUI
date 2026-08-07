@@ -22,11 +22,23 @@ export function AppLayout() {
   const [zoom, setZoom] = useState(1)
   const svgRef = useRef<SVGSVGElement | null>(null)
 
-  // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下)
-  const [listWidth, setListWidth] = useState(340)
-  const [detailHeight, setDetailHeight] = useState(200)
-  const listRef = useRef(340)
-  const detailRef = useRef(200)
+  // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下);持久化,拖一次即记住
+  const LS_LIST = 'pui:listWidth'
+  const LS_DETAIL = 'pui:detailHeight'
+  const loadNum = (key: string, fallback: number): number => {
+    const v = Number(localStorage.getItem(key))
+    return Number.isFinite(v) && v > 0 ? v : fallback
+  }
+  const [listWidth, setListWidth] = useState(() => loadNum(LS_LIST, 380))
+  const [detailHeight, setDetailHeight] = useState(() => loadNum(LS_DETAIL, 240))
+  const listRef = useRef(listWidth)
+  const detailRef = useRef(detailHeight)
+  useEffect(() => {
+    localStorage.setItem(LS_LIST, String(listWidth))
+  }, [listWidth])
+  useEffect(() => {
+    localStorage.setItem(LS_DETAIL, String(detailHeight))
+  }, [detailHeight])
 
   const onExport = async () => {
     if (!selected) return

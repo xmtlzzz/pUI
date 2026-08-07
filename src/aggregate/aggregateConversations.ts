@@ -1,5 +1,6 @@
 import type { Conversation, Packet } from '../model/types'
 import { hostOf } from '../model/types'
+import { analyzeConversationIssues } from './issues'
 
 function side(p: Packet): string {
   if (p.transport === 'tcp' || p.transport === 'udp') {
@@ -48,7 +49,7 @@ export function aggregateConversations(packets: Packet[]): Conversation[] {
     const key = flowKey(p)
     let conv = map.get(key)
     if (!conv) {
-      conv = { id: key, client: '', server: '', protocol: '', packetCount: 0, bytes: 0, start: p.time, end: p.time, duration: 0, packets: [] }
+      conv = { id: key, client: '', server: '', protocol: '', packetCount: 0, bytes: 0, start: p.time, end: p.time, duration: 0, packets: [], issues: [] }
       map.set(key, conv)
     }
     conv.packets.push(p)
@@ -99,7 +100,7 @@ export function aggregateConversations(packets: Packet[]): Conversation[] {
       }
 
       const protos = new Set(packets.map((p) => p.proto))
-      return {
+      const built = {
         ...conv,
         client,
         server,
@@ -109,7 +110,9 @@ export function aggregateConversations(packets: Packet[]): Conversation[] {
         end: packets[packets.length - 1].time,
         duration: packets[packets.length - 1].time - packets[0].time,
         packets,
+        issues: [] as Conversation['issues'],
       }
+      return { ...built, issues: analyzeConversationIssues(built) }
     })
     .sort((a, b) => a.start - b.start)
 }

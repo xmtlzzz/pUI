@@ -23,6 +23,7 @@ export function ConversationList() {
       <table className="list">
         <thead>
           <tr>
+            <th className="col-issue" aria-label="状态"></th>
             <th>客户端</th>
             <th>服务端</th>
             <th>协议</th>
@@ -35,8 +36,21 @@ export function ConversationList() {
         <tbody key={JSON.stringify(filter)}>
           {filtered.map((c, i) => {
             const st = protocolStyle(c.protocol)
+            const hasIssue = c.issues.length > 0
             return (
-              <tr key={c.id} className={`row-in${selected?.id === c.id ? ' sel' : ''}`} style={{ animationDelay: `${i * 28}ms` }} onClick={() => select(c.id)}>
+              <tr
+                key={c.id}
+                className={`row-in${selected?.id === c.id ? ' sel' : ''}${hasIssue ? ' has-issue' : ''}`}
+                style={{ animationDelay: `${i * 28}ms` }}
+                onClick={() => select(c.id)}
+              >
+                <td className="col-issue">
+                  {hasIssue && (
+                    <span className="issue-mark" title={c.issues.map((x) => x.message).join('\n')}>
+                      ⚠
+                    </span>
+                  )}
+                </td>
                 <td title={c.client}>{c.client}</td>
                 <td title={c.server}>{c.server}</td>
                 <td>

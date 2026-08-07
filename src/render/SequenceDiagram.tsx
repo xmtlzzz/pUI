@@ -31,6 +31,11 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
+      {conv.issues.length > 0 && (
+        <div className="issue-banner">
+          ⚠ {conv.issues.map((i) => i.message).join('；')}
+        </div>
+      )}
       <div className="seq-header">
         <span className="endpoint">{hostOf(conv.client)}</span>
         <span className="arrow">⇄</span>

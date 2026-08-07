@@ -36,6 +36,14 @@ export interface Conversation {
   end: number
   duration: number
   packets: Packet[] // 按 time 升序
+  issues: ConversationIssue[]
+}
+
+/** 会话级可疑丢包/异常标注 */
+export interface ConversationIssue {
+  type: 'syn-no-reply' | 'unanswered' | 'one-way'
+  message: string
+  packetNumber?: number
 }
 
 export interface FilterCondition {

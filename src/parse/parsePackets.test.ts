@@ -41,6 +41,58 @@ describe('parsePackets', () => {
     expect(p.direction).toBe('other') // 方向在聚合阶段确定
   })
 
+  it('extracts method/uri nested under the request-line key', () => {
+    const lineRaw = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '4', 'frame.time_relative': '0.045', 'frame.len': '100', 'frame.protocols': 'eth:ethertype:ip:tcp:http' },
+            tcp: { 'tcp.srcport': '54321', 'tcp.dstport': '80' },
+            http: { 'GET / HTTP/1.1\\r\\n': { 'http.request.method': 'GET', 'http.request.uri': '/' } },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(lineRaw)
+    expect(p.httpMethod).toBe('GET')
+    expect(p.httpUri).toBe('/')
+    expect(p.info).toContain('GET')
+  })
+
+  it('extracts response code nested under the status-line key', () => {
+    const lineRaw = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '6', 'frame.time_relative': '0.180', 'frame.len': '150', 'frame.protocols': 'eth:ethertype:ip:tcp:http' },
+            tcp: { 'tcp.srcport': '80', 'tcp.dstport': '54321' },
+            http: { 'HTTP/1.1 200 OK\\r\\n': { 'http.response.code': '200' } },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(lineRaw)
+    expect(p.httpCode).toBe('200')
+    expect(p.info).toContain('200')
+  })
+
+  it('extracts dns query name from nested Queries section', () => {
+    const lineRaw = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '2', 'frame.time_relative': '0.02', 'frame.len': '70', 'frame.protocols': 'eth:ethertype:ip:udp:dns' },
+            udp: { 'udp.srcport': '53', 'udp.dstport': '54322' },
+            dns: { Queries: { 'example.com: type A, class IN': { 'dns.qry.name': 'example.com' } } },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(lineRaw)
+    expect(p.dnsQuery).toBe('example.com')
+    expect(p.info).toContain('example.com')
+  })
+
   it('derives transport from the protocol stack', () => {
     const udpRaw = JSON.stringify([
       { _source: { layers: { frame: { 'frame.number': '1', 'frame.time_relative': '0', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:udp' }, udp: { 'udp.srcport': '54322', 'udp.dstport': '53' } } } },

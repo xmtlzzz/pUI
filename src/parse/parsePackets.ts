@@ -20,7 +20,10 @@ function float(v: string | string[] | undefined): number | undefined {
   return Number.isNaN(n) ? undefined : n
 }
 
-const IGNORED_STACK = new Set(['eth', 'ethertype', 'ip', 'ipv6', 'llc', 'sll', 'raw', 'data'])
+const IGNORED_STACK = new Set([
+  'eth', 'ethertype', 'ip', 'ipv6', 'llc', 'sll', 'raw', 'data',
+  'data-text-lines', 'text-lines', 'tcp.segments', 'reassembled.tcp', '_ws.malformed',
+])
 
 function appProto(protocols: string[]): string {
   for (let i = protocols.length - 1; i >= 0; i--) {
@@ -65,6 +68,35 @@ export function makeInfo(
   return p.proto.toUpperCase()
 }
 
+function deepFind(layer: Record<string, unknown>, target: string): string | undefined {
+  for (const [k, v] of Object.entries(layer)) {
+    if (k === target) {
+      if (Array.isArray(v)) return typeof v[0] === 'string' ? v[0] : undefined
+      return typeof v === 'string' ? v : undefined
+    }
+    if (v && typeof v === 'object') {
+      const r = deepFind(v as Record<string, unknown>, target)
+      if (r != null) return r
+    }
+  }
+  return undefined
+}
+
+const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'HEAD', 'OPTIONS', 'PATCH', 'CONNECT', 'TRACE'])
+
+function parseRequestLine(line: string | undefined): { method?: string; uri?: string } {
+  if (!line) return {}
+  const parts = line.split(/\s+/)
+  if (parts.length >= 2 && HTTP_METHODS.has(parts[0])) return { method: parts[0], uri: parts[1] }
+  return {}
+}
+
+function parseResponseCode(line: string | undefined): string | undefined {
+  if (!line) return undefined
+  const parts = line.split(/\s+/)
+  return parts[0]?.startsWith('HTTP/') ? parts[1] : undefined
+}
+
 export function parsePackets(jsonText: string): Packet[] {
   const data = JSON.parse(jsonText) as RawJson[]
   return data.map((entry, i) => {
@@ -85,15 +117,16 @@ export function parsePackets(jsonText: string): Packet[] {
     const srcPort = int(tcp['tcp.srcport']) ?? int(udp['udp.srcport'])
     const dstPort = int(tcp['tcp.dstport']) ?? int(udp['udp.dstport'])
     const proto = appProto(protocols)
-    const dnsResponse = first(dns['dns.flags.response']) === '1'
+    const reqLine = first(http['http.request.line'])
+    const resLine = first(http['http.response.line'])
     const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
       proto,
       transport,
       tcpFlags: first(tcp['tcp.flags']),
-      httpMethod: first(http['http.request.method']),
-      httpUri: first(http['http.request.uri']),
-      httpCode: first(http['http.response.code']),
-      dnsQuery: first(dns['dns.qry.name']),
+      httpMethod: deepFind(http, 'http.request.method') ?? parseRequestLine(reqLine).method,
+      httpUri: deepFind(http, 'http.request.uri') ?? parseRequestLine(reqLine).uri,
+      httpCode: deepFind(http, 'http.response.code') ?? parseResponseCode(resLine),
+      dnsQuery: deepFind(dns, 'dns.qry.name'),
     }
     return {
       number: int(frame['frame.number']) ?? i + 1,
@@ -115,7 +148,7 @@ export function parsePackets(jsonText: string): Packet[] {
       httpCode: base.httpCode,
       dnsQuery: base.dnsQuery,
       tlsType: first(tls['tls.handshake.type']),
-      info: makeInfo({ ...base, info: dnsResponse ? 'response' : undefined }),
+      info: makeInfo({ ...base, info: deepFind(dns, 'dns.flags.response') === '1' ? 'response' : undefined }),
       direction: 'other',
     }
   })

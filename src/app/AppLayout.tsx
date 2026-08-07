@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { Toolbar } from './Toolbar'
 import { FilterPanel } from './FilterPanel'
 import { ConversationList } from './ConversationList'
@@ -7,6 +7,10 @@ import { PacketDetail } from '../detail/PacketDetail'
 import { useApp, selectSelected } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v))
+}
 
 export function AppLayout() {
   const openFile = useApp((s) => s.openFile)
@@ -18,9 +22,59 @@ export function AppLayout() {
   const [zoom, setZoom] = useState(1)
   const svgRef = useRef<SVGSVGElement | null>(null)
 
+  // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下)
+  const [listWidth, setListWidth] = useState(340)
+  const [detailHeight, setDetailHeight] = useState(200)
+  const listRef = useRef(340)
+  const detailRef = useRef(200)
+
   const onExport = async () => {
     if (!selected) return
     await exportSvgPng(svgRef.current, defaultPngName(selected.client, selected.server, selected.protocol))
+  }
+
+  // 会话列表宽度拖拽
+  const startVDrag = (e: MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const initial = listRef.current
+    const move = (ev: globalThis.MouseEvent) => {
+      const w = clamp(initial + (ev.clientX - startX), 220, 720)
+      listRef.current = w
+      setListWidth(w)
+    }
+    const up = () => {
+      document.removeEventListener('mousemove', move)
+      document.removeEventListener('mouseup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', move)
+    document.addEventListener('mouseup', up)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  // 报文详情高度拖拽
+  const startHDrag = (e: MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const initial = detailRef.current
+    const move = (ev: globalThis.MouseEvent) => {
+      const h = clamp(initial + (startY - ev.clientY), 90, Math.max(90, window.innerHeight - 220))
+      detailRef.current = h
+      setDetailHeight(h)
+    }
+    const up = () => {
+      document.removeEventListener('mousemove', move)
+      document.removeEventListener('mouseup', up)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', move)
+    document.addEventListener('mouseup', up)
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
   }
 
   // Tauri 2:拖拽文件须用窗口 onDragDropEvent 才能拿到真实路径
@@ -69,12 +123,16 @@ export function AppLayout() {
         <div className="pane filter">
           <FilterPanel />
         </div>
-        <div className="pane list">
+        <div className="pane list" style={{ width: listWidth }}>
           <ConversationList />
         </div>
+        <div className="v-resizer" onMouseDown={startVDrag} title="拖动调整宽度" />
         <div className="pane view">
           <SequenceDiagram conv={selected} style={diagramStyle} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
-          <PacketDetail />
+          <div className="h-resizer" onMouseDown={startHDrag} title="拖动调整高度" />
+          <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
+            <PacketDetail />
+          </div>
         </div>
       </div>
       {drag && <div className="drop-zone">松开以打开抓包文件</div>}

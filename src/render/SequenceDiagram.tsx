@@ -27,6 +27,7 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
 
   const layout = layoutSequence(conv.packets, style, conv.client, conv.server)
   const many = conv.packets.length > 2000
+  const protos = [...new Set(conv.packets.map((p) => p.proto))].sort()
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
@@ -36,6 +37,23 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
         <span className="endpoint">{hostOf(conv.server)}</span>
         <span className="seq-sub">
           {conv.protocol} · {conv.packetCount} 包 · {fmt(conv.bytes)} · {conv.start.toFixed(2)}~{conv.end.toFixed(2)}s
+        </span>
+        <span className="seq-legend">
+          {protos.map((p) => (
+            <span key={p}>
+              <i style={{ background: protocolColor(p) }} />
+              {p}
+            </span>
+          ))}
+          <span className="seq-legend-sep" />
+          <span>
+            <i style={{ background: '#3b82f6' }} />
+            请求
+          </span>
+          <span>
+            <i style={{ background: '#f97316' }} />
+            响应
+          </span>
         </span>
         {many && <span className="many-warn">报文较多,建议风格 B / 缩放</span>}
       </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { protocolColor } from '../model/protocolColors'
+import { protocolColor, protocolStyle } from '../model/protocolColors'
 
 interface Props {
   title: string
@@ -87,11 +87,14 @@ export function FilterSelect({ title, options, current, disabled, hint, colorize
         <span className={`chevron${open ? ' up' : ''}`}>▾</span>
       </button>
       <div className="chips">
-        {current.map((v) => (
-          <span key={v} className="badge chip" onClick={() => onToggle(v)}>
-            {v} ✕
-          </span>
-        ))}
+        {current.map((v) => {
+          const st = colorize ? protocolStyle(v) : { bg: '#eff6ff', fg: '#1d4ed8' }
+          return (
+            <span key={v} className="badge chip" style={{ background: st.bg, color: st.fg }} onClick={() => onToggle(v)}>
+              {v} ✕
+            </span>
+          )
+        })}
       </div>
       {open &&
         pos &&

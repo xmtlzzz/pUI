@@ -37,6 +37,8 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
   return (
     <div className="toolbar">
       <div className="toolbar-left">
+        <img src="/icon.svg" className="app-logo" alt="pUI 图标" />
+        <span className="brand">pUI</span>
         <button className="btn primary" onClick={pickFile} disabled={loading}>
           📂 打开文件
         </button>

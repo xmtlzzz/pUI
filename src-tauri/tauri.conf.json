@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pui",
+  "productName": "pUI",
   "version": "0.1.0",
   "identifier": "com.pui.app",
   "build": {
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "pui",
-        "width": 800,
-        "height": 600
+        "title": "pUI · 抓包报文时序分析",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600
       }
     ],
     "security": {

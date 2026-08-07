@@ -29,7 +29,7 @@ describe('AppLayout smoke (real http fixture)', () => {
       filtered: conversations,
       options: collectFilterOptions(packets),
       meta: { fileName: 'http.pcapng', packetCount: packets.length, interfaces: 1, timeStart: 0, timeEnd: 0.26, fileSize: 936 },
-      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false },
+      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
       selectedId: conv.id,
       diagramStyle: 'A',
     })
@@ -40,14 +40,14 @@ describe('AppLayout smoke (real http fixture)', () => {
     await waitFor(() => expect(container.querySelector('table.list .badge')?.textContent).toBe('http'))
     expect(container.querySelectorAll('table.list tbody tr')).toHaveLength(1)
 
-    // 时序图渲染 9 条消息
+    // 时序图渲染全部报文
     const msgs = container.querySelectorAll('.msg')
-    expect(msgs).toHaveLength(9)
+    expect(msgs).toHaveLength(packets.length)
 
     // 点击第一个报文 → 详情条出现帧号
     fireEvent.click(msgs[0])
     await waitFor(() => expect(getByText(/报文详情 · #1/)).toBeTruthy())
-    expect(selectSelected(useApp.getState())?.packets.length).toBe(9)
+    expect(selectSelected(useApp.getState())?.packets.length).toBe(packets.length)
 
     vi.unstubAllGlobals()
   })

@@ -13,6 +13,7 @@ export interface LayoutMessage {
   info: string
   proto: string
   direction: Direction
+  analysis?: string[]
 }
 
 export interface SequenceLayout {
@@ -45,6 +46,7 @@ export function layoutSequence(packets: Packet[], style: 'A' | 'B', client: stri
       info: p.info ?? '',
       proto: p.proto,
       direction: p.direction,
+      analysis: p.tcpAnalysis,
     }
     if (style === 'A') {
       const y2 = y + SLOPE

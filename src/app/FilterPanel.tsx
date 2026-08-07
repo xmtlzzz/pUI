@@ -11,6 +11,7 @@ export function FilterPanel() {
   const clearFilter = useApp((s) => s.clearFilter)
   const filteredCount = useApp((s) => s.filtered.length)
   const total = useApp((s) => s.conversations.length)
+  const issueCount = useApp((s) => s.conversations.filter((c) => c.issues.length > 0).length)
   const portsEnabled = options.ports.length > 0
 
   const patch = (key: FieldKey, list: string[]) => {
@@ -46,6 +47,9 @@ export function FilterPanel() {
       <label className="field">
         <input type="checkbox" checked={filter.negate} onChange={(e) => setFilter({ negate: e.target.checked })} /> 取反
       </label>
+      <label className="field">
+        <input type="checkbox" checked={filter.issueOnly} onChange={(e) => setFilter({ issueOnly: e.target.checked })} /> 仅看异常会话
+      </label>
       <div style={{ display: 'flex', gap: 8 }}>
         <button className="btn" onClick={clearFilter}>
           重置筛选
@@ -53,6 +57,11 @@ export function FilterPanel() {
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
         命中 <b style={{ color: '#2563eb' }}>{filteredCount}</b> / {total} 会话
+        {issueCount > 0 && (
+          <span style={{ marginLeft: 8, color: '#d97706' }}>
+            ⚠ {issueCount} 个异常
+          </span>
+        )}
       </div>
     </>
   )

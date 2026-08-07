@@ -71,3 +71,15 @@ describe('mixed.pcapng end-to-end', () => {
     expect(protos).toContain('http')
   })
 })
+
+describe('lossy.pcapng (丢包示例)', () => {
+  it('detects retransmission and unanswered request from real tshark output', () => {
+    const packets = parsePackets(fixture('lossy'))
+    const convs = aggregateConversations(packets)
+    const c = convs[0]
+    expect(c.protocol).toBe('http')
+    const types = c.issues.map((i) => i.type)
+    expect(types).toContain('retransmission')
+    expect(types).toContain('unanswered')
+  })
+})

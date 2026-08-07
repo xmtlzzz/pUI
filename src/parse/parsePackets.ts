@@ -25,6 +25,14 @@ const IGNORED_STACK = new Set([
   'data-text-lines', 'text-lines', 'tcp.segments', 'reassembled.tcp', '_ws.malformed',
 ])
 
+const ANALYSIS_FIELDS: Array<[string, string]> = [
+  ['tcp.analysis.retransmission', 'retransmission'],
+  ['tcp.analysis.fast-retransmission', 'fast-retransmission'],
+  ['tcp.analysis.out-of-order', 'out-of-order'],
+  ['tcp.analysis.duplicate-ack', 'duplicate-ack'],
+  ['tcp.analysis.lost-segment', 'lost-segment'],
+]
+
 function appProto(protocols: string[]): string {
   for (let i = protocols.length - 1; i >= 0; i--) {
     const seg = protocols[i].toLowerCase()
@@ -119,6 +127,10 @@ export function parsePackets(jsonText: string): Packet[] {
     const proto = appProto(protocols)
     const reqLine = first(http['http.request.line'])
     const resLine = first(http['http.response.line'])
+    const analysisTags: string[] = []
+    for (const [field, tag] of ANALYSIS_FIELDS) {
+      if (deepFind(tcp, field) != null) analysisTags.push(tag)
+    }
     const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
       proto,
       transport,
@@ -143,6 +155,8 @@ export function parsePackets(jsonText: string): Packet[] {
       tcpFlags: base.tcpFlags,
       tcpSeq: float(tcp['tcp.seq_raw']),
       tcpAck: float(tcp['tcp.ack_raw']),
+      tcpAnalysis: analysisTags.length ? analysisTags : undefined,
+      httpTime: float(http['http.time']),
       httpMethod: base.httpMethod,
       httpUri: base.httpUri,
       httpCode: base.httpCode,

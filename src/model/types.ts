@@ -16,6 +16,9 @@ export interface Packet {
   tcpFlags?: string // "0x0012"
   tcpSeq?: number
   tcpAck?: number
+  /** tshark TCP 分析标签:retransmission / fast-retransmission / out-of-order / duplicate-ack / lost-segment */
+  tcpAnalysis?: string[]
+  httpTime?: number // http.time:请求到响应延迟(秒)
   httpMethod?: string
   httpUri?: string
   httpCode?: string
@@ -41,7 +44,7 @@ export interface Conversation {
 
 /** 会话级可疑丢包/异常标注 */
 export interface ConversationIssue {
-  type: 'syn-no-reply' | 'unanswered' | 'one-way'
+  type: 'syn-no-reply' | 'unanswered' | 'one-way' | 'no-close' | 'retransmission' | 'slow-response' | 'rst'
   message: string
   packetNumber?: number
 }
@@ -53,10 +56,11 @@ export interface FilterCondition {
   srcPort: number[]
   dstPort: number[]
   negate: boolean
+  issueOnly: boolean
 }
 
 export function emptyFilter(): FilterCondition {
-  return { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false }
+  return { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false }
 }
 
 export interface FilterOptions {

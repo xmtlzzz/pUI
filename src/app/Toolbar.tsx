@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 
-const EXAMPLES = ['http', 'dns', 'mixed']
+const EXAMPLES = ['http', 'dns', 'mixed', 'lossy']
 
 interface Props {
   zoom: number

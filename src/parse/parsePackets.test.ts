@@ -111,4 +111,35 @@ describe('parsePackets', () => {
     expect(p.transport).toBe('arp')
     expect(p.proto).toBe('arp')
   })
+
+  it('detects tcp analysis tags nested under tcp.analysis', () => {
+    const raw = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '5', 'frame.time_relative': '0.4', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:tcp:http' },
+            tcp: { 'tcp.analysis': { 'tcp.analysis.flags': { _ws: { expert: { 'tcp.analysis.retransmission': '' } } } } },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(raw)
+    expect(p.tcpAnalysis).toContain('retransmission')
+  })
+
+  it('extracts http.time response latency', () => {
+    const raw = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '6', 'frame.time_relative': '3.0', 'frame.len': '150', 'frame.protocols': 'eth:ethertype:ip:tcp:http' },
+            tcp: { 'tcp.srcport': '80', 'tcp.dstport': '54321' },
+            http: { 'http.response.line': 'HTTP/1.1 200 OK', 'http.time': '2.95' },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(raw)
+    expect(p.httpTime).toBeCloseTo(2.95)
+  })
 })

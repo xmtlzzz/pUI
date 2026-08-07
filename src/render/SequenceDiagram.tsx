@@ -83,7 +83,10 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
         </text>
 
         {layout.messages.map((m, i) => {
-          const line = protocolColor(m.proto)
+          const retrans = m.analysis?.some((a) => a === 'retransmission' || a === 'fast-retransmission')
+          const ooo = m.analysis?.includes('out-of-order')
+          const dupAck = m.analysis?.includes('duplicate-ack')
+          const line = retrans ? '#ea580c' : protocolColor(m.proto)
           const dir = DIR_COLOR[m.direction]
           const isHover = hover?.id === m.id
           return (
@@ -95,7 +98,22 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
               onMouseEnter={() => setHover(m)}
               onMouseLeave={() => setHover(null)}
             >
-              <line className="arr" x1={m.x1} y1={m.y1} x2={m.x2} y2={m.y2} stroke={line} strokeWidth={isHover ? 2.6 : 1.6} markerEnd={`url(#arr-${style})`} />
+              <line
+                className="arr"
+                x1={m.x1}
+                y1={m.y1}
+                x2={m.x2}
+                y2={m.y2}
+                stroke={line}
+                strokeWidth={isHover ? 2.6 : 1.6}
+                strokeDasharray={retrans || ooo ? '5,3' : undefined}
+                markerEnd={`url(#arr-${style})`}
+              />
+              {(retrans || ooo || dupAck) && (
+                <text x={(m.x1 + m.x2) / 2} y={Math.min(m.y1, m.y2) - 14} textAnchor="middle" fontSize={9} fill={retrans ? '#ea580c' : '#0891b2'} fontWeight="bold">
+                  {retrans ? '↻重传' : ooo ? '⇄乱序' : '重复ACK'}
+                </text>
+              )}
               <circle cx={m.fromLeft ? CLIENT_X : SERVER_X} cy={m.y1 - 6} r={isHover ? 8 : 7} fill={dir} stroke="#fff" strokeWidth={1.5} className="dir-dot">
                 <title>{dirLabel(m.direction)}</title>
               </circle>

@@ -65,7 +65,7 @@ const pktHttpRev = ({ sport, dport, seq, ack, flags, payload, t }) => ({
   data: eth(C.mac, S.mac, 0x0800, ip4hdr(S.ip, C.ip, 6, tcpseg(sport, dport, seq, ack, flags, payload))),
 })
 
-// HTTP 会话:握手 + GET + 200
+// HTTP 会话:握手 + GET + 200 + 正常关闭
 const get = Buffer.from('GET / HTTP/1.1\r\nHost: example.com\r\nUser-Agent: pUI-test\r\n\r\n')
 const ok = Buffer.from('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 9\r\n\r\nhello pUI')
 const http = [
@@ -78,6 +78,17 @@ const http = [
   pktHttp({ sport: 54321, dport: 80, seq: 1001 + get.length, ack: 5001 + ok.length, flags: ACK, t: 0.181 }),
   pktHttp({ sport: 54321, dport: 80, seq: 1001 + get.length, ack: 5001 + ok.length, flags: ACK | FIN, t: 0.230 }),
   pktHttpRev({ sport: 80, dport: 54321, seq: 5001 + ok.length, ack: 1001 + get.length + 1, flags: ACK, t: 0.262 }),
+  pktHttpRev({ sport: 80, dport: 54321, seq: 5001 + ok.length, ack: 1001 + get.length + 1, flags: ACK | FIN, t: 0.280 }),
+  pktHttp({ sport: 54321, dport: 80, seq: 1001 + get.length + 1, ack: 5001 + ok.length + 1, flags: ACK, t: 0.290 }),
+]
+
+// 丢包示例:握手后发出 GET,服务器未 ACK,客户端重传(同 seq),随后无响应 → 重传+丢响应
+const lossy = [
+  pktHttp({ sport: 54321, dport: 80, seq: 1000, ack: 0, flags: SYN, t: 0.000 }),
+  pktHttpRev({ sport: 80, dport: 54321, seq: 5000, ack: 1001, flags: SYN | ACK, t: 0.032 }),
+  pktHttp({ sport: 54321, dport: 80, seq: 1001, ack: 5001, flags: ACK, t: 0.032 }),
+  pktHttp({ sport: 54321, dport: 80, seq: 1001, ack: 5001, flags: PSH | ACK, payload: [...get], t: 0.045 }),
+  pktHttp({ sport: 54321, dport: 80, seq: 1001, ack: 5001, flags: PSH | ACK, payload: [...get], t: 0.400 }),
 ]
 
 // DNS 查询/响应(example.com A → 8.8.8.8)
@@ -102,4 +113,5 @@ mkdirSync(join(OUT, 'examples'), { recursive: true })
 writeFileSync(join(OUT, 'examples', 'http.pcapng'), pcapng(http))
 writeFileSync(join(OUT, 'examples', 'dns.pcapng'), pcapng(dns))
 writeFileSync(join(OUT, 'examples', 'mixed.pcapng'), pcapng([...arp, ...dns, ...http]))
-console.log('generated:', join(OUT, 'examples'), 'http/dns/mixed')
+writeFileSync(join(OUT, 'examples', 'lossy.pcapng'), pcapng(lossy))
+console.log('generated:', join(OUT, 'examples'), 'http/dns/mixed/lossy')

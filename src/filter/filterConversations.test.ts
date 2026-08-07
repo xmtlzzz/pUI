@@ -60,6 +60,21 @@ describe('filterConversations', () => {
     f.srcPort = [53] // DNS 响应方向源端口为 53
     expect(filterConversations(convs, f)).toHaveLength(1)
   })
+
+  it('filters to issue-only conversations', () => {
+    const clean = [
+      pkt(1, 'dns', '192.168.1.10', 54322, '8.8.8.8', 53, 'udp'),
+      pkt(2, 'dns', '8.8.8.8', 53, '192.168.1.10', 54322, 'udp'), // 有响应
+    ]
+    const lossy = [pkt(3, 'dns', '192.168.1.10', 54323, '8.8.8.8', 53, 'udp')] // 查询无响应(不同端口,独立会话)
+    const all = aggregateConversations([...clean, ...lossy])
+    expect(all).toHaveLength(2)
+    const f = emptyFilter()
+    f.issueOnly = true
+    const r = filterConversations(all, f)
+    expect(r).toHaveLength(1)
+    expect(r[0].packetCount).toBe(1)
+  })
 })
 
 describe('collectFilterOptions', () => {

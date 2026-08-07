@@ -1,0 +1,17 @@
+# dependencies / build
+node_modules/
+dist/
+target/
+src-tauri/target/
+
+# brainstorming visual companion (local mockups, not source)
+.superpowers/
+
+# misc
+*.log
+.DS_Store
+Thumbs.db
+
+# env
+.env
+.env.local

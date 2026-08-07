@@ -10,7 +10,7 @@
 | `docs/architecture/` | 技术选型与架构 | [技术选型与架构](architecture/技术选型与架构.md) |
 | `docs/research/` | 参考实现与竞品分析 | [参考实现与竞品分析](research/参考实现与竞品分析.md) |
 | `docs/decisions/` | 关键决策记录(ADR) | [关键决策记录](decisions/关键决策记录.md) |
-| `docs/specs/` | 详细设计(实现计划) | 待产出(writing-plans) |
+| `docs/specs/` | 详细设计(实现计划) | [pUI-v1 实现计划](specs/2026-08-07-pUI-v1-实现计划.md) |
 
 ## 阅读顺序建议
 

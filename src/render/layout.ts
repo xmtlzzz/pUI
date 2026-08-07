@@ -22,9 +22,11 @@ export interface SequenceLayout {
 
 export const CLIENT_X = 80
 export const SERVER_X = 340
+/** 顶部端点标签区高度(给客户端/服务端标签留白,避免与第一条报文重叠) */
+export const HEADER_H = 40
+export const TOP = HEADER_H + 12
 const ROW_H = 30
 const SLOPE = 22
-const TOP = 20
 
 export function layoutSequence(packets: Packet[], style: 'A' | 'B', client: string, _server: string): SequenceLayout {
   const n = Math.max(packets.length, 1)

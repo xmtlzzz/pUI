@@ -1,5 +1,5 @@
 import { useState, type RefObject } from 'react'
-import { layoutSequence, CLIENT_X, SERVER_X, type LayoutMessage } from './layout'
+import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
 import type { Conversation } from '../model/types'
 
 const PROTO_COLOR: Record<string, string> = {
@@ -57,33 +57,34 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
         viewBox={`0 0 ${layout.width} ${layout.height}`}
         style={{ display: 'block', font: '11px system-ui, sans-serif', transform: `scale(${zoom})`, transformOrigin: 'top left' }}
       >
-        {/* lifelines + endpoint labels */}
-        <line x1={CLIENT_X} y1={12} x2={CLIENT_X} y2={layout.height - 8} stroke="#cbd5e1" strokeDasharray="4 4" />
-        <line x1={SERVER_X} y1={12} x2={SERVER_X} y2={layout.height - 8} stroke="#cbd5e1" strokeDasharray="4 4" />
-        <text x={CLIENT_X} y={12} textAnchor="middle" fill="#1d4ed8" fontWeight="bold">
+        {/* lifelines + endpoint labels(顶部留白区) */}
+        <line x1={CLIENT_X} y1={10} x2={CLIENT_X} y2={layout.height - 8} stroke="#cbd5e1" strokeDasharray="4 4" />
+        <line x1={SERVER_X} y1={10} x2={SERVER_X} y2={layout.height - 8} stroke="#cbd5e1" strokeDasharray="4 4" />
+        <text x={CLIENT_X} y={HEADER_H - 24} textAnchor="middle" fill="#1d4ed8" fontWeight="bold">
           {conv.client}
         </text>
-        <text x={SERVER_X} y={12} textAnchor="middle" fill="#c2410c" fontWeight="bold">
+        <text x={SERVER_X} y={HEADER_H - 24} textAnchor="middle" fill="#c2410c" fontWeight="bold">
           {conv.server}
         </text>
-        <text x={CLIENT_X} y={24} textAnchor="middle" fill="#94a3b8" fontSize={9}>
+        <text x={CLIENT_X} y={HEADER_H - 10} textAnchor="middle" fill="#94a3b8" fontSize={9}>
           {conv.packetCount} 包 · {fmt(conv.bytes)}
         </text>
 
         {layout.messages.map((m, i) => {
           const line = protoColor(m.proto)
           const dir = DIR_COLOR[m.direction]
+          const isHover = hover?.id === m.id
           return (
             <g
               key={`${style}-${m.id}`}
-              className="msg"
+              className={isHover ? 'msg hover' : 'msg'}
               style={{ cursor: 'pointer', animationDelay: `${i * 22}ms` }}
               onClick={() => onSelect(m.id)}
               onMouseEnter={() => setHover(m)}
               onMouseLeave={() => setHover(null)}
             >
-              <line x1={m.x1} y1={m.y1} x2={m.x2} y2={m.y2} stroke={line} strokeWidth={hover?.id === m.id ? 2.6 : 1.6} markerEnd={`url(#arr-${style})`} />
-              <circle cx={m.fromLeft ? CLIENT_X : SERVER_X} cy={m.y1 - 6} r={7} fill={dir} stroke="#fff" strokeWidth={1.5}>
+              <line className="arr" x1={m.x1} y1={m.y1} x2={m.x2} y2={m.y2} stroke={line} strokeWidth={isHover ? 2.6 : 1.6} markerEnd={`url(#arr-${style})`} />
+              <circle cx={m.fromLeft ? CLIENT_X : SERVER_X} cy={m.y1 - 6} r={isHover ? 8 : 7} fill={dir} stroke="#fff" strokeWidth={1.5} className="dir-dot">
                 <title>{dirLabel(m.direction)}</title>
               </circle>
               <text x={m.fromLeft ? CLIENT_X : SERVER_X} y={m.y1 - 3} textAnchor="middle" fill="#fff" fontSize={8} fontWeight="bold">
@@ -92,7 +93,7 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
               <text x={6} y={m.y1 + 3} fill="#64748b" fontSize={9}>
                 {m.time.toFixed(3)}
               </text>
-              <text x={(m.x1 + m.x2) / 2} y={Math.min(m.y1, m.y2) - 4} textAnchor="middle" fill={line} fontSize={10}>
+              <text className="msg-label" x={(m.x1 + m.x2) / 2} y={Math.min(m.y1, m.y2) - 4} textAnchor="middle" fill={line} fontSize={10}>
                 {m.info} · {m.len}B
               </text>
             </g>

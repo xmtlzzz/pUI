@@ -3,10 +3,10 @@ html, body, #root { height: 100%; margin: 0; font-family: system-ui, "Segoe UI",
 
 .app { display: flex; flex-direction: column; height: 100%; }
 
-/* ---------- 工具栏:三栏网格(左/中/右) ---------- */
-.toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 8px 12px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; }
-.toolbar-left { display: flex; gap: 8px; align-items: center; justify-self: start; }
-.toolbar-center { justify-self: center; min-width: 0; }
+/* ---------- 工具栏:三栏网格(左/中/右,auto 1fr auto 防窄窗重叠) ---------- */
+.toolbar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 8px 12px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; }
+.toolbar-left { display: flex; gap: 8px; align-items: center; }
+.toolbar-center { justify-self: stretch; text-align: center; min-width: 0; overflow: hidden; }
 .toolbar-right { display: flex; gap: 6px; align-items: center; justify-self: end; }
 
 .meta { color: #64748b; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -62,8 +62,14 @@ table.list tr.sel td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
 .seq-header .seq-sub { color: #64748b; font-size: 12px; }
 .seq-header .many-warn { color: #c2410c; font-size: 11px; margin-left: auto; }
 .msg { animation: msgIn .4s ease both; }
+.msg .arr { transition: stroke-width .12s ease; }
+.msg .dir-dot { transition: r .12s ease, filter .12s ease; }
+.msg .msg-label { transition: font-weight .12s ease; }
 .msg:hover { filter: brightness(1.05); }
-.msg-tooltip { animation: fadeIn .15s ease; }
+.msg.hover .arr { filter: drop-shadow(0 0 4px rgba(37, 99, 235, .65)); }
+.msg.hover .msg-label { font-weight: 700; }
+.msg.hover .dir-dot { filter: drop-shadow(0 0 3px rgba(59, 130, 246, .75)); }
+.msg-tooltip { animation: tooltipIn .16s ease; }
 
 /* ---------- 其它 ---------- */
 .drop-zone { position: absolute; inset: 0; background: rgba(37, 99, 235, .08); border: 2px dashed #2563eb; display: flex; align-items: center; justify-content: center; color: #2563eb; z-index: 10; animation: dropPulse 1.3s ease-in-out infinite; font-size: 14px; }
@@ -74,5 +80,6 @@ table.list tr.sel td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
 @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes msgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes tooltipIn { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: none; } }
 @keyframes dropPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .28); } 50% { box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); } }
 @keyframes softPulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }

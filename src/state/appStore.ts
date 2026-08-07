@@ -5,10 +5,15 @@ import { openCapture, openSample, fetchHex } from '../bridge/tauri'
 import { emptyFilter } from '../model/types'
 import type { CaptureMeta, Conversation, FilterCondition, FilterOptions, Packet } from '../model/types'
 
+function deriveFiltered(conversations: Conversation[], filter: FilterCondition): Conversation[] {
+  return filterConversations(conversations, filter)
+}
+
 interface AppState {
   meta: CaptureMeta | null
   packets: Packet[]
   conversations: Conversation[]
+  filtered: Conversation[]
   options: FilterOptions
   filter: FilterCondition
   selectedId: string | null
@@ -33,6 +38,7 @@ export const useApp = create<AppState>((set, get) => ({
   meta: null,
   packets: [],
   conversations: [],
+  filtered: [],
   options: { protocols: [], srcIps: [], dstIps: [], ports: [] },
   filter: emptyFilter(),
   selectedId: null,
@@ -48,7 +54,12 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const { meta, packets, path: realPath } = await openCapture(path)
       const conversations = aggregateConversations(packets)
-      set({ meta, packets, conversations, options: collectFilterOptions(packets), selectedId: null, selectedPacket: null, currentPath: realPath, loading: false })
+      const filter = emptyFilter()
+      set({
+        meta, packets, conversations, options: collectFilterOptions(packets),
+        filter, filtered: conversations, selectedId: null, selectedPacket: null,
+        currentPath: realPath, loading: false,
+      })
     } catch (e) {
       set({ loading: false, error: String(e) })
     }
@@ -59,17 +70,24 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const { meta, packets, path } = await openSample(name)
       const conversations = aggregateConversations(packets)
-      set({ meta, packets, conversations, options: collectFilterOptions(packets), selectedId: null, selectedPacket: null, currentPath: path, loading: false })
+      const filter = emptyFilter()
+      set({
+        meta, packets, conversations, options: collectFilterOptions(packets),
+        filter, filtered: conversations, selectedId: null, selectedPacket: null,
+        currentPath: path, loading: false,
+      })
     } catch (e) {
       set({ loading: false, error: String(e) })
     }
   },
 
   setFilter(patch) {
-    set({ filter: { ...get().filter, ...patch } })
+    const filter = { ...get().filter, ...patch }
+    set({ filter, filtered: deriveFiltered(get().conversations, filter) })
   },
   clearFilter() {
-    set({ filter: emptyFilter() })
+    const filter = emptyFilter()
+    set({ filter, filtered: deriveFiltered(get().conversations, filter) })
   },
   select(id) {
     set({ selectedId: id, selectedPacket: null })
@@ -93,9 +111,9 @@ export const useApp = create<AppState>((set, get) => ({
   },
 }))
 
-// 派生选择器
-export const selectFiltered = (s: AppState): Conversation[] => filterConversations(s.conversations, s.filter)
-export const selectSelected = (s: AppState): Conversation | null => s.conversations.find((c) => c.id === s.selectedId) ?? null
+// 派生选择器(返回稳定引用,可安全用于 useSyncExternalStore)
+export const selectSelected = (s: AppState): Conversation | null =>
+  s.conversations.find((c) => c.id === s.selectedId) ?? null
 export const selectSelectedPacket = (s: AppState): Packet | null => {
   const conv = selectSelected(s)
   if (!conv) return null

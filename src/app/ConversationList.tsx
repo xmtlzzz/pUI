@@ -1,4 +1,4 @@
-import { useApp, selectFiltered, selectSelected } from '../state/appStore'
+import { useApp, selectSelected } from '../state/appStore'
 
 const PROTO_COLOR: Record<string, string> = {
   http: '#dcfce7 #15803d',
@@ -17,7 +17,7 @@ function color(proto: string): [string, string] {
 }
 
 export function ConversationList() {
-  const filtered = useApp((s) => selectFiltered(s))
+  const filtered = useApp((s) => s.filtered)
   const selected = useApp((s) => selectSelected(s))
   const select = useApp((s) => s.select)
   const hasData = useApp((s) => s.conversations.length > 0)

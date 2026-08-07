@@ -1,4 +1,4 @@
-import { useApp, selectFiltered } from '../state/appStore'
+import { useApp } from '../state/appStore'
 import type { FilterCondition } from '../model/types'
 
 type FieldKey = 'protocol' | 'srcIp' | 'dstIp' | 'srcPort' | 'dstPort'
@@ -8,7 +8,7 @@ export function FilterPanel() {
   const filter = useApp((s) => s.filter)
   const setFilter = useApp((s) => s.setFilter)
   const clearFilter = useApp((s) => s.clearFilter)
-  const filteredCount = useApp((s) => selectFiltered(s).length)
+  const filteredCount = useApp((s) => s.filtered.length)
   const total = useApp((s) => s.conversations.length)
   const portsEnabled = options.ports.length > 0
 

@@ -6,12 +6,20 @@ use tauri::Manager;
 use crate::commands::AppState;
 
 pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
+    // ① 用户设置路径
     if let Some(p) = state.tshark_path.lock().unwrap().clone() {
         if p.exists() {
             return Some(p);
         }
     }
-    bundled(app).filter(|p| p.exists())
+    // ② 随包内置资源
+    if let Some(p) = bundled(app).filter(|p| p.exists()) {
+        return Some(p);
+    }
+    // ③ 系统: PATH → 常见安装目录(Wireshark)
+    find_in_path()
+        .map(PathBuf::from)
+        .or_else(|| find_common_install().map(PathBuf::from))
 }
 
 fn bundled(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -46,10 +54,7 @@ fn run(bin: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 pub fn locate(app: &tauri::AppHandle, state: &AppState) -> Option<String> {
-    resolve(app, state)
-        .map(|p| p.to_string_lossy().into_owned())
-        .or_else(find_in_path)
-        .or_else(find_common_install)
+    resolve(app, state).map(|p| p.to_string_lossy().into_owned())
 }
 
 fn find_in_path() -> Option<String> {
@@ -60,6 +65,10 @@ fn find_in_path() -> Option<String> {
     } else {
         None
     }
+}
+
+fn first_existing(candidates: &[&str]) -> Option<String> {
+    candidates.iter().find(|p| Path::new(p).exists()).map(|s| s.to_string())
 }
 
 fn find_common_install() -> Option<String> {
@@ -73,7 +82,7 @@ fn find_common_install() -> Option<String> {
     } else {
         &["/usr/bin/tshark", "/usr/local/bin/tshark"]
     };
-    candidates.iter().find(|p| Path::new(p).exists()).map(|s| s.to_string())
+    first_existing(candidates)
 }
 
 #[cfg(test)]
@@ -90,5 +99,15 @@ mod tests {
     #[test]
     fn run_hex_rejects_bad_binary() {
         assert!(run_hex(Path::new("/nonexistent/tshark"), "x.pcapng", 1).is_err());
+    }
+
+    #[test]
+    fn first_existing_finds_existing_file() {
+        let f = std::env::temp_dir().join("pui-tshark-locate-test.exe");
+        std::fs::write(&f, b"x").unwrap();
+        let abs = std::fs::canonicalize(&f).unwrap().to_string_lossy().into_owned();
+        assert_eq!(first_existing(&[&abs]).as_deref(), Some(abs.as_str()));
+        assert_eq!(first_existing(&["/nonexistent/a.exe", "/nonexistent/b"]), None);
+        std::fs::remove_file(&f).unwrap();
     }
 }

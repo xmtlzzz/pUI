@@ -1,9 +1,13 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use tauri::Manager;
 
 use crate::commands::AppState;
+
+/// tshark `-T json` 输出上限:超过即终止子进程,防止超大抓包把内存打爆
+const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
 
 pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
     // ① 用户设置路径
@@ -53,7 +57,47 @@ pub fn run_capture(bin: &Path, file: &str) -> Result<String, String> {
     if file.starts_with('-') {
         return Err("invalid capture path".into()); // 防 `-` 前缀选项混淆/`-r -` 卡读 stdin
     }
-    run(bin, &["-r", file, "-T", "json", "-J", "frame eth ip ipv6 tcp udp http dns tls"])
+    run_stream(
+        bin,
+        &["-r", file, "-T", "json", "-J", "frame eth ip ipv6 tcp udp http dns tls"],
+        MAX_CAPTURE_JSON,
+    )
+}
+
+/// 流式读取子进程 stdout 并设上限:防止 `Command::output()` 把多 GB JSON 全量缓冲进内存。
+/// (tshark 的 stderr 只用于短错误信息,不会撑爆管道,故在 stdout EOF 后读取。)
+fn run_stream(bin: &Path, args: &[&str], max_stdout: u64) -> Result<String, String> {
+    let mut cmd = Command::new(bin);
+    hide_console(&mut cmd);
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("failed to run tshark: {e}"))?;
+
+    let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut total: u64 = 0;
+    let mut chunk = [0u8; 65536];
+    loop {
+        let n = stdout.read(&mut chunk).map_err(|e| format!("tshark stdout: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        if total > max_stdout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("capture too large: tshark output exceeds limit".into());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    let status = child.wait().map_err(|e| format!("wait tshark: {e}"))?;
+    let mut err = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_string(&mut err);
+    }
+    if !status.success() {
+        return Err(err.trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
 pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
@@ -142,6 +186,19 @@ mod tests {
         // `-` 前缀会被 tshark 当作选项,`-r -` 会卡读 stdin
         assert!(run_capture(Path::new("/usr/bin/tshark"), "-Y").is_err());
         assert!(run_hex(Path::new("/usr/bin/tshark"), "-r", 1).is_err());
+    }
+
+    #[test]
+    fn run_stream_caps_oversized_output() {
+        // 子进程输出超过上限时应立即终止并报错,而非全量缓冲进内存
+        let (bin, args): (&str, Vec<&str>) = if cfg!(windows) {
+            ("cmd", vec!["/C", "echo aaaaaaaaaaaaaaaaaaaa"])
+        } else {
+            ("/bin/sh", vec!["-c", "echo aaaaaaaaaaaaaaaaaaaa"])
+        };
+        assert!(run_stream(Path::new(bin), &args, 4).is_err());
+        // 小输出正常返回
+        assert!(run_stream(Path::new(bin), &args, 1024).is_ok());
     }
 
     #[test]

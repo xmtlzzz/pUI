@@ -22,6 +22,22 @@ pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
         .or_else(|| find_common_install().map(PathBuf::from))
 }
 
+/// 解析结果缓存:打包后的 GUI 无控制台,每次 spawn 子进程都会闪现 cmd 窗口并带来延迟,
+/// 因此把解析结果缓存下来,仅当路径失效或用户重新设置时再解析。
+pub fn resolve_cached(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
+    let mut cache = state.resolved_path.lock().unwrap();
+    if let Some(p) = cache.as_ref() {
+        if p.exists() {
+            return Some(p.clone());
+        }
+    }
+    let resolved = resolve(app, state);
+    if let Some(p) = resolved.as_ref() {
+        *cache = Some(p.clone());
+    }
+    resolved
+}
+
 fn bundled(app: &tauri::AppHandle) -> Option<PathBuf> {
     let dir = app.path().resource_dir().ok()?;
     let exe = if cfg!(windows) { "tshark.exe" } else { "tshark" };
@@ -42,8 +58,20 @@ pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
     run(bin, &["-r", file, "-Y", &filter, "-x"])
 }
 
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000; // 不创建新控制台窗口
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console(_cmd: &mut Command) {}
+
 fn run(bin: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(bin)
+    let mut cmd = Command::new(bin);
+    hide_console(&mut cmd);
+    let out = cmd
         .args(args)
         .output()
         .map_err(|e| format!("failed to run tshark: {e}"))?;
@@ -54,12 +82,14 @@ fn run(bin: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 pub fn locate(app: &tauri::AppHandle, state: &AppState) -> Option<String> {
-    resolve(app, state).map(|p| p.to_string_lossy().into_owned())
+    resolve_cached(app, state).map(|p| p.to_string_lossy().into_owned())
 }
 
 fn find_in_path() -> Option<String> {
     let which = if cfg!(windows) { "where" } else { "which" };
-    let out = Command::new(which).arg("tshark").output().ok()?;
+    let mut cmd = Command::new(which);
+    hide_console(&mut cmd);
+    let out = cmd.arg("tshark").output().ok()?;
     if out.status.success() {
         String::from_utf8_lossy(&out.stdout).lines().next().map(|s| s.to_string())
     } else {

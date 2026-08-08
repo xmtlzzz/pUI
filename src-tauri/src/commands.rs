@@ -7,6 +7,8 @@ use crate::tshark;
 
 pub struct AppState {
     pub tshark_path: Mutex<Option<PathBuf>>,
+    /// resolve 结果缓存,避免每次调用都重新 spawn `where`/`tshark`(见 tshark::resolve_cached)
+    pub resolved_path: Mutex<Option<PathBuf>>,
 }
 
 #[tauri::command]
@@ -17,6 +19,7 @@ pub fn locate_tshark(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -
 #[tauri::command]
 pub fn set_tshark_path(path: String, state: tauri::State<'_, AppState>) {
     *state.tshark_path.lock().unwrap() = Some(PathBuf::from(path));
+    *state.resolved_path.lock().unwrap() = None; // 使缓存失效
 }
 
 #[derive(Serialize)]
@@ -32,7 +35,7 @@ pub fn open_capture(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<CaptureOutput, String> {
-    let bin = tshark::resolve(&app, &state).ok_or("tshark not found: set its path in settings")?;
+    let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
     let json = tshark::run_capture(&bin, &path)?;
     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
     Ok(CaptureOutput { json, size, path })
@@ -61,7 +64,7 @@ pub fn fetch_hex(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    let bin = tshark::resolve(&app, &state).ok_or("tshark not found: set its path in settings")?;
+    let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
     tshark::run_hex(&bin, &path, frame_number)
 }
 

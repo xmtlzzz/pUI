@@ -9,6 +9,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             tshark_path: Default::default(),
+            resolved_path: Default::default(),
         })
         .invoke_handler(tauri::generate_handler![
             commands::locate_tshark,

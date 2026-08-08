@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { Toolbar } from './Toolbar'
 import { FilterPanel } from './FilterPanel'
 import { ConversationList } from './ConversationList'
@@ -29,8 +29,9 @@ export function AppLayout() {
     const v = Number(localStorage.getItem(key))
     return Number.isFinite(v) && v > 0 ? v : fallback
   }
-  const [listWidth, setListWidth] = useState(() => loadNum(LS_LIST, 380))
-  const [detailHeight, setDetailHeight] = useState(() => loadNum(LS_DETAIL, 240))
+  // 载入时即按当前窗口钳制,防止在大屏存下的尺寸在小屏上压没时序图
+  const [listWidth, setListWidth] = useState(() => clamp(loadNum(LS_LIST, 380), 220, 720))
+  const [detailHeight, setDetailHeight] = useState(() => clamp(loadNum(LS_DETAIL, 240), 90, Math.max(90, window.innerHeight - 220)))
   const listRef = useRef(listWidth)
   const detailRef = useRef(detailHeight)
   useEffect(() => {
@@ -45,53 +46,46 @@ export function AppLayout() {
     await exportSvgPng(svgRef.current, defaultPngName(selected.client, selected.server, selected.protocol))
   }
 
-  // 会话列表宽度拖拽
-  const startVDrag = (e: MouseEvent) => {
-    e.preventDefault()
-    const startX = e.clientX
-    const initial = listRef.current
-    const move = (ev: globalThis.MouseEvent) => {
-      const w = clamp(initial + (ev.clientX - startX), 220, 720)
-      listRef.current = w
-      setListWidth(w)
-    }
-    const up = () => {
-      document.removeEventListener('mousemove', move)
-      document.removeEventListener('mouseup', up)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    document.addEventListener('mousemove', move)
-    document.addEventListener('mouseup', up)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }
+  // 可拖拽尺寸:用 pointer capture 挂在分隔条上,拖出窗口也不泄漏监听;
+  // 额外监听 window blur,失焦时兜底清理
+  const makeDrag =
+    (axis: 'x' | 'y', min: number, max: () => number) => (e: PointerEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const el = e.currentTarget
+      el.setPointerCapture(e.pointerId)
+      const start = axis === 'x' ? e.clientX : e.clientY
+      const initial = axis === 'x' ? listRef.current : detailRef.current
+      const setVal = axis === 'x' ? setListWidth : setDetailHeight
+      const setRef = axis === 'x' ? (v: number) => (listRef.current = v) : (v: number) => (detailRef.current = v)
 
-  // 报文详情高度拖拽
-  const startHDrag = (e: MouseEvent) => {
-    e.preventDefault()
-    const startY = e.clientY
-    const initial = detailRef.current
-    const move = (ev: globalThis.MouseEvent) => {
-      const h = clamp(initial + (startY - ev.clientY), 90, Math.max(90, window.innerHeight - 220))
-      detailRef.current = h
-      setDetailHeight(h)
+      const move = (ev: globalThis.PointerEvent) => {
+        const delta = axis === 'x' ? ev.clientX - start : start - ev.clientY
+        const v = clamp(initial + delta, min, max())
+        setRef(v)
+        setVal(v)
+      }
+      const cleanup = () => {
+        el.removeEventListener('pointermove', move)
+        el.removeEventListener('pointerup', cleanup)
+        el.removeEventListener('pointercancel', cleanup)
+        window.removeEventListener('blur', cleanup)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+      el.addEventListener('pointermove', move)
+      el.addEventListener('pointerup', cleanup)
+      el.addEventListener('pointercancel', cleanup)
+      window.addEventListener('blur', cleanup)
+      document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize'
+      document.body.style.userSelect = 'none'
     }
-    const up = () => {
-      document.removeEventListener('mousemove', move)
-      document.removeEventListener('mouseup', up)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    document.addEventListener('mousemove', move)
-    document.addEventListener('mouseup', up)
-    document.body.style.cursor = 'row-resize'
-    document.body.style.userSelect = 'none'
-  }
+  const startVDrag = makeDrag('x', 220, () => 720)
+  const startHDrag = makeDrag('y', 90, () => Math.max(90, window.innerHeight - 220))
 
   // Tauri 2:拖拽文件须用窗口 onDragDropEvent 才能拿到真实路径
   useEffect(() => {
     if (!isTauri()) return
+    let active = true
     let unlisten: (() => void) | undefined
     import('@tauri-apps/api/window')
       .then(({ getCurrentWindow }) =>
@@ -106,9 +100,16 @@ export function AppLayout() {
         }),
       )
       .then((f) => {
+        if (!active) {
+          f() // StrictMode 首次挂载已卸载,立即反注册,避免重复监听
+          return
+        }
         unlisten = f
       })
-    return () => unlisten?.()
+    return () => {
+      active = false
+      unlisten?.()
+    }
   }, [openFile])
 
   const onDrop = (e: DragEvent) => {
@@ -138,10 +139,10 @@ export function AppLayout() {
         <div className="pane list" style={{ width: listWidth }}>
           <ConversationList />
         </div>
-        <div className="v-resizer" onMouseDown={startVDrag} title="拖动调整宽度" />
+        <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
         <div className="pane view">
           <SequenceDiagram conv={selected} style={diagramStyle} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
-          <div className="h-resizer" onMouseDown={startHDrag} title="拖动调整高度" />
+          <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
           <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
             <PacketDetail />
           </div>

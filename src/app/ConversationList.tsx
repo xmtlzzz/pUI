@@ -41,7 +41,7 @@ export function ConversationList() {
               <tr
                 key={c.id}
                 className={`row-in${selected?.id === c.id ? ' sel' : ''}${hasIssue ? ' has-issue' : ''}`}
-                style={{ animationDelay: `${i * 28}ms` }}
+                style={{ animationDelay: `${Math.min(i * 28, 300)}ms` }}
                 onClick={() => select(c.id)}
               >
                 <td className="col-issue">

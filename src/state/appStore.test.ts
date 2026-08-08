@@ -1,0 +1,73 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+vi.mock('../bridge/tauri', () => ({
+  openCapture: vi.fn(),
+  openSample: vi.fn(),
+  fetchHex: vi.fn(),
+}))
+
+import { openCapture, fetchHex } from '../bridge/tauri'
+import { useApp } from './appStore'
+import type { Packet } from '../model/types'
+
+function pkt(n: number, proto: string, srcIp: string, srcPort: number, dstIp: string, dstPort: number): Packet {
+  return { number: n, time: n, len: 60, transport: 'tcp', proto, srcIp, dstIp, srcPort, dstPort, direction: 'other' }
+}
+
+function meta(fileName: string) {
+  return { fileName, packetCount: 1, interfaces: 1, timeStart: 0, timeEnd: 0, fileSize: 10 }
+}
+
+describe('appStore 加载一致性', () => {
+  beforeEach(() => {
+    useApp.setState({
+      meta: null, packets: [], conversations: [], filtered: [], options: { protocols: [], srcIps: [], dstIps: [], ports: [] },
+      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
+      selectedId: null, selectedPacket: null, currentPath: '', loadSeq: 0, diagramStyle: 'A', loading: false, error: null, hexCache: {},
+    })
+  })
+
+  it('打开新文件时清空 hexCache,避免跨文件显示旧报文的 hex', async () => {
+    const packets = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets, path: p }))
+    useApp.setState({ hexCache: { 5: 'AA' }, currentPath: 'a.pcap' })
+
+    await useApp.getState().openFile('b.pcap')
+
+    expect(useApp.getState().currentPath).toBe('b.pcap')
+    expect(useApp.getState().hexCache).toEqual({})
+    expect(useApp.getState().packets).toHaveLength(1)
+  })
+
+  it('慢加载不覆盖已完成的较新加载', async () => {
+    const slowPackets = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
+    const fastPackets = [pkt(1, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53)]
+    let resolveSlow!: (v: { meta: ReturnType<typeof meta>; packets: Packet[]; path: string }) => void
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      p === 'slow'
+        ? new Promise((r) => {
+            resolveSlow = r
+          })
+        : Promise.resolve({ meta: meta('fast.pcap'), packets: fastPackets, path: 'fast.pcap' }),
+    )
+
+    const slowLoad = useApp.getState().openFile('slow') // 先发起慢加载
+    await useApp.getState().openFile('fast') // 后发起快加载,先完成
+    expect(useApp.getState().conversations[0]?.protocol).toBe('dns')
+
+    resolveSlow({ meta: meta('slow.pcap'), packets: slowPackets, path: 'slow.pcap' })
+    await slowLoad
+    expect(useApp.getState().conversations[0]?.protocol).toBe('dns') // 未被慢加载覆盖
+    expect(useApp.getState().currentPath).toBe('fast.pcap')
+  })
+
+  it('fetchHexFor 在切换文件后丢弃旧文件的 hex 结果', async () => {
+    vi.mocked(fetchHex).mockResolvedValue('STALE')
+    useApp.setState({ currentPath: 'old.pcap' })
+    const p = useApp.getState().fetchHexFor(1) // 挂起中(未 resolve)
+    useApp.setState({ currentPath: 'new.pcap' })
+    await p
+    expect(useApp.getState().hexCache[1]).toBeUndefined() // 旧结果未写入新文件缓存
+  })
+})

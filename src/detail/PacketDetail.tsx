@@ -13,9 +13,17 @@ export function PacketDetail() {
     setErr(false)
     if (!packet) return
     setBusy(true)
+    let active = true
     fetchHexFor(packet.number)
-      .catch(() => setErr(true))
-      .finally(() => setBusy(false))
+      .catch(() => {
+        if (active) setErr(true)
+      })
+      .finally(() => {
+        if (active) setBusy(false)
+      })
+    return () => {
+      active = false // 切换报文后,丢弃陈旧请求的 UI 更新
+    }
   }, [packet?.number]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!packet) return <div className="empty">点击时序图中的报文查看详情</div>

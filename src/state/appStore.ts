@@ -19,6 +19,8 @@ interface AppState {
   selectedId: string | null
   selectedPacket: number | null
   currentPath: string
+  /** 加载序号:用于丢弃被新加载覆盖的过期异步结果 */
+  loadSeq: number
   diagramStyle: 'A' | 'B'
   loading: boolean
   error: string | null
@@ -44,39 +46,46 @@ export const useApp = create<AppState>((set, get) => ({
   selectedId: null,
   selectedPacket: null,
   currentPath: '',
+  loadSeq: 0,
   diagramStyle: 'A',
   loading: false,
   error: null,
   hexCache: {},
 
   async openFile(path) {
-    set({ loading: true, error: null })
+    const seq = get().loadSeq + 1
+    set({ loading: true, error: null, loadSeq: seq })
     try {
       const { meta, packets, path: realPath } = await openCapture(path)
+      if (get().loadSeq !== seq) return // 已被更新的加载覆盖
       const conversations = aggregateConversations(packets)
       const filter = emptyFilter()
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: realPath, loading: false,
+        currentPath: realPath, hexCache: {}, loading: false,
       })
     } catch (e) {
+      if (get().loadSeq !== seq) return
       set({ loading: false, error: String(e) })
     }
   },
 
   async openExample(name) {
-    set({ loading: true, error: null })
+    const seq = get().loadSeq + 1
+    set({ loading: true, error: null, loadSeq: seq })
     try {
       const { meta, packets, path } = await openSample(name)
+      if (get().loadSeq !== seq) return
       const conversations = aggregateConversations(packets)
       const filter = emptyFilter()
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: path, loading: false,
+        currentPath: path, hexCache: {}, loading: false,
       })
     } catch (e) {
+      if (get().loadSeq !== seq) return
       set({ loading: false, error: String(e) })
     }
   },
@@ -99,10 +108,12 @@ export const useApp = create<AppState>((set, get) => ({
     set({ diagramStyle: s })
   },
   async fetchHexFor(n) {
+    const path = get().currentPath
+    if (!path) return ''
     const cached = get().hexCache[n]
     if (cached) return cached
-    if (!get().currentPath) return ''
-    const hex = await fetchHex(get().currentPath, n)
+    const hex = await fetchHex(path, n)
+    if (get().currentPath !== path) return '' // 已切换文件,丢弃过期结果
     set({ hexCache: { ...get().hexCache, [n]: hex } })
     return hex
   },

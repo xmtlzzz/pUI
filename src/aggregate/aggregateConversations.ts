@@ -1,5 +1,5 @@
 import type { Conversation, Packet } from '../model/types'
-import { hostOf } from '../model/types'
+import { displayHost } from '../model/types'
 import { analyzeConversationIssues } from './issues'
 
 function side(p: Packet): string {
@@ -66,22 +66,32 @@ export function aggregateConversations(packets: Packet[]): Conversation[] {
       let server: string | null = null
 
       if (transport === 'tcp') {
-        const syn = packets.find((p) => p.tcpFlags && (Number.parseInt(p.tcpFlags, 16) & 0x02))
+        // 找"纯 SYN"(含 SYN 位、无 ACK 位);SYN-ACK(0x0012)含 SYN 位但不能当连接发起方,
+        // 否则从半握手中间开始抓包时会把 client/server 反转
+        const syn = packets.find(
+          (p) =>
+            p.tcpFlags &&
+            (Number.parseInt(p.tcpFlags, 16) & 0x02) !== 0 &&
+            (Number.parseInt(p.tcpFlags, 16) & 0x10) === 0,
+        )
         if (syn && syn.srcIp) {
           client = sideOf(syn, true)
           server = sideOf(syn, false)
         }
       }
       if (!client && (transport === 'tcp' || transport === 'udp')) {
-        // 无 SYN:取端口较大者(临时端口)为客户端,退化用首包方向
+        // 无 SYN:通常"知名端口(<1024)=服务端、临时端口=客户端";
+        // 两侧同为知名或同为临时端口时,取首包发起方为客户端(退化)
         const first = packets[0]
         const a = sideOf(first, true)
         const b = sideOf(first, false)
         const pa = first.srcPort ?? 0
         const pb = first.dstPort ?? 0
-        if (pa !== pb) {
-          client = pa > pb ? a : b
-          server = pa > pb ? b : a
+        const aWellKnown = pa > 0 && pa < 1024
+        const bWellKnown = pb > 0 && pb < 1024
+        if (aWellKnown !== bWellKnown) {
+          client = aWellKnown ? b : a
+          server = aWellKnown ? a : b
         } else {
           client = a
           server = b
@@ -126,5 +136,5 @@ function sideOf(p: Packet, src: boolean): string {
 }
 
 function sideKey(s: string): string {
-  return hostOf(s) // 兼容 IPv4/IPv6/MAC,不按首个冒号截断
+  return displayHost(s) // 兼容 IPv4/IPv6/MAC;裸 IPv6 不截断,host:port 才剥离端口
 }

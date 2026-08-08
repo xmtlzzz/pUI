@@ -10,6 +10,15 @@ export function filterConversations(convs: Conversation[], cond: FilterCondition
     if (cond.dstPort.length && !c.packets.some((p) => p.dstPort != null && cond.dstPort.includes(p.dstPort))) return false
     return true
   }
+  // 无任何筛选条件时,取反是"不筛选"的取反,应保留全部而非清空
+  const hasCriteria =
+    cond.protocol.length > 0 ||
+    cond.srcIp.length > 0 ||
+    cond.dstIp.length > 0 ||
+    cond.srcPort.length > 0 ||
+    cond.dstPort.length > 0 ||
+    cond.issueOnly
+  if (!hasCriteria) return convs
   return convs.filter((c) => (cond.negate ? !pass(c) : pass(c)))
 }
 

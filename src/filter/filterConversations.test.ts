@@ -55,6 +55,12 @@ describe('filterConversations', () => {
     expect(filterConversations(convs, emptyFilter())).toHaveLength(2)
   })
 
+  it('negate with no criteria keeps everything (取反不筛选)', () => {
+    const f = emptyFilter()
+    f.negate = true
+    expect(filterConversations(convs, f)).toHaveLength(2)
+  })
+
   it('port filter matches either direction port', () => {
     const f = emptyFilter()
     f.srcPort = [53] // DNS 响应方向源端口为 53

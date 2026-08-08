@@ -1,6 +1,6 @@
 import { useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
-import { hostOf } from '../model/types'
+import { displayHost } from '../model/types'
 import { protocolColor } from '../model/protocolColors'
 import type { Conversation } from '../model/types'
 
@@ -37,9 +37,9 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
         </div>
       )}
       <div className="seq-header">
-        <span className="endpoint">{hostOf(conv.client)}</span>
+        <span className="endpoint">{displayHost(conv.client)}</span>
         <span className="arrow">⇄</span>
-        <span className="endpoint">{hostOf(conv.server)}</span>
+        <span className="endpoint">{displayHost(conv.server)}</span>
         <span className="seq-sub">
           {conv.protocol} · {conv.packetCount} 包 · {fmt(conv.bytes)} · {conv.start.toFixed(2)}~{conv.end.toFixed(2)}s
         </span>
@@ -93,7 +93,7 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
             <g
               key={`${style}-${m.id}`}
               className={isHover ? 'msg hover' : 'msg'}
-              style={{ cursor: 'pointer', animationDelay: `${i * 22}ms` }}
+              style={{ cursor: 'pointer', animationDelay: `${Math.min(i * 22, 300)}ms` }}
               onClick={() => onSelect(m.id)}
               onMouseEnter={() => setHover(m)}
               onMouseLeave={() => setHover(null)}

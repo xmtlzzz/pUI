@@ -58,4 +58,28 @@ describe('aggregateConversations', () => {
     expect(c.packets[0].direction).toBe('request')
     expect(c.packets[1].direction).toBe('response')
   })
+
+  it('does not treat SYN-ACK as the connection initiator (半握手抓包)', () => {
+    // 抓包从 SYN 之后开始:首个带 SYN 位的报文是服务端的 SYN-ACK,不能因此反转 client/server
+    const synAck = pkt(1, 0.0, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, '0x0012')
+    const get = pkt(2, 0.01, 'http', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, '0x0018')
+    const resp = pkt(3, 0.02, 'http', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, '0x0018')
+    const convs = aggregateConversations([synAck, get, resp])
+    expect(convs).toHaveLength(1)
+    const c = convs[0]
+    expect(c.client).toBe('192.168.1.10:54321')
+    expect(c.server).toBe('93.184.216.34:80')
+    expect(c.packets.map((p) => p.direction)).toEqual(['response', 'request', 'response'])
+  })
+
+  it('UDP 无 SYN 时,客户端用低端口也不反转方向', () => {
+    const req = pkt(1, 0.0, 'dns', 'udp', '192.168.1.10', 1024, '5.6.7.8', 8080)
+    const resp = pkt(2, 0.01, 'dns', 'udp', '5.6.7.8', 8080, '192.168.1.10', 1024)
+    const convs = aggregateConversations([req, resp])
+    const c = convs[0]
+    expect(c.client).toBe('192.168.1.10:1024')
+    expect(c.server).toBe('5.6.7.8:8080')
+    expect(c.packets[0].direction).toBe('request')
+    expect(c.packets[1].direction).toBe('response')
+  })
 })

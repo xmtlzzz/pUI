@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hostPort, hostOf } from './types'
+import { hostPort, hostOf, isBareIpv6, displayHost } from './types'
 
 describe('hostPort / hostOf', () => {
   it('splits IPv4:port', () => {
@@ -23,5 +23,21 @@ describe('hostPort / hostOf', () => {
   it('keeps bare IP as the whole host', () => {
     expect(hostOf('8.8.8.8')).toBe('8.8.8.8')
     expect(hostOf('fe80::1')).toBe('fe80::1')
+  })
+
+  it('isBareIpv6 detects compressed bare ipv6 addresses', () => {
+    expect(isBareIpv6('fe80::1')).toBe(true)
+    expect(isBareIpv6('fe80::1:10')).toBe(true) // 数字结尾也不误判为 host:port
+    expect(isBareIpv6('fd00::100')).toBe(true)
+    expect(isBareIpv6('192.168.1.10:80')).toBe(false) // IPv4:port
+    expect(isBareIpv6('8.8.8.8')).toBe(false)
+    expect(isBareIpv6('aa:bb:cc:dd:ee:ff')).toBe(false) // MAC
+  })
+
+  it('displayHost keeps bare ipv6 whole but strips ports elsewhere', () => {
+    expect(displayHost('fe80::1:10')).toBe('fe80::1:10') // 裸 IPv6 保留
+    expect(displayHost('192.168.1.10:80')).toBe('192.168.1.10')
+    expect(displayHost('8.8.8.8')).toBe('8.8.8.8')
+    expect(displayHost('aa:bb:cc:dd:ee:ff')).toBe('aa:bb:cc:dd:ee:ff')
   })
 })

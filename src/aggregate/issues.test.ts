@@ -93,4 +93,48 @@ describe('丢包/异常会话检测', () => {
     const convs = aggregateConversations(packets)
     expect(convs[0].issues.some((i) => i.type === 'rst')).toBe(true)
   })
+
+  it('SYN 被 RST 拒绝时只报 rst,不误报 syn-no-reply / no-close', () => {
+    const packets = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }), // SYN
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0014' }), // RST+ACK
+    ]
+    const convs = aggregateConversations(packets)
+    const types = convs[0].issues.map((i) => i.type)
+    expect(types).toContain('rst')
+    expect(types).not.toContain('syn-no-reply')
+    expect(types).not.toContain('no-close')
+  })
+
+  it('flags lost-segment with its own issue type', () => {
+    const packets = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 0.03, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0012' }),
+      pkt(3, 0.05, 'http', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { httpCode: '200', tcpAnalysis: ['lost-segment'] }),
+    ]
+    const convs = aggregateConversations(packets)
+    expect(convs[0].issues.some((i) => i.type === 'lost-segment')).toBe(true)
+  })
+
+  it('flags duplicate-ack with its own issue type', () => {
+    const packets = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 0.03, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0012' }),
+      pkt(3, 0.05, 'http', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { httpMethod: 'GET', tcpAnalysis: ['duplicate-ack'] }),
+    ]
+    const convs = aggregateConversations(packets)
+    expect(convs[0].issues.some((i) => i.type === 'dup-ack')).toBe(true)
+  })
+
+  it('flags out-of-order with type out-of-order, not retransmission', () => {
+    const packets = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 0.03, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0012' }),
+      pkt(3, 0.05, 'http', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { httpCode: '200', tcpAnalysis: ['out-of-order'] }),
+    ]
+    const convs = aggregateConversations(packets)
+    const types = convs[0].issues.map((i) => i.type)
+    expect(types).toContain('out-of-order')
+    expect(types).not.toContain('retransmission')
+  })
 })

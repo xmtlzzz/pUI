@@ -27,22 +27,32 @@ export function analyzeConversationIssues(conv: Conversation): ConversationIssue
   if (transport === 'tcp') {
     const syn = packets.find((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x02) !== 0)
     const synAck = packets.find((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x12) === 0x12)
-    if (syn && !synAck) {
+    const rst = packets.find((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x04) !== 0)
+    if (syn && !synAck && !rst) {
+      // RST 是 SYN 的合法拒绝响应,不算"未收到 SYN-ACK"的丢包
       issues.push({ type: 'syn-no-reply', message: `TCP 连接未建立:SYN(#${syn.number})未收到 SYN-ACK`, packetNumber: syn.number })
     }
     const hasFin = packets.some((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x01) !== 0)
-    if (!hasFin) {
+    if (!hasFin && !rst) {
+      // RST 已终止连接;仅当既无 FIN 也无 RST 时才提示未正常关闭
       issues.push({ type: 'no-close', message: 'TCP 连接未正常关闭(未收到 FIN)' })
     }
     const retrans = packets.filter((p) => p.tcpAnalysis?.includes('retransmission') || p.tcpAnalysis?.includes('fast-retransmission'))
     if (retrans.length) {
       issues.push({ type: 'retransmission', message: `检测到 ${retrans.length} 次 TCP 重传,可能存在丢包`, packetNumber: retrans[0].number })
     }
+    const lost = packets.filter((p) => p.tcpAnalysis?.includes('lost-segment'))
+    if (lost.length) {
+      issues.push({ type: 'lost-segment', message: `检测到 ${lost.length} 段丢失,可能存在丢包`, packetNumber: lost[0].number })
+    }
     const ooo = packets.filter((p) => p.tcpAnalysis?.includes('out-of-order'))
     if (ooo.length) {
-      issues.push({ type: 'retransmission', message: `检测到 ${ooo.length} 个乱序报文`, packetNumber: ooo[0].number })
+      issues.push({ type: 'out-of-order', message: `检测到 ${ooo.length} 个乱序报文`, packetNumber: ooo[0].number })
     }
-    const rst = packets.find((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x04) !== 0)
+    const dupAck = packets.filter((p) => p.tcpAnalysis?.includes('duplicate-ack'))
+    if (dupAck.length) {
+      issues.push({ type: 'dup-ack', message: `检测到 ${dupAck.length} 个重复 ACK`, packetNumber: dupAck[0].number })
+    }
     if (rst) {
       issues.push({ type: 'rst', message: `TCP 连接被重置(RST #${rst.number})`, packetNumber: rst.number })
     }

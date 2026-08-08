@@ -44,7 +44,7 @@ export interface Conversation {
 
 /** 会话级可疑丢包/异常标注 */
 export interface ConversationIssue {
-  type: 'syn-no-reply' | 'unanswered' | 'one-way' | 'no-close' | 'retransmission' | 'slow-response' | 'rst'
+  type: 'syn-no-reply' | 'unanswered' | 'one-way' | 'no-close' | 'retransmission' | 'slow-response' | 'rst' | 'lost-segment' | 'out-of-order' | 'dup-ack'
   message: string
   packetNumber?: number
 }
@@ -104,4 +104,29 @@ export function hostPort(s: string): { host: string; port?: string } {
 
 export function hostOf(s: string): string {
   return hostPort(s).host
+}
+
+/**
+ * 是否为(无端口的)裸 IPv6 地址:含 ≥2 个冒号、至少一段空段(::)、各段为 1-4 位十六进制。
+ * "fe80::1:10" 这类以数字结尾的裸地址,hostPort 的启发式会误当作 host:port,
+ * 这里整体保留,避免方向比较/端点标签被截断。
+ */
+export function isBareIpv6(s: string): boolean {
+  if (!s.includes(':')) return false
+  const groups = s.split(':')
+  if (groups.length < 3) return false
+  let empty = 0
+  for (const g of groups) {
+    if (g === '') {
+      empty++
+      continue
+    }
+    if (g.length > 4 || !/^[0-9a-fA-F]+$/.test(g)) return false
+  }
+  return empty >= 1
+}
+
+/** 展示用主机名:裸 IPv6 整体保留;其余(IPv4:port / IPv6:port / MAC)剥离端口 */
+export function displayHost(s: string): string {
+  return isBareIpv6(s) ? s : hostOf(s)
 }

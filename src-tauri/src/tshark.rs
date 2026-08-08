@@ -50,10 +50,16 @@ fn bundled(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 pub fn run_capture(bin: &Path, file: &str) -> Result<String, String> {
+    if file.starts_with('-') {
+        return Err("invalid capture path".into()); // 防 `-` 前缀选项混淆/`-r -` 卡读 stdin
+    }
     run(bin, &["-r", file, "-T", "json", "-J", "frame eth ip ipv6 tcp udp http dns tls"])
 }
 
 pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
+    if file.starts_with('-') {
+        return Err("invalid capture path".into());
+    }
     let filter = format!("frame.number=={number}");
     run(bin, &["-r", file, "-Y", &filter, "-x"])
 }
@@ -129,6 +135,13 @@ mod tests {
     #[test]
     fn run_hex_rejects_bad_binary() {
         assert!(run_hex(Path::new("/nonexistent/tshark"), "x.pcapng", 1).is_err());
+    }
+
+    #[test]
+    fn run_rejects_dash_prefixed_capture_path() {
+        // `-` 前缀会被 tshark 当作选项,`-r -` 会卡读 stdin
+        assert!(run_capture(Path::new("/usr/bin/tshark"), "-Y").is_err());
+        assert!(run_hex(Path::new("/usr/bin/tshark"), "-r", 1).is_err());
     }
 
     #[test]

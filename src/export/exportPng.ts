@@ -1,7 +1,21 @@
 import { hostOf } from '../model/types'
 
+/** Windows 文件名非法字符(含 IPv6 冒号)替换为连字符 */
+const WIN_ILLEGAL = /[<>:"/\\|?*\x00-\x1f]/g
+function safePart(s: string): string {
+  return hostOf(s).replace(WIN_ILLEGAL, '-').replace(/-{2,}/g, '-')
+}
+
 export function defaultPngName(client: string, server: string, proto: string): string {
-  return `${hostOf(client)}-${hostOf(server)}-${proto}.png`
+  return `${safePart(client)}-${safePart(server)}-${proto.replace(WIN_ILLEGAL, '-')}.png`
+}
+
+/** 导出时克隆 SVG 并去掉缩放 transform,避免把 scale(zoom) 烤进图片导致裁剪/留白 */
+export function serializeSvgForExport(svgEl: SVGSVGElement): string {
+  const clone = svgEl.cloneNode(true) as SVGSVGElement
+  clone.style.transform = ''
+  clone.style.transformOrigin = ''
+  return new XMLSerializer().serializeToString(clone)
 }
 
 export async function exportSvgPng(svgEl: SVGSVGElement | null, fileName: string): Promise<void> {
@@ -23,7 +37,7 @@ export async function exportSvgPng(svgEl: SVGSVGElement | null, fileName: string
 }
 
 function svgToBlob(svgEl: SVGSVGElement): Promise<Blob> {
-  const xml = new XMLSerializer().serializeToString(svgEl)
+  const xml = serializeSvgForExport(svgEl)
   const svg64 = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml)
   return new Promise((resolve, reject) => {
     const img = new Image()

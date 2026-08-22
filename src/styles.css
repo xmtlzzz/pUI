@@ -91,6 +91,26 @@ table.list tr.has-issue { background: #fffbeb; }
 table.list tr.has-issue:hover { background: #fef3c7; }
 table.list tr.has-issue.sel { background: #fef3c7; }
 table.list .col-issue { width: 24px; text-align: center; }
+th.sorted { color: #2563eb; cursor: pointer; user-select: none; }
+th.sorted:hover, table.list th { cursor: pointer; }
+table.list th:hover { color: #2563eb; }
+table.list .time-col { color: #94a3b8; }
+
+/* 左栏 Tab:会话 / 主机 / 摘要 */
+.pane-tabs { display: flex; gap: 4px; padding: 6px 8px 2px; }
+.pane-tabs button { flex: 1; padding: 4px 0; font-size: 12px; border: 1px solid #e2e8f0; background: #fff; color: #64748b; border-radius: 6px; cursor: pointer; }
+.pane-tabs button.on { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
+
+/* 摘要面板 */
+.summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; padding: 8px; font-size: 12px; color: #475569; }
+.summary-grid b { color: #1e293b; }
+.sub-title { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: .4px; padding: 8px 8px 4px; }
+.bar-row { display: flex; align-items: center; gap: 6px; padding: 2px 8px; font-size: 12px; }
+.bar-label { width: 52px; text-align: right; color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { flex: 1; height: 8px; background: #f1f5f9; border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width .25s ease; }
+.bar-val { width: 30px; color: #94a3b8; }
+.issue-line { padding: 2px 8px 4px; font-size: 12px; color: #b45309; line-height: 1.6; }
 .issue-mark { color: #d97706; cursor: help; font-size: 13px; }
 .badge { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 11px; }
 .badge.chip { border: none; cursor: pointer; font-size: 12px; animation: chipIn .18s ease; transition: transform .12s ease, box-shadow .12s ease; }

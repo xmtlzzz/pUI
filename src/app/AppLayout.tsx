@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { Toolbar } from './Toolbar'
 import { FilterPanel } from './FilterPanel'
-import { ConversationList } from './ConversationList'
+import { ListPane } from './ListPane'
 import { SequenceDiagram } from '../render/SequenceDiagram'
 import { PacketDetail } from '../detail/PacketDetail'
 import { useApp, selectSelected } from '../state/appStore'
@@ -143,7 +143,7 @@ export function AppLayout() {
           <FilterPanel />
         </div>
         <div className="pane list" style={{ width: listWidth }}>
-          <ConversationList />
+          <ListPane />
         </div>
         <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
         <div className="pane view">

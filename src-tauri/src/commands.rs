@@ -86,14 +86,15 @@ fn open_capture_blocking(
     })
 }
 
-/// 捕获数据(base64)解码上限:约 256MB,防止超大打爆内存
-const MAX_CAPTURE_BASE64: usize = 256 * 1024 * 1024;
+/// 捕获数据(base64 文本)解码上限:约 128MB(解码后约 96MB),防止超大打爆内存
+const MAX_CAPTURE_BASE64: usize = 128 * 1024 * 1024;
 /// 文本导出(时序叙述 Markdown)上限:约 2MB,远超正常会话
 const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 /// PNG(base64)上限:约 64MB,时序图导出远小于此
 const MAX_PNG_BASE64: usize = 64 * 1024 * 1024;
-/// 输入抓包文件上限:过大直接拒绝,避免 tshark 产出巨型 JSON
-const MAX_CAPTURE_FILE: u64 = 512 * 1024 * 1024;
+/// 输入抓包文件上限:与 JSON 上限(64MB)匹配——超大输入经 IPC+JSON.parse 会放大数 GB,
+/// 档位回收:128MB 输入(中等抓包)仍可打开,巨型文件明确拒绝
+const MAX_CAPTURE_FILE: u64 = 128 * 1024 * 1024;
 
 /// 校验 tshark 路径:须为绝对路径、真实常规文件(拒绝符号链接冒名)、文件名含 tshark。
 /// 缩小「set_tshark_path + open_capture = 任意二进制执行」的能力面。

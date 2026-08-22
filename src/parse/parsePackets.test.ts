@@ -41,6 +41,13 @@ describe('parsePackets', () => {
     expect(p.direction).toBe('other') // 方向在聚合阶段确定
   })
 
+  it('超过解析上限的 JSON 文本直接拒绝(防 JSON.parse 对象图放大数 GB)', () => {
+    const huge = '['.padEnd(64 * 1024 * 1024 + 1, ' ')
+    expect(() => parsePackets(huge)).toThrow(/过大/)
+    // 略小于上限的畸形文本仍走 JSON 语法错误(守卫只挡体积)
+    expect(() => parsePackets('[')).toThrow()
+  })
+
   it('解析 frame.interface_id 供接口数统计', () => {
     const raw = JSON.stringify([
       {

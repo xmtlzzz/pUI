@@ -8,8 +8,9 @@ use tauri::Manager;
 
 use crate::commands::AppState;
 
-/// tshark `-T json` 输出上限:超过即终止子进程,防止超大抓包把内存打爆
-const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
+/// tshark `-T json` 输出上限:超过即终止子进程,防止超大抓包把内存打爆。
+/// 64MB 与前端 parsePackets 守卫同档:JSON.parse 的对象图放大 4-8 倍仍可控
+const MAX_CAPTURE_JSON: u64 = 64 * 1024 * 1024;
 /// 单帧 hex 文本上限(正常 <1MB;恶意巨型帧由该上限兜底,防全量缓冲 OOM)
 const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
 /// 子进程墙钟超时:超时 kill 并返回可读错误,防止挂死的 tshark 永久占线

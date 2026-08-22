@@ -4,6 +4,10 @@ interface RawJson {
   _source: { layers: Record<string, Record<string, string | string[]>> }
 }
 
+/** 解析文本上限:Rust 侧 MAX_CAPTURE_JSON(64MB)同档。JSON.parse 会把文本放大 4-8 倍
+ *  成对象图(每帧数十个字段键),不加守卫会让 64MB 文本撑爆前端进程。 */
+const MAX_PARSE_JSON = 64 * 1024 * 1024
+
 function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v
 }
@@ -133,6 +137,9 @@ function parseResponseCode(line: string | undefined): string | undefined {
 }
 
 export function parsePackets(jsonText: string): Packet[] {
+  if (jsonText.length > MAX_PARSE_JSON) {
+    throw new Error(`抓包 JSON 过大(${(jsonText.length / 1024 / 1024).toFixed(1)}MB),请使用更小的抓包或先筛选`)
+  }
   const data = JSON.parse(jsonText) as RawJson[]
   return data.map((entry, i) => {
     const L = entry._source.layers

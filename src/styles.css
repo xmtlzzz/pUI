@@ -177,12 +177,7 @@ table.list .time-col { color: #94a3b8; }
 .seg-nav button { font-size: 11px; padding: 1px 6px; border: 1px solid #e2e8f0; background: #fff; color: #64748b; border-radius: 4px; cursor: pointer; }
 .seg-nav button.on { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
 .topo-wrap { padding: 0 8px 8px; }
-.topo-svg { width: 100%; height: auto; background: #fff; border: 1px solid #eef2f7; border-radius: 8px; touch-action: none; }
-.topo-label { paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
-.topo3d { width: 100%; height: 420px; border: 1px solid #eef2f7; border-radius: 8px; overflow: hidden; background: #f8fafc; }
-.topo-dim { margin-left: 8px; }
-.topo-dim button { font-size: 11px; padding: 1px 8px; border: 1px solid #e2e8f0; background: #fff; color: #64748b; border-radius: 4px; cursor: pointer; }
-.topo-dim button.on { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
+.topo-svg { width: 100%; height: auto; background: #fff; border: 1px solid #eef2f7; border-radius: 8px; }
 .topo-edge { cursor: pointer; transition: stroke .12s ease; }
 .topo-edge:hover { stroke: #7c3aed !important; }
 .topo-hint { margin-top: 4px; font-size: 11px; color: #94a3b8; }

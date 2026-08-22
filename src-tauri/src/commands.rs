@@ -10,6 +10,8 @@ pub struct AppState {
     pub tshark_path: Mutex<Option<PathBuf>>,
     /// resolve 结果缓存,避免每次调用都重新 spawn `where`/`tshark`(见 tshark::resolve_cached)
     pub resolved_path: Mutex<Option<PathBuf>>,
+    /// open_capture_data 写入的临时抓包文件,应用退出时统一清理(敏感数据不残留 %TEMP%)
+    pub temp_files: Mutex<Vec<PathBuf>>,
 }
 
 /// 命令全部 async + spawn_blocking:Tauri 同步命令跑在主线程,
@@ -30,8 +32,8 @@ pub async fn locate_tshark(
 #[tauri::command]
 pub fn set_tshark_path(path: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     let p = validate_tshark_path(&path)?;
-    *state.tshark_path.lock().unwrap() = Some(p);
-    *state.resolved_path.lock().unwrap() = None; // 使缓存失效
+    *state.tshark_path.lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
+    *state.resolved_path.lock().unwrap_or_else(|e| e.into_inner()) = None; // 使缓存失效
     Ok(())
 }
 
@@ -55,15 +57,26 @@ pub async fn open_capture(
         .map_err(|e| format!("open_capture task failed: {e}"))?
 }
 
+/// 校验捕获路径为常规文件并返回大小:目录/命名管道/FIFO 直达 tshark,
+/// 会让 `-r` 读 FIFO 永不 EOF(无超时下整窗挂死),必须前置拦截
+fn check_capture_path(path: &str) -> Result<u64, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("capture path is not a regular file".into());
+    }
+    let size = meta.len();
+    if size > MAX_CAPTURE_FILE {
+        return Err("capture file too large".into());
+    }
+    Ok(size)
+}
+
 fn open_capture_blocking(
     path: &str,
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
 ) -> Result<CaptureOutput, String> {
-    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if size > MAX_CAPTURE_FILE {
-        return Err("capture file too large".into());
-    }
+    let size = check_capture_path(path)?;
     let bin = tshark::resolve_cached(app, state).ok_or("tshark not found: set its path in settings")?;
     let json = tshark::run_capture(&bin, path)?;
     Ok(CaptureOutput {
@@ -80,29 +93,63 @@ const MAX_PNG_BASE64: usize = 64 * 1024 * 1024;
 /// 输入抓包文件上限:过大直接拒绝,避免 tshark 产出巨型 JSON
 const MAX_CAPTURE_FILE: u64 = 512 * 1024 * 1024;
 
-/// 校验 tshark 路径:须为绝对路径、文件存在、文件名含 tshark。
+/// 校验 tshark 路径:须为绝对路径、真实常规文件(拒绝符号链接冒名)、文件名含 tshark。
 /// 缩小「set_tshark_path + open_capture = 任意二进制执行」的能力面。
 fn validate_tshark_path(path: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::PathBuf::from(path);
     if !p.is_absolute() {
         return Err("tshark path must be absolute".into());
     }
-    if !p.is_file() {
-        return Err("tshark path does not exist".into());
+    let meta = std::fs::symlink_metadata(&p).map_err(|_| "tshark path does not exist".to_string())?;
+    if meta.file_type().is_symlink() || !meta.file_type().is_file() {
+        return Err("tshark path must be a real file, not a symbolic link".into());
+    }
+    #[cfg(windows)]
+    {
+        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
+        if !ext.eq_ignore_ascii_case("exe") {
+            // .bat/.cmd 等可由 CreateProcess 执行,仅文件名含 tshark 不足以拦截
+            return Err("tshark path must be a .exe executable on Windows".into());
+        }
     }
     let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
     if !name.contains("tshark") {
         return Err("path must point to a tshark executable".into());
     }
-    Ok(p)
+    // 规范化为真实路径,收窄「校验通过后被替换」的 TOCTOU 面
+    Ok(std::fs::canonicalize(&p).unwrap_or(p))
 }
 
-/// 清洗临时文件名:只取 basename,拒绝空名/隐藏文件/`..`,防路径穿越写到临时目录之外
+/// Windows 保留设备名(CON/PRN/AUX/NUL/COM1-9/LPT1-9):写进 %TEMP%\NUL 会静默丢数据
+const WINDOWS_RESERVED: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// 清洗临时文件名:只取 basename,拒绝空名/隐藏文件/`..`,防路径穿越写到临时目录之外;
+/// Windows 上另拒绝保留设备名/NTFS 交替流(冒号)/尾随点与空格(系统归一化后别名覆盖)
 fn sanitize_capture_name(file_name: &str) -> Option<String> {
-    std::path::Path::new(file_name)
+    let base = std::path::Path::new(file_name)
         .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .filter(|n| !n.is_empty() && !n.contains("..") && !n.starts_with('.'))
+        .map(|s| s.to_string_lossy().into_owned())?;
+    if base.is_empty() || base.contains("..") || base.starts_with('.') {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        let stem = base.split('.').next().unwrap_or("");
+        if WINDOWS_RESERVED.contains(&stem.to_ascii_uppercase().as_str()) {
+            return None;
+        }
+        if base.contains(':') {
+            return None; // NTFS 交替数据流(evil.pcap:stream 会留幽灵文件)
+        }
+        let trimmed = base.trim_end_matches(['.', ' ', '\t']);
+        if trimmed != base || base.ends_with('.') || base.ends_with(' ') {
+            return None; // 尾随点/空格被 Windows 归一化,与相邻文件别名冲突
+        }
+    }
+    Some(base)
 }
 
 #[tauri::command]
@@ -122,9 +169,14 @@ pub async fn open_capture_data(
         }
         let bytes = B64.decode(base64_data).map_err(|e| e.to_string())?;
         let name = sanitize_capture_name(&file_name).ok_or("invalid capture file name")?;
-        let dir = std::env::temp_dir();
-        let tmp = dir.join(&name);
+        // 唯一化临时文件名:固定名会与并发打开写同一路径(读到撕裂文件),且便于退出时按注册表清理
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let tmp = std::env::temp_dir().join(format!("pui-{token}-{name}"));
         std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+        state.temp_files.lock().unwrap_or_else(|e| e.into_inner()).push(tmp.clone());
         open_capture_blocking(&tmp.to_string_lossy().into_owned(), &app, &state)
     })
     .await
@@ -175,12 +227,65 @@ mod tests {
     #[test]
     fn sanitize_capture_name_neutralizes_traversal() {
         assert_eq!(sanitize_capture_name("http.pcapng").as_deref(), Some("http.pcapng"));
-        // 目录穿越被中和为纯 basename,只可能写到 temp_dir 内
-        assert_eq!(sanitize_capture_name("..\\..\\x.bat").as_deref(), Some("x.bat"));
         assert_eq!(sanitize_capture_name("a/b.pcapng").as_deref(), Some("b.pcapng"));
         assert_eq!(sanitize_capture_name(".hidden"), None); // 隐藏文件
         assert_eq!(sanitize_capture_name("a..b.pcap"), None); // 名字含 ".."
         assert_eq!(sanitize_capture_name(""), None);
+        if cfg!(windows) {
+            // Windows:反斜杠是分隔符,目录穿越被中和为纯 basename(只能写到 temp_dir 内)
+            assert_eq!(sanitize_capture_name("..\\..\\x.bat").as_deref(), Some("x.bat"));
+        } else {
+            // Unix:反斜杠不是分隔符,整体含 ".." 被拒;正斜杠穿越被中和
+            assert_eq!(sanitize_capture_name("..\\..\\x.bat"), None);
+            assert_eq!(sanitize_capture_name("../x.bat").as_deref(), Some("x.bat"));
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn sanitize_rejects_windows_reserved_names_and_ads() {
+        // Windows 保留设备名写进 %TEMP%\NUL 会静默丢数据;ADS/尾随点会留幽灵文件或别名覆盖
+        for n in ["NUL", "CON", "PRN", "AUX", "COM1", "COM9", "LPT1", "LPT9", "CON.txt"] {
+            assert_eq!(sanitize_capture_name(n), None, "{n} 应被拒绝");
+        }
+        assert_eq!(sanitize_capture_name("evil.pcap:stream"), None); // NTFS 交替流
+        assert_eq!(sanitize_capture_name("name.txt."), None); // 尾随点被 Windows 归一化
+        assert_eq!(sanitize_capture_name("name.txt "), None); // 尾随空格
+        assert_eq!(sanitize_capture_name("name.txt\t"), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn validate_tshark_path_rejects_non_exe() {
+        // Windows 下 CreateProcess 可执行 .bat,仅文件名含 tshark 不足以拦截
+        let dir = std::env::temp_dir();
+        let bat = dir.join("pui-tshark-tool.bat");
+        std::fs::write(&bat, b"@echo off").unwrap();
+        let bat_abs = std::fs::canonicalize(&bat).unwrap().to_string_lossy().into_owned();
+        assert!(validate_tshark_path(&bat_abs).is_err());
+        let _ = std::fs::remove_file(&bat);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn validate_tshark_path_rejects_symlink() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir();
+        let target = dir.join("pui-tshark-real");
+        std::fs::write(&target, b"x").unwrap();
+        let link = dir.join("pui-tshark-link");
+        let _ = std::fs::remove_file(&link);
+        symlink(&target, &link).unwrap();
+        let link_abs = link.to_string_lossy().into_owned();
+        assert!(validate_tshark_path(&link_abs).is_err(), "符号链接不得冒充 tshark");
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&link);
+    }
+
+    #[test]
+    fn check_capture_path_rejects_directory() {
+        // 目录/命名管道直达 tshark:目录尚会报错,FIFO 会让 tshark 永不 EOF 挂死
+        assert!(check_capture_path(&std::env::temp_dir().to_string_lossy()).is_err());
     }
 
     #[test]

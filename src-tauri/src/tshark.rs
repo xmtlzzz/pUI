@@ -19,7 +19,7 @@ const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
     // ① 用户设置路径
-    if let Some(p) = state.tshark_path.lock().unwrap().clone() {
+    if let Some(p) = state.tshark_path.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         if p.exists() {
             return Some(p);
         }
@@ -37,7 +37,7 @@ pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
 /// 解析结果缓存:打包后的 GUI 无控制台,每次 spawn 子进程都会闪现 cmd 窗口并带来延迟,
 /// 因此把解析结果缓存下来,仅当路径失效或用户重新设置时再解析。
 pub fn resolve_cached(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
-    let mut cache = state.resolved_path.lock().unwrap();
+    let mut cache = state.resolved_path.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(p) = cache.as_ref() {
         if p.exists() {
             return Some(p.clone());

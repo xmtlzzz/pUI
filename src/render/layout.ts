@@ -9,6 +9,7 @@ export interface LayoutMessage {
   x2: number
   y2: number
   time: number
+  timeEpoch?: number
   len: number
   info: string
   proto: string
@@ -42,6 +43,7 @@ export function layoutSequence(packets: Packet[], style: 'A' | 'B', client: stri
       id: p.number,
       fromLeft,
       time: p.time,
+      timeEpoch: p.timeEpoch,
       len: p.len,
       info: p.info ?? '',
       proto: p.proto,

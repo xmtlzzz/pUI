@@ -17,6 +17,7 @@ export function AppLayout() {
   const error = useApp((s) => s.error)
   const selected = useApp((s) => selectSelected(s))
   const diagramStyle = useApp((s) => s.diagramStyle)
+  const timeMode = useApp((s) => s.timeMode)
   const selectPacket = useApp((s) => s.selectPacket)
   const [drag, setDrag] = useState(false)
   const [zoom, setZoom] = useState(1)
@@ -146,7 +147,7 @@ export function AppLayout() {
         </div>
         <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
         <div className="pane view">
-          <SequenceDiagram conv={selected} style={diagramStyle} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+          <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
           <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
           <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
             <PacketDetail />

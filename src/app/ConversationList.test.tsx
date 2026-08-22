@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { describe, expect, it, beforeEach } from 'vitest'
-import { render } from '@testing-library/react'
+import { afterEach, describe, expect, it, beforeEach } from 'vitest'
+import { render, fireEvent, cleanup } from '@testing-library/react'
+
+afterEach(cleanup) // 列表行残留在 body,必须显式清理避免跨用例重复表头
 import { ConversationList } from './ConversationList'
 import { useApp } from '../state/appStore'
 import type { AppState } from '../state/appStore'
@@ -35,5 +37,33 @@ describe('ConversationList 超长列表', () => {
     useApp.setState({ filtered: few, conversations: few })
     const { container } = render(<ConversationList />)
     expect(container.querySelectorAll('tbody tr').length).toBe(2)
+  })
+
+  it('展示开始时间列', () => {
+    const few = [{ ...conv('a'), start: 1.25, end: 1.25 }]
+    useApp.setState({ filtered: few, conversations: few })
+    const { container } = render(<ConversationList />)
+    expect(container.textContent).toContain('1.25s')
+  })
+
+  it('点击表头切换排序(同列再点反向)', () => {
+    const mk = (id: string, client: string, duration: number): Conversation => ({
+      ...conv(id),
+      client,
+      start: Number(id), // a=1, b=2, c=3
+      end: Number(id) + 1,
+      bytes: 100,
+      packetCount: 1,
+      duration,
+    })
+    const list = [mk('a', 'c1', 33), mk('b', 'c2', 11), mk('c', 'c3', 22)]
+    useApp.setState({ filtered: list, conversations: list, sortKey: 'start', sortDir: 'asc' })
+    const { container, getByText } = render(<ConversationList />)
+    fireEvent.click(getByText(/时长/))
+    // 按 duration 升序:b(11) → c(22) → a(33)
+    expect(container.querySelectorAll('tbody tr')[0].textContent).toContain('c2')
+    fireEvent.click(getByText(/时长/))
+    // 再点 → 降序:a(33) → c(22) → b(11)
+    expect(container.querySelectorAll('tbody tr')[0].textContent).toContain('c1')
   })
 })

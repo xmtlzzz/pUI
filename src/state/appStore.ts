@@ -3,6 +3,7 @@ import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
 import { openCapture, openSample, fetchHex } from '../bridge/tauri'
 import { emptyFilter } from '../model/types'
+import type { SortKey, SortDir } from '../app/sortConversations'
 import type { CaptureMeta, Conversation, FilterCondition, FilterOptions, Packet } from '../model/types'
 
 function deriveFiltered(conversations: Conversation[], filter: FilterCondition): Conversation[] {
@@ -46,6 +47,9 @@ export interface AppState {
   /** 加载序号:用于丢弃被新加载覆盖的过期异步结果 */
   loadSeq: number
   diagramStyle: 'A' | 'B'
+  timeMode: 'relative' | 'absolute'
+  sortKey: SortKey
+  sortDir: SortDir
   loading: boolean
   error: string | null
   hexCache: Record<number, string>
@@ -56,6 +60,8 @@ export interface AppState {
   select: (id: string) => void
   selectPacket: (n: number) => void
   setDiagramStyle: (s: 'A' | 'B') => void
+  setTimeMode: (m: 'relative' | 'absolute') => void
+  setSort: (key: SortKey) => void
   fetchHexFor: (n: number) => Promise<string>
   getHex: (n: number) => string | null
 }
@@ -72,6 +78,9 @@ export const useApp = create<AppState>((set, get) => ({
   currentPath: '',
   loadSeq: 0,
   diagramStyle: 'A',
+  timeMode: 'relative',
+  sortKey: 'start',
+  sortDir: 'asc',
   loading: false,
   error: null,
   hexCache: {},
@@ -130,6 +139,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setDiagramStyle(s) {
     set({ diagramStyle: s })
+  },
+  setTimeMode(m) {
+    set({ timeMode: m })
+  },
+  setSort(key) {
+    const s = get()
+    if (s.sortKey === key) {
+      // 同列再点:切换升降序(PRD F3 交互)
+      set({ sortDir: s.sortDir === 'asc' ? 'desc' : 'asc' })
+    } else {
+      set({ sortKey: key, sortDir: 'asc' })
+    }
   },
   async fetchHexFor(n) {
     const path = get().currentPath

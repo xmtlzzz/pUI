@@ -41,6 +41,22 @@ describe('parsePackets', () => {
     expect(p.direction).toBe('other') // 方向在聚合阶段确定
   })
 
+  it('解析 frame.time_epoch 供绝对时间戳展示', () => {
+    const withEpoch = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '1', 'frame.time_relative': '0.000000', 'frame.time_epoch': '1590969600.123456', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:tcp' },
+            ip: { 'ip.src': '1.1.1.1', 'ip.dst': '2.2.2.2' },
+            tcp: { 'tcp.srcport': '12345', 'tcp.dstport': '80' },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(withEpoch)
+    expect(p.timeEpoch).toBeCloseTo(1590969600.123456, 5)
+  })
+
   it('tcp.flags 嵌套对象形态仍解析为十六进制(jsonraw/旧版 tshark 兼容)', () => {
     const nested = JSON.stringify([
       {

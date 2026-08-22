@@ -18,6 +18,8 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
   const loading = useApp((s) => s.loading)
   const diagramStyle = useApp((s) => s.diagramStyle)
   const setDiagramStyle = useApp((s) => s.setDiagramStyle)
+  const timeMode = useApp((s) => s.timeMode)
+  const setTimeMode = useApp((s) => s.setTimeMode)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const pickFile = async () => {
@@ -88,6 +90,14 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
               </button>
               <button className={diagramStyle === 'B' ? 'on' : ''} onClick={() => setDiagramStyle('B')}>
                 B 行式
+              </button>
+            </div>
+            <div className="seg" title="相对:相对首包秒数;绝对:本地时钟时间戳(PRD F4)">
+              <button className={timeMode === 'relative' ? 'on' : ''} onClick={() => setTimeMode('relative')}>
+                相对
+              </button>
+              <button className={timeMode === 'absolute' ? 'on' : ''} onClick={() => setTimeMode('absolute')}>
+                绝对
               </button>
             </div>
             <button className="btn icon" onClick={() => setZoom(Math.max(0.5, zoom - 0.1))} title="缩小">

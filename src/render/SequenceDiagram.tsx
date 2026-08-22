@@ -2,7 +2,15 @@ import { useMemo, useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
 import { displayHost } from '../model/types'
 import { protocolColor } from '../model/protocolColors'
+import { formatEpoch } from './timeFormat'
 import type { Conversation } from '../model/types'
+
+export type TimeMode = 'relative' | 'absolute'
+
+function fmtMsgTime(m: LayoutMessage, mode: TimeMode): string {
+  if (mode === 'absolute' && m.timeEpoch != null) return formatEpoch(m.timeEpoch)
+  return m.time.toFixed(3)
+}
 
 const DIR_COLOR: Record<string, string> = { request: '#3b82f6', response: '#f97316', other: '#94a3b8' }
 
@@ -13,12 +21,13 @@ function dirLabel(d: string): string {
 interface Props {
   conv: Conversation | null
   style: 'A' | 'B'
+  timeMode?: TimeMode
   onSelect: (n: number) => void
   svgRef: RefObject<SVGSVGElement | null>
   zoom: number
 }
 
-export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) {
+export function SequenceDiagram({ conv, style, timeMode = 'relative', onSelect, svgRef, zoom }: Props) {
   const [hover, setHover] = useState<LayoutMessage | null>(null)
 
   if (!conv) {
@@ -123,7 +132,7 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
                 {m.id}
               </text>
               <text x={6} y={m.y1 + 3} fill="#64748b" fontSize={9}>
-                {m.time.toFixed(3)}
+                {fmtMsgTime(m, timeMode)}
               </text>
               <text className="msg-label" x={(m.x1 + m.x2) / 2} y={Math.min(m.y1, m.y2) - 4} textAnchor="middle" fill={line} fontSize={10}>
                 {m.info} · {m.len}B
@@ -153,7 +162,7 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
             zIndex: 5,
           }}
         >
-          #{hover.id} · {dirLabel(hover.direction)} · {hover.info} · {hover.len}B · {hover.time.toFixed(3)}s
+          #{hover.id} · {dirLabel(hover.direction)} · {hover.info} · {hover.len}B · {fmtMsgTime(hover, timeMode)}s
         </div>
       )}
     </div>

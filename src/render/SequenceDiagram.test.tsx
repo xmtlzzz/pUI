@@ -64,6 +64,19 @@ describe('SequenceDiagram', () => {
     spy.mockRestore()
   })
 
+  it('absolute 模式显示绝对时间戳', () => {
+    const onSelect = vi.fn()
+    const convAbs = { ...conv, packets: [{ ...packets[0], time: 5, timeEpoch: 1590969600.5 }] }
+    const { container } = render(<SequenceDiagram conv={convAbs} style="B" timeMode="absolute" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(container.textContent).toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/) // HH:MM:SS.mmm
+  })
+
+  it('relative 模式(默认)仍显示相对秒数', () => {
+    const onSelect = vi.fn()
+    const { container } = render(<SequenceDiagram conv={conv} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(container.textContent).toContain('0.000')
+  })
+
   it('renders an empty state when no conversation selected', () => {
     const onSelect = vi.fn()
     const { getByText } = render(<SequenceDiagram conv={null} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)

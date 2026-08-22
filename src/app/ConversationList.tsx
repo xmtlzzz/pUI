@@ -1,8 +1,20 @@
+import { useMemo } from 'react'
 import { useApp, selectSelected } from '../state/appStore'
 import { protocolStyle } from '../model/protocolColors'
+import { sortConversations, type SortKey } from './sortConversations'
 
 /** 列表渲染上限:数万会话时全量渲染会让 DOM 爆炸,超限截断并提示用筛选缩小范围 */
 const LIST_TRUNCATE = 1000
+
+const COLUMNS: Array<{ key: SortKey; label: string }> = [
+  { key: 'client', label: '客户端' },
+  { key: 'server', label: '服务端' },
+  { key: 'protocol', label: '协议' },
+  { key: 'packetCount', label: '包' },
+  { key: 'bytes', label: '字节' },
+  { key: 'duration', label: '时长' },
+  { key: 'start', label: '开始' },
+]
 
 export function ConversationList() {
   const filtered = useApp((s) => s.filtered)
@@ -10,8 +22,14 @@ export function ConversationList() {
   const selected = useApp((s) => selectSelected(s))
   const select = useApp((s) => s.select)
   const hasData = useApp((s) => s.conversations.length > 0)
+  const sortKey = useApp((s) => s.sortKey)
+  const sortDir = useApp((s) => s.sortDir)
+  const setSort = useApp((s) => s.setSort)
   const truncated = filtered.length > LIST_TRUNCATE
-  const visible = truncated ? filtered.slice(0, LIST_TRUNCATE) : filtered
+  const visible = useMemo(
+    () => sortConversations(truncated ? filtered.slice(0, LIST_TRUNCATE) : filtered, sortKey, sortDir),
+    [filtered, sortKey, sortDir, truncated],
+  )
 
   if (!filtered.length) {
     return (
@@ -30,16 +48,22 @@ export function ConversationList() {
         <thead>
           <tr>
             <th className="col-issue" aria-label="状态"></th>
-            <th>客户端</th>
-            <th>服务端</th>
-            <th>协议</th>
-            <th>包</th>
-            <th>字节</th>
-            <th>时长</th>
+            {COLUMNS.map((col) => (
+              <th
+                key={col.key}
+                className={sortKey === col.key ? 'sorted' : ''}
+                aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                onClick={() => setSort(col.key)}
+                title={col.key === 'start' ? '按开始时间排序' : `按${col.label}排序`}
+              >
+                {col.label}
+                {sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+              </th>
+            ))}
           </tr>
         </thead>
         {/* 筛选变化时重挂载 tbody,行逐条滑入,让刷新可见 */}
-        <tbody key={JSON.stringify(filter)}>
+        <tbody key={`${JSON.stringify(filter)}-${sortKey}-${sortDir}`}>
           {visible.map((c, i) => {
             const st = protocolStyle(c.protocol)
             const hasIssue = c.issues.length > 0
@@ -67,6 +91,7 @@ export function ConversationList() {
                 <td>{c.packetCount}</td>
                 <td>{fmtBytes(c.bytes)}</td>
                 <td>{c.duration.toFixed(2)}s</td>
+                <td className="time-col">{c.start.toFixed(2)}s</td>
               </tr>
             )
           })}

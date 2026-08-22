@@ -4,6 +4,7 @@ export type Transport = 'tcp' | 'udp' | 'icmp' | 'arp' | 'other'
 export interface Packet {
   number: number
   time: number // frame.time_relative 秒
+  timeEpoch?: number // frame.time_epoch(绝对时间,秒),供相对/绝对时间戳切换
   len: number // frame.len 字节
   transport: Transport
   proto: string // 应用层协议:http / dns / tls / tcp / udp / icmp / arp ...

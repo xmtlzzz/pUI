@@ -71,6 +71,19 @@ describe('appStore 加载一致性', () => {
     expect(fetchHex).toHaveBeenCalledTimes(1)
   })
 
+  it('setTimeRange 只保留与时间窗重叠的会话(区间下钻)', async () => {
+    const early = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), { ...pkt(2, 'http', '2.2.2.2', 80, '1.1.1.1', 5000) } as Packet]
+    const late = [pkt(3, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53), { ...pkt(4, 'dns', '8.8.8.8', 53, '1.1.1.1', 5000) } as Packet]
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets: [...early, ...late], path: p }))
+    await useApp.getState().openFile('x.pcap')
+    expect(useApp.getState().filtered).toHaveLength(2)
+    useApp.getState().setTimeRange({ start: 2.5, end: 10 })
+    expect(useApp.getState().filtered).toHaveLength(1)
+    expect(useApp.getState().filtered[0].protocol).toBe('dns')
+    useApp.getState().setTimeRange(null)
+    expect(useApp.getState().filtered).toHaveLength(2)
+  })
+
   it('hexCache 超过上限按 LRU 逐出最旧条目', async () => {
     vi.mocked(fetchHex).mockImplementation((_p: string, n: number) => Promise.resolve(`hex${n}`))
     useApp.setState({ currentPath: 'x.pcap' })

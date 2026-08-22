@@ -3,11 +3,18 @@ import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
 import { openCapture, openSample, fetchHex } from '../bridge/tauri'
 import { emptyFilter } from '../model/types'
+import { overlapRange } from '../stats/histogram'
 import type { SortKey, SortDir } from '../app/sortConversations'
 import type { CaptureMeta, Conversation, FilterCondition, FilterOptions, Packet } from '../model/types'
 
-function deriveFiltered(conversations: Conversation[], filter: FilterCondition): Conversation[] {
-  return filterConversations(conversations, filter)
+export interface TimeRange {
+  start: number
+  end: number
+}
+
+function deriveFiltered(conversations: Conversation[], filter: FilterCondition, timeRange: TimeRange | null): Conversation[] {
+  const base = filterConversations(conversations, filter)
+  return timeRange ? overlapRange(base, timeRange) : base
 }
 
 /** hexCache 条目上限:长会话反复浏览报文时内存只增不减,超过上限按 LRU 逐出最旧条目 */
@@ -67,6 +74,9 @@ export interface AppState {
   /** 搜索命中待高亮的报文号(时序图定位跳转) */
   highlight: number[]
   setHighlight: (nums: number[]) => void
+  /** 时间窗下钻:直方图点击桶后只显示与窗口重叠的会话 */
+  timeRange: TimeRange | null
+  setTimeRange: (r: TimeRange | null) => void
   fetchHexFor: (n: number) => Promise<string>
   getHex: (n: number) => string | null
 }
@@ -88,6 +98,7 @@ export const useApp = create<AppState>((set, get) => ({
   sortDir: 'asc',
   searchQuery: '',
   highlight: [],
+  timeRange: null,
   loading: false,
   error: null,
   hexCache: {},
@@ -103,7 +114,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], loading: false,
+        currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -122,7 +133,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], loading: false,
+        currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -132,11 +143,14 @@ export const useApp = create<AppState>((set, get) => ({
 
   setFilter(patch) {
     const filter = { ...get().filter, ...patch }
-    set({ filter, filtered: deriveFiltered(get().conversations, filter) })
+    set({ filter, filtered: deriveFiltered(get().conversations, filter, get().timeRange) })
   },
   clearFilter() {
     const filter = emptyFilter()
-    set({ filter, filtered: deriveFiltered(get().conversations, filter) })
+    set({ filter, filtered: deriveFiltered(get().conversations, filter, get().timeRange) })
+  },
+  setTimeRange(r) {
+    set({ timeRange: r, filtered: deriveFiltered(get().conversations, get().filter, r) })
   },
   select(id) {
     set({ selectedId: id, selectedPacket: null })

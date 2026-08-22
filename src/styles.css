@@ -111,6 +111,12 @@ table.list .time-col { color: #94a3b8; }
 .bar-fill { height: 100%; border-radius: 4px; transition: width .25s ease; }
 .bar-val { width: 30px; color: #94a3b8; }
 .issue-line { padding: 2px 8px 4px; font-size: 12px; color: #b45309; line-height: 1.6; }
+.hist { display: flex; align-items: flex-end; gap: 2px; padding: 4px 8px 6px; height: 56px; }
+.hist-bar { flex: 1; min-width: 0; border: none; border-radius: 2px 2px 0 0; background: #bfdbfe; cursor: pointer; transition: background .12s ease; }
+.hist-bar:hover { background: #93c5fd; }
+.hist-bar.on { background: #7c3aed; }
+.range-line { padding: 2px 8px 6px; font-size: 12px; color: #7c3aed; }
+.range-clear { margin-left: 6px; border: 1px solid #ddd6fe; background: #f5f3ff; color: #6d28d9; border-radius: 4px; padding: 1px 6px; cursor: pointer; font-size: 11px; }
 .issue-mark { color: #d97706; cursor: help; font-size: 13px; }
 .badge { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 11px; }
 .badge.chip { border: none; cursor: pointer; font-size: 12px; animation: chipIn .18s ease; transition: transform .12s ease, box-shadow .12s ease; }

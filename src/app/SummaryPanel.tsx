@@ -1,17 +1,23 @@
 import { useMemo } from 'react'
 import { useApp } from '../state/appStore'
 import { deriveSummary } from '../stats/summaryStats'
+import { buildHistogram } from '../stats/histogram'
 import { protocolColor } from '../model/protocolColors'
 
 /** 左侧「摘要」面板:协议的体检报告(安全初看/教学场景) */
 export function SummaryPanel() {
   const conversations = useApp((s) => s.conversations)
+  const packets = useApp((s) => s.packets)
+  const timeRange = useApp((s) => s.timeRange)
+  const setTimeRange = useApp((s) => s.setTimeRange)
   const summary = useMemo(() => deriveSummary(conversations), [conversations])
+  const buckets = useMemo(() => buildHistogram(packets, 24), [packets])
 
   if (!summary.conversationCount) {
     return <div className="empty">打开文件后显示分析摘要</div>
   }
   const maxProto = Math.max(...summary.protocolCounts.map((p) => p.count), 1)
+  const maxBucket = Math.max(...buckets.map((b) => b.count), 1)
   return (
     <>
       <div className="pane-title">分析摘要</div>
@@ -40,6 +46,30 @@ export function SummaryPanel() {
       )}
       <div className="sub-title">Top 主机</div>
       <div className="issue-line">{summary.topHosts.map((h) => `${h.host} ${fmtBytes(h.bytes)}`).join(' · ')}</div>
+      <div className="sub-title">时间分布(点击桶下钻)</div>
+      <div className="hist">
+        {buckets.map((b) => {
+          const active = timeRange != null && b.start >= timeRange.start && b.end <= timeRange.end
+          return (
+            <button
+              key={b.index}
+              type="button"
+              className={`hist-bar${active ? ' on' : ''}`}
+              style={{ height: `${Math.max(3, (b.count / maxBucket) * 48)}px` }}
+              title={`${b.start.toFixed(2)}~${b.end.toFixed(2)}s · ${b.count} 报文`}
+              onClick={() => setTimeRange(timeRange != null && active ? null : { start: b.start, end: b.end })}
+            />
+          )
+        })}
+      </div>
+      {timeRange && (
+        <div className="range-line">
+          已下钻 {timeRange.start.toFixed(2)}~{timeRange.end.toFixed(2)}s · 会话 {summary.conversationCount}
+          <button type="button" className="range-clear" onClick={() => setTimeRange(null)}>
+            清除区间
+          </button>
+        </div>
+      )}
     </>
   )
 }

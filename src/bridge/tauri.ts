@@ -56,6 +56,7 @@ export async function openSample(name: string): Promise<{ meta: CaptureMeta; pac
     return { meta: computeMeta(`${name}.pcapng`, packets, out.size), packets, path: out.path }
   }
   const jres = await fetch(`/fixtures/examples/parsed/${name}.json`)
+  if (!jres.ok) throw new Error(`missing example: ${name}`)
   const raw = await jres.text()
   const packets = parsePackets(raw)
   return { meta: computeMeta(`${name}.pcapng`, packets), packets, path: name }

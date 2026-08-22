@@ -1,5 +1,5 @@
 import type { Packet, Direction } from '../model/types'
-import { hostOf } from '../model/types'
+import { displayHost } from '../model/types'
 
 export interface LayoutMessage {
   id: number
@@ -34,7 +34,7 @@ const SLOPE = 22
 export function layoutSequence(packets: Packet[], style: 'A' | 'B', client: string, _server: string): SequenceLayout {
   const n = Math.max(packets.length, 1)
   const height = TOP + n * ROW_H + 20
-  const clientIp = hostOf(client)
+  const clientIp = displayHost(client) // 与端点标签同规则(两侧同串比较,方向判定不受展示剥离影响)
 
   const messages: LayoutMessage[] = packets.map((p, i) => {
     const y = TOP + i * ROW_H

@@ -143,9 +143,11 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
           const retrans = m.analysis?.some((a) => a === 'retransmission' || a === 'fast-retransmission')
           const ooo = m.analysis?.includes('out-of-order')
           const dupAck = m.analysis?.includes('duplicate-ack')
-          const line = retrans ? '#ea580c' : protocolColor(m.proto)
+          const lostSeg = m.analysis?.includes('lost-segment')
+          const line = retrans || lostSeg ? '#ea580c' : protocolColor(m.proto)
           const dir = DIR_COLOR[m.direction]
-          const isHover = hover?.id === m.id
+          // 跨会话残留防护:旧会话的 hover 对象引用不在当前布局数组中则视为无效
+          const isHover = hover != null && layout.messages.some((mm) => mm === hover)
           const isHit = highlight?.includes(m.id) ?? false
           return (
             <g
@@ -164,12 +166,12 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
                 y2={m.y2}
                 stroke={line}
                 strokeWidth={isHover || isHit ? 2.6 : 1.6}
-                strokeDasharray={retrans || ooo ? '5,3' : undefined}
+                strokeDasharray={retrans || ooo || lostSeg ? '5,3' : undefined}
                 markerEnd={`url(#arr-${style})`}
               />
-              {(retrans || ooo || dupAck) && (
-                <text x={(m.x1 + m.x2) / 2} y={Math.min(m.y1, m.y2) - 14} textAnchor="middle" fontSize={9} fill={retrans ? '#ea580c' : '#0891b2'} fontWeight="bold">
-                  {retrans ? '↻重传' : ooo ? '⇄乱序' : '重复ACK'}
+              {(retrans || ooo || dupAck || lostSeg) && (
+                <text x={(m.x1 + m.x2) / 2} y={Math.min(m.y1, m.y2) - 14} textAnchor="middle" fontSize={9} fill={retrans || lostSeg ? '#ea580c' : '#0891b2'} fontWeight="bold">
+                  {retrans ? '↻重传' : ooo ? '⇄乱序' : lostSeg ? '✕丢段' : '重复ACK'}
                 </text>
               )}
               <circle cx={m.fromLeft ? CLIENT_X : SERVER_X} cy={m.y1 - 6} r={isHover ? 8 : 7} fill={dir} stroke="#fff" strokeWidth={1.5} className="dir-dot">

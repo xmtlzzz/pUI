@@ -36,6 +36,15 @@ export function AppLayout() {
   // 载入时即按当前窗口钳制,防止在大屏存下的尺寸在小屏上压没时序图
   const [listWidth, setListWidth] = useState(() => clamp(loadNum(LS_LIST, 380), 220, 720))
   const [detailHeight, setDetailHeight] = useState(() => clamp(loadNum(LS_DETAIL, 240), 90, Math.max(90, window.innerHeight - 220)))
+  // 窗口尺寸运行中变化时,把持久化的面板尺寸重新钳制到当前窗口内(避免压没时序图)
+  useEffect(() => {
+    const onResize = () => {
+      setListWidth((w) => clamp(w, 220, 720))
+      setDetailHeight((h) => clamp(h, 90, Math.max(90, window.innerHeight - 220)))
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   const listRef = useRef(listWidth)
   const detailRef = useRef(detailHeight)
   useEffect(() => {

@@ -60,10 +60,10 @@ export function FilterPanel() {
         hint="当前文件不含带端口报文(ARP 等)"
         onToggle={(v) => patch('dstPort', toggle(filter.dstPort.map(String), v))}
       />
-      <label className="field">
+      <label className="field" title="对全部已选条件整体取反:只看不满足任一条件的会话(条件之间的 AND 整体取非)">
         <input type="checkbox" checked={filter.negate} onChange={(e) => setFilter({ negate: e.target.checked })} /> 取反
       </label>
-      <label className="field">
+      <label className="field" title="只显示带异常标记的会话;与上方异常类型勾选叠加时按类型细化">
         <input type="checkbox" checked={filter.issueOnly} onChange={(e) => setFilter({ issueOnly: e.target.checked })} /> 仅看异常会话
       </label>
       {ISSUE_TYPES.map((it) => (

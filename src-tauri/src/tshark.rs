@@ -38,15 +38,17 @@ pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
 /// 解析结果缓存:打包后的 GUI 无控制台,每次 spawn 子进程都会闪现 cmd 窗口并带来延迟,
 /// 因此把解析结果缓存下来,仅当路径失效或用户重新设置时再解析。
 pub fn resolve_cached(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
-    let mut cache = state.resolved_path.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(p) = cache.as_ref() {
+    // 锁只覆盖「读缓存/写缓存」的短暂区间,resolve(可能 spawn where/which,耗时)在锁外执行,
+    // 避免并发命令排队等待外部进程
+    let cached = state.resolved_path.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(p) = cached {
         if p.exists() {
-            return Some(p.clone());
+            return Some(p);
         }
     }
     let resolved = resolve(app, state);
     if let Some(p) = resolved.as_ref() {
-        *cache = Some(p.clone());
+        *state.resolved_path.lock().unwrap_or_else(|e| e.into_inner()) = Some(p.clone());
     }
     resolved
 }
@@ -235,11 +237,25 @@ fn find_in_path() -> Option<String> {
     let mut cmd = Command::new(which);
     hide_console(&mut cmd);
     let out = cmd.arg("tshark").output().ok()?;
-    if out.status.success() {
-        String::from_utf8_lossy(&out.stdout).lines().next().map(|s| s.to_string())
-    } else {
-        None
+    if !out.status.success() {
+        return None;
     }
+    let hits: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    // 多个命中时按路径特征择优(优先 Wireshark 官方安装目录),其余按 PATH 顺序兜底
+    hits.iter()
+        .find(|p| prefers_wireshark_path(p))
+        .cloned()
+        .or_else(|| hits.first().cloned())
+}
+
+/// WSL 下的 /usr/bin/tshark 常是不完整移植,优先真实 Wireshark 安装
+fn prefers_wireshark_path(p: &str) -> bool {
+    let l = p.to_lowercase();
+    (l.contains("wireshark") || l.contains("program files")) && !l.contains("wsl")
 }
 
 fn first_existing(candidates: &[&str]) -> Option<String> {
@@ -386,6 +402,15 @@ mod tests {
             std::time::Duration::from_secs(60),
         );
         assert!(out.is_err(), "oversized output should be capped: {out:?}");
+    }
+
+    #[test]
+    fn prefers_wireshark_path_favors_real_install() {
+        assert!(prefers_wireshark_path("C:\\Program Files\\Wireshark\\tshark.exe"));
+        assert!(prefers_wireshark_path("/usr/local/wireshark/bin/tshark"));
+        assert!(!prefers_wireshark_path("/usr/bin/tshark"));
+        assert!(!prefers_wireshark_path("/mnt/c/wsl/usr/bin/tshark"));
+        assert!(!prefers_wireshark_path(""));
     }
 
     #[test]

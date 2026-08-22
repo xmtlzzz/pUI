@@ -37,8 +37,8 @@ describe('AppLayout smoke (real http fixture)', () => {
     const { container, getByText } = render(<AppLayout />)
 
     // 会话列表显示 HTTP 会话(协议 badge)
-    await waitFor(() => expect(container.querySelector('table.list .badge')?.textContent).toBe('http'))
-    expect(container.querySelectorAll('table.list tbody tr')).toHaveLength(1)
+    await waitFor(() => expect(container.querySelector('.cl-row .badge')?.textContent).toBe('http'))
+    expect(container.querySelectorAll('.cl-row')).toHaveLength(1)
 
     // 时序图渲染全部报文
     const msgs = container.querySelectorAll('.msg')

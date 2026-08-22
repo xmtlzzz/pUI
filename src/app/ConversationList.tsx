@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useApp, selectSelected } from '../state/appStore'
 import { protocolStyle } from '../model/protocolColors'
 import { sortConversations, type SortKey } from './sortConversations'
@@ -6,6 +6,10 @@ import { searchConversations } from '../search/searchPackets'
 
 /** 列表渲染上限:数万会话时全量渲染会让 DOM 爆炸,超限截断并提示用筛选缩小范围 */
 const LIST_TRUNCATE = 1000
+/** 虚拟化:固定行高 + 视口高度,只渲染可见窗口(±缓冲),滚动可达全部行 */
+const ROW_H = 28
+const VIEW_H = 600
+const ROW_BUFFER = 10
 
 const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: 'client', label: '客户端' },
@@ -19,7 +23,6 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
 
 export function ConversationList() {
   const filtered = useApp((s) => s.filtered)
-  const filter = useApp((s) => s.filter)
   const selected = useApp((s) => selectSelected(s))
   const select = useApp((s) => s.select)
   const hasData = useApp((s) => s.conversations.length > 0)
@@ -29,6 +32,7 @@ export function ConversationList() {
   const searchQuery = useApp((s) => s.searchQuery)
   const setSearchQuery = useApp((s) => s.setSearchQuery)
   const setHighlight = useApp((s) => s.setHighlight)
+  const [scrollTop, setScrollTop] = useState(0)
   const truncated = filtered.length > LIST_TRUNCATE
   // 搜索:命中会话+报文号;高亮联动在行点击时设置
   const searchHits = useMemo(() => searchConversations(filtered, searchQuery), [filtered, searchQuery])
@@ -40,6 +44,12 @@ export function ConversationList() {
     () => sortConversations(scoped, sortKey, sortDir),
     [scoped, sortKey, sortDir],
   )
+  // 窗口化:scrollTop → 可见行区间(±缓冲);列表缩短(搜索/截断)时 clamp 残留滚动位置
+  const total = visible.length
+  const safeTop = Math.min(scrollTop, Math.max(0, (total - 1) * ROW_H))
+  const start = Math.max(0, Math.floor(safeTop / ROW_H) - ROW_BUFFER)
+  const end = Math.min(total, Math.ceil((safeTop + VIEW_H) / ROW_H) + ROW_BUFFER)
+  const windowRows = visible.slice(start, end)
 
   if (!filtered.length) {
     return (
@@ -65,63 +75,63 @@ export function ConversationList() {
       <div className="pane-title">会话列表 ({searchActive ? visible.length : filtered.length})</div>
       <SearchBox query={searchQuery} setQuery={setSearchQuery} />
       {truncated && <div className="truncate-hint">已显示前 {LIST_TRUNCATE} 个会话(共 {filtered.length} 个),请使用筛选缩小范围</div>}
-      <table className="list">
-        <thead>
-          <tr>
-            <th className="col-issue" aria-label="状态"></th>
-            {COLUMNS.map((col) => (
-              <th
-                key={col.key}
-                className={sortKey === col.key ? 'sorted' : ''}
-                aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-                onClick={() => setSort(col.key)}
-                title={col.key === 'start' ? '按开始时间排序' : `按${col.label}排序`}
-              >
-                {col.label}
-                {sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {/* 筛选变化时重挂载 tbody,行逐条滑入,让刷新可见 */}
-        <tbody key={`${JSON.stringify(filter)}-${sortKey}-${sortDir}`}>
-          {visible.map((c, i) => {
+      <div className="cl-head">
+        <span className="col-issue" aria-label="状态" />
+        {COLUMNS.map((col) => (
+          <span
+            key={col.key}
+            className={sortKey === col.key ? 'sorted' : ''}
+            onClick={() => setSort(col.key)}
+            title={col.key === 'start' ? '按开始时间排序' : `按${col.label}排序`}
+          >
+            {col.label}
+            {sortKey === col.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+          </span>
+        ))}
+        {searchActive && <span className="hit-col">命中</span>}
+      </div>
+      <div className="cl-scroll" onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+        {/* 撑高占位:滚动条按总量计算,行绝对定位 */}
+        <div className="cl-body" style={{ height: total * ROW_H, position: 'relative' }}>
+          {windowRows.map((c, i) => {
+            const idx = start + i
             const st = protocolStyle(c.protocol)
             const hasIssue = c.issues.length > 0
             return (
-              <tr
+              <div
                 key={c.id}
-                className={`row-in${selected?.id === c.id ? ' sel' : ''}${hasIssue ? ' has-issue' : ''}`}
-                style={{ animationDelay: `${Math.min(i * 28, 300)}ms` }}
+                data-idx={idx}
+                className={`cl-row ${selected?.id === c.id ? 'sel' : ''}${hasIssue ? ' has-issue' : ''}`}
+                style={{ top: idx * ROW_H, height: ROW_H, animationDelay: `${Math.min(idx * 28, 300)}ms` }}
                 onClick={() => {
                   select(c.id)
                   if (searchActive) setHighlight(hitMap.get(c.id) ?? []) // 定位:高亮命中的报文
                 }}
               >
-                <td className="col-issue">
+                <span className="col-issue">
                   {hasIssue && (
                     <span className="issue-mark" title={c.issues.map((x) => x.message).join('\n')}>
                       ⚠
                     </span>
                   )}
-                </td>
-                <td title={c.client}>{c.client}</td>
-                <td title={c.server}>{c.server}</td>
-                <td>
+                </span>
+                <span className="cl-cell" title={c.client}>{c.client}</span>
+                <span className="cl-cell" title={c.server}>{c.server}</span>
+                <span>
                   <span className="badge" style={{ background: st.bg, color: st.fg }}>
                     {c.protocol}
                   </span>
-                </td>
-                <td>{c.packetCount}</td>
-                <td>{fmtBytes(c.bytes)}</td>
-                <td>{c.duration.toFixed(2)}s</td>
-                <td className="time-col">{c.start.toFixed(2)}s</td>
-                {searchActive && <td className="hit-col">{hitMap.get(c.id)?.length ?? 0} 命中</td>}
-              </tr>
+                </span>
+                <span>{c.packetCount}</span>
+                <span>{fmtBytes(c.bytes)}</span>
+                <span>{c.duration.toFixed(2)}s</span>
+                <span className="time-col">{c.start.toFixed(2)}s</span>
+                {searchActive && <span className="hit-col">{hitMap.get(c.id)?.length ?? 0} 命中</span>}
+              </div>
             )
           })}
-        </tbody>
-      </table>
+        </div>
+      </div>
     </>
   )
 }

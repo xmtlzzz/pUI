@@ -24,20 +24,42 @@ describe('ConversationList 超长列表', () => {
     useApp.setState(emptyState)
   })
 
-  it('超过 1000 个会话时只渲染前 1000 行并显示提示', () => {
+  it('超过 1000 个会话时截断 + 窗口化:DOM 只渲染可视窗口行', () => {
     const many: Conversation[] = []
     for (let i = 0; i < 1500; i++) many.push(conv(`k${i}`))
     useApp.setState({ filtered: many, conversations: many })
     const { container, getByText } = render(<ConversationList />)
-    expect(container.querySelectorAll('tbody tr').length).toBe(1000)
     expect(getByText(/已显示前 1000 个会话/)).toBeTruthy()
+    // 窗口化:固定行高 28 × 视口 600 → 可视 ~21 行 + 每侧缓冲 10 → DOM 远小于 1000
+    const rows = container.querySelectorAll('.cl-row')
+    expect(rows.length).toBeLessThanOrEqual(60)
+    expect(rows.length).toBeGreaterThan(10)
+    // 撑高保留全部 1000 行的高度,滚动可达
+    const body = container.querySelector('.cl-body') as HTMLElement
+    expect(body.style.height).toBe((1000 * 28) + 'px')
+  })
+
+  it('滚动后渲染窗口随 scrollTop 移动', () => {
+    const many: Conversation[] = []
+    for (let i = 0; i < 300; i++) many.push(conv(`k${i}`))
+    useApp.setState({ filtered: many, conversations: many })
+    const { container } = render(<ConversationList />)
+    const scroller = container.querySelector('.cl-scroll') as HTMLElement
+    const firstBefore = container.querySelector('.cl-row')?.getAttribute('data-idx')
+    scroller.scrollTop = 6000 // ≈ 第 204 行(300 行总高 8400)
+    fireEvent.scroll(scroller)
+    const rowsAfter = container.querySelectorAll('.cl-row')
+    expect(rowsAfter.length).toBeLessThanOrEqual(60)
+    const firstAfter = rowsAfter[0]?.getAttribute('data-idx')
+    expect(firstAfter).not.toBe(firstBefore)
+    expect(Number(firstAfter ?? -1)).toBeGreaterThanOrEqual(190)
   })
 
   it('未超限时完整渲染全部会话', () => {
     const few = [conv('a'), conv('b')]
     useApp.setState({ filtered: few, conversations: few })
     const { container } = render(<ConversationList />)
-    expect(container.querySelectorAll('tbody tr').length).toBe(2)
+    expect(container.querySelectorAll('.cl-row').length).toBe(2)
   })
 
   it('展示开始时间列', () => {
@@ -53,9 +75,9 @@ describe('ConversationList 超长列表', () => {
     useApp.setState({ filtered: [c1, c2], conversations: [c1, c2], searchQuery: '', highlight: [] })
     const { container, getByLabelText } = render(<ConversationList />)
     fireEvent.change(getByLabelText('搜索报文'), { target: { value: 'search' } })
-    expect(container.querySelectorAll('tbody tr').length).toBe(1)
+    expect(container.querySelectorAll('.cl-row').length).toBe(1)
     expect(container.textContent).toContain('1 命中')
-    fireEvent.click(container.querySelector('tbody tr') as Element)
+    fireEvent.click(container.querySelector('.cl-row') as Element)
     expect(useApp.getState().highlight).toEqual([3])
   })
 
@@ -74,9 +96,9 @@ describe('ConversationList 超长列表', () => {
     const { container, getByText } = render(<ConversationList />)
     fireEvent.click(getByText(/时长/))
     // 按 duration 升序:b(11) → c(22) → a(33)
-    expect(container.querySelectorAll('tbody tr')[0].textContent).toContain('c2')
+    expect(container.querySelectorAll('.cl-row')[0].textContent).toContain('c2')
     fireEvent.click(getByText(/时长/))
     // 再点 → 降序:a(33) → c(22) → b(11)
-    expect(container.querySelectorAll('tbody tr')[0].textContent).toContain('c1')
+    expect(container.querySelectorAll('.cl-row')[0].textContent).toContain('c1')
   })
 })

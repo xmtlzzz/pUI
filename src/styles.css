@@ -81,18 +81,23 @@ html, body, #root { height: 100%; margin: 0; font-family: system-ui, "Segoe UI",
 select.btn { appearance: none; -webkit-appearance: none; padding-right: 22px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%2394a3b8' fill='none' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
 
 /* ---------- 会话列表 ---------- */
-table.list { width: 100%; border-collapse: collapse; font-size: 12px; }
-table.list th { text-align: left; color: #94a3b8; font-weight: 500; border-bottom: 1px solid #e2e8f0; padding: 3px 4px; position: sticky; top: 0; background: #fff; }
-table.list td { padding: 4px; border-bottom: 1px solid #f1f5f9; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
-table.list tbody tr { cursor: pointer; transition: background .12s ease; }
-table.list tbody tr:hover { background: #f1f5f9; }
-table.list tr.sel { background: #eff6ff; }
-table.list tr.sel:hover { background: #dbeafe; }
-table.list tr.sel td:first-child { box-shadow: inset 3px 0 0 #2563eb; }
-table.list tr.has-issue { background: #fffbeb; }
-table.list tr.has-issue:hover { background: #fef3c7; }
-table.list tr.has-issue.sel { background: #fef3c7; }
-table.list .col-issue { width: 24px; text-align: center; }
+/* 会话列表(窗口化虚拟列表):固定表头 + 滚动体,行网格布局 */
+.cl-head, .cl-row { display: grid; grid-template-columns: 24px 1.2fr 1.2fr auto 38px 52px 52px 54px; gap: 6px; align-items: center; font-size: 12px; padding: 0 6px; }
+.cl-head { color: #94a3b8; font-weight: 500; border-bottom: 1px solid #e2e8f0; height: 24px; flex: none; }
+.cl-head > span { cursor: pointer; user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-head > span:hover { color: #2563eb; }
+.cl-head .sorted { color: #2563eb; }
+.cl-scroll { flex: 1; overflow: auto; position: relative; }
+.cl-body { width: 100%; }
+.cl-row { position: absolute; left: 0; right: 0; cursor: pointer; color: #475569; white-space: nowrap; border-bottom: 1px solid #f1f5f9; transition: background .12s ease; animation: rowIn .3s ease both; }
+.cl-row:hover { background: #f1f5f9; }
+.cl-row .cl-cell { overflow: hidden; text-overflow: ellipsis; }
+.cl-row.sel { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
+.cl-row.sel:hover { background: #dbeafe; }
+.cl-row.has-issue { background: #fffbeb; }
+.cl-row.has-issue:hover { background: #fef3c7; }
+.cl-row.has-issue.sel { background: #fef3c7; }
+.cl-row .col-issue { text-align: center; }
 th.sorted { color: #2563eb; cursor: pointer; user-select: none; }
 th.sorted:hover, table.list th { cursor: pointer; }
 table.list th:hover { color: #2563eb; }

@@ -100,6 +100,25 @@ describe('SequenceDiagram', () => {
     expect(container.textContent).toContain('0.000')
   })
 
+  it('从空态切换到有会话时不抛 hook 数量错误(真实点击会话路径)', () => {
+    const onSelect = vi.fn()
+    // 首次渲染 conv=null(打开文件后未选中会话),随后 rerender 为真实会话
+    const { rerender, container } = render(<SequenceDiagram conv={null} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(() => {
+      rerender(<SequenceDiagram conv={conv} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    }).not.toThrow()
+    expect(container.querySelectorAll('.msg').length).toBe(3)
+  })
+
+  it('从有会话切回空态再接新会话(切换文件路径)不抛错', () => {
+    const onSelect = vi.fn()
+    const { rerender } = render(<SequenceDiagram conv={conv} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(() => {
+      rerender(<SequenceDiagram conv={null} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+      rerender(<SequenceDiagram conv={conv} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    }).not.toThrow()
+  })
+
   it('renders an empty state when no conversation selected', () => {
     const onSelect = vi.fn()
     const { getByText } = render(<SequenceDiagram conv={null} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)

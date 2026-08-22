@@ -51,4 +51,31 @@ describe('AppLayout smoke (real http fixture)', () => {
 
     vi.unstubAllGlobals()
   })
+
+  it('打开文件后未选中会话 → 点击会话列表选中 → 时序图渲染且不白屏(真实路径回归)', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+
+    const { packets, conversations } = loadHttpFixture()
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      meta: { fileName: 'http.pcapng', packetCount: packets.length, interfaces: 1, timeStart: 0, timeEnd: 0.26, fileSize: 936 },
+      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
+      selectedId: null, // 未选中:时序图空态
+      diagramStyle: 'A',
+      searchQuery: '', highlight: [],
+    })
+
+    const { container } = render(<AppLayout />)
+    expect(container.querySelector('.empty')?.textContent).toContain('选择一个会话')
+
+    // 模拟点击会话列表行 → 选中 → 时序图必须在 hooks 数量一致的前提下正常渲染
+    useApp.setState({ selectedId: conversations[0].id })
+    await waitFor(() => expect(container.querySelectorAll('.msg').length).toBeGreaterThan(0))
+    expect(container.querySelector('.boundary-err')).toBeNull()
+
+    vi.unstubAllGlobals()
+  })
 })

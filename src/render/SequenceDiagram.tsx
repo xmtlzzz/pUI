@@ -41,11 +41,9 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
     setSegIdx(null) // 切换会话时回到「全部」
   }
 
-  if (!conv) {
-    return <div className="empty">从左侧选择一个会话查看时序图</div>
-  }
-
-  const activePackets = segIdx != null ? (segments[segIdx]?.packets ?? conv.packets) : conv.packets
+  // 所有 hooks 必须在提前 return 之前声明(否则空态→有会话会触发
+  // 「Rendered more hooks than during the previous render」白屏)
+  const activePackets = conv ? (segIdx != null ? (segments[segIdx]?.packets ?? conv.packets) : conv.packets) : []
   // 大包抽稀:>2000 报文按步长降采样渲染(首尾保底),交互仍基于原始报文号
   const stride = activePackets.length > 2000 ? Math.ceil(activePackets.length / 2000) : 1
   const downsampled = useMemo(() => {
@@ -57,11 +55,15 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
   }, [activePackets, stride])
   // 布局与大包提示只在会话/风格/分段/抽稀变化时重算:hover、zoom、选中等状态变化不再全量重排
   const layout = useMemo(
-    () => layoutSequence(downsampled, style, conv.client, conv.server),
-    [downsampled, style, conv.client, conv.server],
+    () => layoutSequence(downsampled, style, conv?.client ?? '', conv?.server ?? ''),
+    [downsampled, style, conv?.client, conv?.server],
   )
   const many = activePackets.length > 2000 // 标注按原始报文数(抽稀本身即提示)
   const protos = useMemo(() => [...new Set(downsampled.map((p) => p.proto))].sort(), [downsampled])
+
+  if (!conv) {
+    return <div className="empty">从左侧选择一个会话查看时序图</div>
+  }
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>

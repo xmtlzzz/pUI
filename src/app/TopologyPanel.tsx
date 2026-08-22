@@ -77,7 +77,7 @@ export function TopologyPanel() {
         </span>
       </div>
       {is3d ? (
-        <Topology3D topo={topo} />
+        <Topology3D topo={topo} onSelectConversation={select} />
       ) : (
         <svg
           ref={svgRef}

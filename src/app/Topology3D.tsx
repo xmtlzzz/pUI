@@ -2,10 +2,32 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Topology, TopologyEdge, TopologyNode } from '../stats/topology'
+import { fmtBytesShort } from './topoUtil'
 
-/*** 3D 拓扑视图(three.js):球面分布式节点 + 连线,OrbitControls 旋转/缩放。
- *  数据与 2D 拓扑同源;WebGL 不可用时显示降级提示。 */
-export function Topology3D({ topo }: { topo: Topology }) {
+/** 生成始终面向相机的文字标签(canvas 2d 不可用时返回 null,jsdom 降级) */
+export function makeHostLabel(text: string): THREE.Sprite | null {
+  const canvas = document.createElement('canvas')
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  const font = '12px system-ui, sans-serif'
+  const w = Math.max(40, ctx.measureText(text).width + 12)
+  canvas.width = Math.ceil(w)
+  canvas.height = 20
+  ctx.font = font
+  ctx.fillStyle = '#0f172a'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, canvas.width / 2, 10)
+  const texture = new THREE.CanvasTexture(canvas)
+  const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true })
+  const sprite = new THREE.Sprite(mat)
+  sprite.scale.set(canvas.width / 4, canvas.height / 4, 1)
+  return sprite
+}
+
+/*** 3D 拓扑视图(three.js):球面分布式节点 + 文字标签 + 连线,
+ *  OrbitControls 旋转/缩放;点击节点选中其首个会话。WebGL 不可用时降级提示。 */
+export function Topology3D({ topo, onSelectConversation }: { topo: Topology; onSelectConversation?: (convId: string) => void }) {
   const mountRef = useRef<HTMLDivElement | null>(null)
   const [webgl, setWebgl] = useState<boolean | null>(null)
 
@@ -46,10 +68,11 @@ export function Topology3D({ topo }: { topo: Topology }) {
     const group = new THREE.Group()
     scene.add(group)
 
-    // 球面分布节点(与 2D 拓扑同序)
+    // 球面分布节点 + 文字标签(jsdom 无 2d → null 跳过)
     const n = topo.nodes.length
     const radius = Math.min(150, Math.max(60, n * 14))
     const posMap = new Map<string, THREE.Vector3>()
+    const meshByHost = new Map<string, THREE.Mesh>()
     topo.nodes.forEach((node: TopologyNode, i: number) => {
       const phi = Math.acos(1 - (2 * (i + 0.5)) / Math.max(n, 1))
       const theta = Math.sqrt(Math.PI * n) * phi
@@ -68,7 +91,15 @@ export function Topology3D({ topo }: { topo: Topology }) {
       const mesh = new THREE.Mesh(geo, mat)
       mesh.position.copy(pos)
       mesh.userData.title = node.host
+      mesh.userData.hostId = node.id
       group.add(mesh)
+      meshByHost.set(node.id, mesh)
+      const label = makeHostLabel(node.host)
+      if (label) {
+        label.position.set(pos.x, pos.y + r + 7, pos.z)
+        label.userData.hostId = node.id
+        group.add(label)
+      }
     })
 
     // 连线:异常橙色,WebGL 线宽恒 1(粗细表达在 2D 视图)
@@ -81,18 +112,22 @@ export function Topology3D({ topo }: { topo: Topology }) {
         color: e.hasIssue ? '#f59e0b' : '#94a3b8',
       })
       const line = new THREE.Line(geo, mat)
-      line.userData.title = `\${e.from} ⇄ \${e.to} · \${fmtBytesShort(e.bytes)}\${e.hasIssue ? ' · ⚠异常' : ''}`
+      line.userData.title = `${e.from} ⇄ ${e.to} · ${fmtBytesShort(e.bytes)}${e.hasIssue ? ' · ⚠异常' : ''}`
       group.add(line)
     })
 
     const raycaster = new THREE.Raycaster()
     const pointer = new THREE.Vector2()
-    const onMove = (ev: PointerEvent) => {
+    const meshes = Array.from(meshByHost.values())
+    const pick = (ev: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect()
       pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1
       pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
-      const hits = raycaster.intersectObjects(Array.from(group.children).filter((c) => c instanceof THREE.Mesh), false)
+      return raycaster.intersectObjects(meshes, false)
+    }
+    const onMove = (ev: PointerEvent) => {
+      const hits = pick(ev)
       if (hits.length) {
         renderer.domElement.style.cursor = 'pointer'
         renderer.domElement.title = String(hits[0].object.userData.title ?? '')
@@ -101,7 +136,17 @@ export function Topology3D({ topo }: { topo: Topology }) {
         renderer.domElement.title = ''
       }
     }
+    const onClick = (ev: Event) => {
+      const hits = pick(ev as PointerEvent)
+      if (!hits.length || !onSelectConversation) return
+      const hostId = hits[0].object.userData.hostId as string | undefined
+      if (!hostId) return
+      // 选中该主机参与的第一条边对应的会话(与 2D 拓扑的点击语义对齐)
+      const edge = edges.find((e) => e.from === hostId || e.to === hostId)
+      if (edge) onSelectConversation(edge.convIds[0])
+    }
     renderer.domElement.addEventListener('pointermove', onMove)
+    renderer.domElement.addEventListener('click', onClick)
 
     const onResize = () => {
       const w = mount.clientWidth || width
@@ -125,6 +170,7 @@ export function Topology3D({ topo }: { topo: Topology }) {
       cancelAnimationFrame(raf)
       ro.disconnect()
       renderer.domElement.removeEventListener('pointermove', onMove)
+      renderer.domElement.removeEventListener('click', onClick)
       renderer.dispose()
       controls.dispose()
       group.clear()

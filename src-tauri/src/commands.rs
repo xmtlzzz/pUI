@@ -88,6 +88,8 @@ fn open_capture_blocking(
 
 /// 捕获数据(base64)解码上限:约 256MB,防止超大打爆内存
 const MAX_CAPTURE_BASE64: usize = 256 * 1024 * 1024;
+/// 文本导出(时序叙述 Markdown)上限:约 2MB,远超正常会话
+const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 /// PNG(base64)上限:约 64MB,时序图导出远小于此
 const MAX_PNG_BASE64: usize = 64 * 1024 * 1024;
 /// 输入抓包文件上限:过大直接拒绝,避免 tshark 产出巨型 JSON
@@ -216,6 +218,23 @@ pub async fn fetch_hex(
     })
     .await
     .map_err(|e| format!("fetch_hex task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn save_text(default_name: String, content: String) -> Result<Option<String>, String> {
+    if content.len() > MAX_TEXT_BYTES {
+        return Err("text too large".into());
+    }
+    let path = rfd::FileDialog::new()
+        .set_file_name(&default_name)
+        .add_filter("Markdown", &["md"])
+        .save_file();
+    if let Some(p) = path {
+        std::fs::write(&p, content).map_err(|e| e.to_string())?;
+        Ok(Some(p.to_string_lossy().into_owned()))
+    } else {
+        Ok(None)
+    }
 }
 
 #[tauri::command]

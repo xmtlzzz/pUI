@@ -80,6 +80,20 @@ export async function locateTshark(): Promise<string | null> {
   }
 }
 
+export async function saveText(defaultName: string, content: string): Promise<string | null> {
+  if (!isTauri()) {
+    // 浏览器回退:直接触发下载
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = defaultName
+    a.click()
+    URL.revokeObjectURL(url)
+    return defaultName
+  }
+  return invoke<string | null>('save_text', { defaultName, content })
+}
+
 export async function getTsharkVersion(): Promise<string | null> {
   if (!isTauri()) return null
   try {

@@ -7,6 +7,8 @@ import { PacketDetail } from '../detail/PacketDetail'
 import { useApp, selectSelected } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
+import { exportTranscript } from '../export/exportTranscript'
+import { saveText } from '../bridge/tauri'
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
@@ -49,6 +51,17 @@ export function AppLayout() {
       await exportSvgPng(svgRef.current, defaultPngName(selected.client, selected.server, selected.protocol))
     } catch (err) {
       // 导出失败(如会话过大超上限):把原因展示给用户,而非静默失败
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const onExportText = async () => {
+    if (!selected) return
+    try {
+      const md = exportTranscript(selected)
+      const name = defaultPngName(selected.client, selected.server, selected.protocol).replace(/\.png$/i, '.md')
+      await saveText(name, md)
+    } catch (err) {
       window.alert(err instanceof Error ? err.message : String(err))
     }
   }
@@ -137,7 +150,7 @@ export function AppLayout() {
       onDragLeave={() => setDrag(false)}
       onDrop={onDrop}
     >
-      <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} hasConversation={!!selected} />
+      <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
       {error && <div className="err">{error}</div>}
       <div className="body">
         <div className="pane filter">

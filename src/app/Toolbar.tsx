@@ -8,10 +8,11 @@ interface Props {
   zoom: number
   setZoom: (z: number) => void
   onExport: () => void
+  onExportText: () => void
   hasConversation: boolean
 }
 
-export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
+export function Toolbar({ zoom, setZoom, onExport, onExportText, hasConversation }: Props) {
   const meta = useApp((s) => s.meta)
   const openFile = useApp((s) => s.openFile)
   const openExample = useApp((s) => s.openExample)
@@ -121,6 +122,9 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
             </button>
             <button className="btn primary" onClick={onExport}>
               导出 PNG
+            </button>
+            <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
+              导出叙述
             </button>
           </>
         )}

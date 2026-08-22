@@ -23,6 +23,7 @@ pub fn run() {
             commands::open_capture_data,
             commands::fetch_hex,
             commands::tshark_version,
+            commands::save_text,
             commands::save_png,
         ])
         .build(tauri::generate_context!())

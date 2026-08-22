@@ -32,6 +32,15 @@ describe('buildTopology', () => {
     expect(t.edges).toHaveLength(0)
   })
 
+  it('仅 2 台主机时节点水平排列(不排成竖线)', () => {
+    // 真实常见:小会话集全部集中在两台主机之间
+    const convs = [conv('1', 'a:80', 'b:443', 100), conv('2', 'a:80', 'b:443', 60)]
+    const t = buildTopology(convs)
+    expect(t.nodes).toHaveLength(2)
+    expect(Math.abs(t.nodes[0].y - t.nodes[1].y)).toBeLessThan(1e-9) // 同一水平线
+    expect(t.nodes[0].x).not.toBe(t.nodes[1].x)
+  })
+
   it('空输入', () => {
     const t = buildTopology([])
     expect(t.nodes).toEqual([])

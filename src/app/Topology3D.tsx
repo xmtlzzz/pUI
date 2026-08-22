@@ -9,19 +9,23 @@ export function makeHostLabel(text: string): THREE.Sprite | null {
   const canvas = document.createElement('canvas')
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
-  const font = '12px system-ui, sans-serif'
-  const w = Math.max(40, ctx.measureText(text).width + 12)
-  canvas.width = Math.ceil(w)
-  canvas.height = 20
+  const font = '600 13px system-ui, sans-serif'
+  // 先在 2x 分辨率下测量,再建画布(设置 canvas 尺寸会重置上下文)——
+  // 顺序错误会导致字体回退到默认 10px,长主机名被截断
+  ctx.font = font
+  const w = Math.max(48, Math.ceil(ctx.measureText(text).width / 2) + 18)
+  const h = 18
+  canvas.width = w * 2
+  canvas.height = h * 2
   ctx.font = font
   ctx.fillStyle = '#0f172a'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText(text, canvas.width / 2, 10)
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2)
   const texture = new THREE.CanvasTexture(canvas)
   const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true })
   const sprite = new THREE.Sprite(mat)
-  sprite.scale.set(canvas.width / 4, canvas.height / 4, 1)
+  sprite.scale.set(w / 4, h / 4, 1)
   return sprite
 }
 

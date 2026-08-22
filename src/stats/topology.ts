@@ -50,7 +50,9 @@ export function buildTopology(convs: Conversation[], maxNodes = 24): Topology {
     .slice(0, maxNodes)
   const pos = new Map<string, { x: number; y: number }>()
   const nodes: TopologyNode[] = top.map(([host, st], i) => {
-    const angle = (i / Math.max(top.length, 1)) * Math.PI * 2 - Math.PI / 2
+    // 起始角:默认从正上方起;仅 2 台主机时改为水平排列(0°/180° 竖排观感=一条竖线)
+    const angle0 = top.length === 2 ? 0 : -Math.PI / 2
+    const angle = (i / Math.max(top.length, 1)) * Math.PI * 2 + angle0
     const cx = TOPO_W / 2
     const cy = TOPO_H / 2
     const r = Math.min(TOPO_W, TOPO_H) / 2 - 46

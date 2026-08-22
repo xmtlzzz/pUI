@@ -26,7 +26,7 @@ export function HostPanel() {
         {hosts.slice(0, 100).map((h) => (
           <div key={h.host} className="hp-row" title={h.protocols.join(', ')}>
             <span className="hp-host">
-              <i className="hp-dot" style={{ transform: `scale(${Math.max(0.6, 0.8 + (h.conversations / maxConversations) * 0.5)})` }} />
+              <i className="hp-dot" style={{ width: 5 + Math.round((h.conversations / maxConversations) * 6), height: 5 + Math.round((h.conversations / maxConversations) * 6) }} />
               {h.host}
             </span>
             <span>{h.conversations}</span>

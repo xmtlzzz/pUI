@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useApp } from '../state/appStore'
 import { buildTopology, TOPO_W, TOPO_H, type TopologyNode } from '../stats/topology'
 import { fmtBytesShort } from './topoUtil'
@@ -8,6 +8,24 @@ export function TopologyPanel() {
   const conversations = useApp((s) => s.conversations)
   const select = useApp((s) => s.select)
   const topo = useMemo(() => buildTopology(conversations), [conversations])
+  // 轻量平移:仅视图位移,无缩放/节点拖动/3D
+  const [view, setView] = useState({ x: 16, y: 8 })
+  const pan = useRef<{ sx: number; sy: number; bx: number; by: number } | null>(null)
+
+  const startPan = (e: React.PointerEvent) => {
+    // jsdom 无此 API,真实浏览器才需要(测试环境跳过即可)
+    if (typeof e.currentTarget.setPointerCapture === 'function') e.currentTarget.setPointerCapture(e.pointerId)
+    pan.current = { sx: e.clientX, sy: e.clientY, bx: view.x, by: view.y }
+  }
+  const movePan = (e: React.PointerEvent) => {
+    const p = pan.current
+    if (!p) return
+    setView((v) => ({ ...v, x: p.bx + (e.clientX - p.sx), y: p.by + (e.clientY - p.sy) }))
+  }
+  const endPan = (e: React.PointerEvent) => {
+    pan.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* noop */ }
+  }
 
   if (!topo.nodes.length) {
     return <div className="empty">打开文件后显示主机拓扑</div>

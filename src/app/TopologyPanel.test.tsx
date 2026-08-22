@@ -31,6 +31,6 @@ describe('TopologyPanel 拖拽平移', () => {
     fireEvent.pointerUp(svg, { pointerId: 1 })
     const after = (container.querySelector('svg g') as SVGGElement).getAttribute('transform') ?? ''
     expect(after).not.toBe(before)
-    expect(after).toContain('translate(60 20)')
+    expect(after).toContain('translate(76 28)') // 初始 (16 8) + 位移 (60 20)
   })
 })

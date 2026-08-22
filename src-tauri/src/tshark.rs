@@ -1,6 +1,8 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use tauri::Manager;
 
@@ -8,6 +10,12 @@ use crate::commands::AppState;
 
 /// tshark `-T json` 输出上限:超过即终止子进程,防止超大抓包把内存打爆
 const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
+/// 单帧 hex 文本上限(正常 <1MB;恶意巨型帧由该上限兜底,防全量缓冲 OOM)
+const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
+/// 子进程墙钟超时:超时 kill 并返回可读错误,防止挂死的 tshark 永久占线
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+/// stdout 已 EOF 但子进程未退出时的收尾宽限,超宽限 kill
+const EXIT_GRACE: Duration = Duration::from_secs(5);
 
 pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
     // ① 用户设置路径
@@ -64,40 +72,124 @@ pub fn run_capture(bin: &Path, file: &str) -> Result<String, String> {
     )
 }
 
-/// 流式读取子进程 stdout 并设上限:防止 `Command::output()` 把多 GB JSON 全量缓冲进内存。
-/// (tshark 的 stderr 只用于短错误信息,不会撑爆管道,故在 stdout EOF 后读取。)
+/// 流式读取子进程 stdout,带字节上限 + 墙钟超时 + stderr 并发排空:
+/// - 上限:防止 `Command::output()` 把多 GB JSON 全量缓冲进内存;
+/// - 超时:挂死的子进程在时限内被 kill+wait 回收,避免线程/进程永久泄漏;
+/// - stderr 并发排空:错误风暴(>64KB stderr)不会把子进程阻塞在写 stderr 上造成死锁。
 fn run_stream(bin: &Path, args: &[&str], max_stdout: u64) -> Result<String, String> {
+    run_stream_with_timeout(bin, args, max_stdout, COMMAND_TIMEOUT)
+}
+
+fn run_stream_with_timeout(
+    bin: &Path,
+    args: &[&str],
+    max_stdout: u64,
+    timeout: Duration,
+) -> Result<String, String> {
     let mut cmd = Command::new(bin);
     hide_console(&mut cmd);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("failed to run tshark: {e}"))?;
 
     let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
-    let mut buf: Vec<u8> = Vec::new();
-    let mut total: u64 = 0;
-    let mut chunk = [0u8; 65536];
+
+    // stderr 由专用线程并发排空,内容仅用于错误诊断
+    let stderr_thread = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = stderr.read_to_string(&mut s);
+            s
+        })
+    });
+
+    // stdout 由专用线程分块读取并设字节上限
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
+    let reader = std::thread::spawn(move || {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut total: u64 = 0;
+        let mut chunk = [0u8; 65536];
+        loop {
+            let n = match stdout.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = tx.send(Err(format!("tshark stdout: {e}")));
+                    return;
+                }
+            };
+            total += n as u64;
+            if total > max_stdout {
+                let _ = tx.send(Err("capture too large: tshark output exceeds limit".into()));
+                return;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+        let _ = tx.send(Ok(buf));
+    });
+
+    let deadline = Instant::now() + timeout;
+    let mut out: Option<Result<Vec<u8>, String>> = None;
+    let mut status: Option<std::process::ExitStatus> = None;
     loop {
-        let n = stdout.read(&mut chunk).map_err(|e| format!("tshark stdout: {e}"))?;
-        if n == 0 {
+        if out.is_none() {
+            if let Ok(r) = rx.try_recv() {
+                out = Some(r);
+            }
+        }
+        if status.is_none() {
+            if let Ok(Some(st)) = child.try_wait() {
+                status = Some(st);
+            }
+        }
+        // 输出出错立即收尾;输出正常则等子进程退出(拿到退出码)
+        let done = match &out {
+            Some(Err(_)) => true,
+            Some(Ok(_)) => status.is_some(),
+            None => false,
+        };
+        if done {
             break;
         }
-        total += n as u64;
-        if total > max_stdout {
+        if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("capture too large: tshark output exceeds limit".into());
+            let _ = reader.join();
+            let _ = stderr_thread.map(|h| h.join());
+            return Err("tshark timed out".into());
         }
-        buf.extend_from_slice(&chunk[..n]);
+        std::thread::sleep(Duration::from_millis(20));
     }
-    let status = child.wait().map_err(|e| format!("wait tshark: {e}"))?;
-    let mut err = String::new();
-    if let Some(mut stderr) = child.stderr.take() {
-        let _ = stderr.read_to_string(&mut err);
+
+    let result = out.unwrap();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = reader.join();
+        let _ = stderr_thread.map(|h| h.join());
+        return result.map(|b| String::from_utf8_lossy(&b).to_string());
     }
-    if !status.success() {
-        return Err(err.trim().to_string());
+    // stdout 已 EOF 但子进程未退出:宽限等待,超宽限 kill
+    if status.is_none() {
+        let grace = Instant::now() + EXIT_GRACE;
+        while status.is_none() && Instant::now() < grace {
+            if let Ok(Some(st)) = child.try_wait() {
+                status = Some(st);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if status.is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
-    Ok(String::from_utf8_lossy(&buf).to_string())
+    let _ = reader.join();
+    let err = stderr_thread.and_then(|h| h.join().ok()).unwrap_or_default();
+    if let Some(st) = status {
+        if !st.success() {
+            return Err(err.trim().to_string());
+        }
+    }
+    Ok(String::from_utf8_lossy(&result.unwrap()).to_string())
 }
 
 pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
@@ -105,7 +197,8 @@ pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
         return Err("invalid capture path".into());
     }
     let filter = format!("frame.number=={number}");
-    run(bin, &["-r", file, "-Y", &filter, "-x"])
+    // 复用流式读取 + 上限:单帧 hex 通常 <1MB,恶意巨型帧由 MAX_HEX_TEXT 兜底
+    run_stream(bin, &["-r", file, "-Y", &filter, "-x"], MAX_HEX_TEXT)
 }
 
 #[cfg(windows)]
@@ -117,19 +210,6 @@ fn hide_console(cmd: &mut Command) {
 
 #[cfg(not(windows))]
 fn hide_console(_cmd: &mut Command) {}
-
-fn run(bin: &Path, args: &[&str]) -> Result<String, String> {
-    let mut cmd = Command::new(bin);
-    hide_console(&mut cmd);
-    let out = cmd
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run tshark: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-}
 
 pub fn locate(app: &tauri::AppHandle, state: &AppState) -> Option<String> {
     resolve_cached(app, state).map(|p| p.to_string_lossy().into_owned())
@@ -199,6 +279,84 @@ mod tests {
         assert!(run_stream(Path::new(bin), &args, 4).is_err());
         // 小输出正常返回
         assert!(run_stream(Path::new(bin), &args, 1024).is_ok());
+    }
+
+    #[test]
+    fn run_stream_kills_hanging_child_on_timeout() {
+        // 子进程只睡不输出不退出:超时应 kill 并返回 Err,而非永久阻塞
+        let (bin, args): (&str, Vec<&str>) = if cfg!(windows) {
+            ("powershell.exe", vec!["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
+        } else {
+            ("/bin/sh", vec!["-c", "sleep 60"])
+        };
+        let start = std::time::Instant::now();
+        let out = run_stream_with_timeout(
+            Path::new(bin),
+            &args,
+            1024 * 1024,
+            std::time::Duration::from_millis(800),
+        );
+        assert!(out.is_err(), "expected timeout error, got {:?}", out);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "timeout kill too slow: {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn run_stream_drains_stderr_without_deadlock() {
+        // stderr 灌满管道(>64KB)不应阻塞子进程:并发排空后应正常读到 stdout
+        let (bin, args): (&str, Vec<&str>) = if cfg!(windows) {
+            (
+                "powershell.exe",
+                vec![
+                    "-NoProfile",
+                    "-Command",
+                    "for($i=0;$i -lt 4000;$i++){ [Console]::Error.WriteLine(('x'*400)) }; Write-Output 'done'",
+                ],
+            )
+        } else {
+            (
+                "/bin/sh",
+                vec![
+                    "-c",
+                    "i=0; while [ $i -lt 4000 ]; do echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx >&2; i=$((i+1)); done; echo done",
+                ],
+            )
+        };
+        let out = run_stream_with_timeout(
+            Path::new(bin),
+            &args,
+            4 * 1024 * 1024,
+            std::time::Duration::from_secs(30),
+        );
+        assert!(out.is_ok(), "stderr flood deadlocked or failed: {out:?}");
+        assert!(out.unwrap_or_default().contains("done"));
+    }
+
+    #[test]
+    fn run_hex_caps_oversized_output() {
+        // 单帧 hex 文本超上限应报错而非全量缓冲(防恶意巨型帧 OOM)
+        let (bin, args): (&str, Vec<&str>) = if cfg!(windows) {
+            (
+                "powershell.exe",
+                vec![
+                    "-NoProfile",
+                    "-Command",
+                    "1..64 | ForEach-Object { [Console]::Out.Write(('x'*1048576)) }",
+                ],
+            )
+        } else {
+            ("/bin/sh", vec!["-c", "yes x | head -c 67108864"])
+        };
+        let out = run_stream_with_timeout(
+            Path::new(bin),
+            &args,
+            32 * 1024 * 1024,
+            std::time::Duration::from_secs(60),
+        );
+        assert!(out.is_err(), "oversized output should be capped: {out:?}");
     }
 
     #[test]

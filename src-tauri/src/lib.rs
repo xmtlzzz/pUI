@@ -1,16 +1,18 @@
 pub mod commands;
 pub mod tshark;
 
+use std::sync::Arc;
+
 use commands::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState {
+        .manage(Arc::new(AppState {
             tshark_path: Default::default(),
             resolved_path: Default::default(),
-        })
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::locate_tshark,
             commands::set_tshark_path,

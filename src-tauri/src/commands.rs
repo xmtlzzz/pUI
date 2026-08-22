@@ -1,23 +1,34 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
 use crate::tshark;
 
+/// 状态以 Arc<AppState> 托管:async 命令可把 Arc 克隆进 spawn_blocking 闭包共享同一组锁
 pub struct AppState {
     pub tshark_path: Mutex<Option<PathBuf>>,
     /// resolve 结果缓存,避免每次调用都重新 spawn `where`/`tshark`(见 tshark::resolve_cached)
     pub resolved_path: Mutex<Option<PathBuf>>,
 }
 
+/// 命令全部 async + spawn_blocking:Tauri 同步命令跑在主线程,
+/// 而 tshark 解析(≤128MB JSON)/base64 解码(≤192MB)可能耗时数秒到数十秒,
+/// 同步执行会整窗冻结;阻塞段放到 blocking 线程池后 UI 保持响应。
 #[tauri::command]
-pub fn locate_tshark(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Option<String> {
-    tshark::locate(&app, &state)
+pub async fn locate_tshark(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    let state = state.inner().clone();
+    let found = tauri::async_runtime::spawn_blocking(move || tshark::locate(&app, &state))
+        .await
+        .map_err(|e| format!("locate_tshark task failed: {e}"))?;
+    Ok(found)
 }
 
 #[tauri::command]
-pub fn set_tshark_path(path: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub fn set_tshark_path(path: String, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     let p = validate_tshark_path(&path)?;
     *state.tshark_path.lock().unwrap() = Some(p);
     *state.resolved_path.lock().unwrap() = None; // 使缓存失效
@@ -32,18 +43,34 @@ pub struct CaptureOutput {
 }
 
 #[tauri::command]
-pub fn open_capture(
+pub async fn open_capture(
     path: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<CaptureOutput, String> {
-    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let app = app.clone();
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || open_capture_blocking(&path, &app, &state))
+        .await
+        .map_err(|e| format!("open_capture task failed: {e}"))?
+}
+
+fn open_capture_blocking(
+    path: &str,
+    app: &tauri::AppHandle,
+    state: &Arc<AppState>,
+) -> Result<CaptureOutput, String> {
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     if size > MAX_CAPTURE_FILE {
         return Err("capture file too large".into());
     }
-    let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
-    let json = tshark::run_capture(&bin, &path)?;
-    Ok(CaptureOutput { json, size, path })
+    let bin = tshark::resolve_cached(app, state).ok_or("tshark not found: set its path in settings")?;
+    let json = tshark::run_capture(&bin, path)?;
+    Ok(CaptureOutput {
+        json,
+        size,
+        path: path.to_string(),
+    })
 }
 
 /// 捕获数据(base64)解码上限:约 256MB,防止超大打爆内存
@@ -79,34 +106,46 @@ fn sanitize_capture_name(file_name: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn open_capture_data(
+pub async fn open_capture_data(
     file_name: String,
     base64_data: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<CaptureOutput, String> {
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine as _;
-    if base64_data.len() > MAX_CAPTURE_BASE64 {
-        return Err("capture data too large".into());
-    }
-    let bytes = B64.decode(base64_data).map_err(|e| e.to_string())?;
-    let name = sanitize_capture_name(&file_name).ok_or("invalid capture file name")?;
-    let dir = std::env::temp_dir();
-    let tmp = dir.join(&name);
-    std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
-    open_capture(tmp.to_string_lossy().into_owned(), app, state)
+    let app = app.clone();
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        use base64::engine::general_purpose::STANDARD as B64;
+        use base64::Engine as _;
+        if base64_data.len() > MAX_CAPTURE_BASE64 {
+            return Err("capture data too large".into());
+        }
+        let bytes = B64.decode(base64_data).map_err(|e| e.to_string())?;
+        let name = sanitize_capture_name(&file_name).ok_or("invalid capture file name")?;
+        let dir = std::env::temp_dir();
+        let tmp = dir.join(&name);
+        std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
+        open_capture_blocking(&tmp.to_string_lossy().into_owned(), &app, &state)
+    })
+    .await
+    .map_err(|e| format!("open_capture_data task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn fetch_hex(
+pub async fn fetch_hex(
     path: String,
     frame_number: u32,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
-    let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
-    tshark::run_hex(&bin, &path, frame_number)
+    let app = app.clone();
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
+        tshark::run_hex(&bin, &path, frame_number)
+    })
+    .await
+    .map_err(|e| format!("fetch_hex task failed: {e}"))?
 }
 
 #[tauri::command]

@@ -184,6 +184,24 @@ pub async fn open_capture_data(
 }
 
 #[tauri::command]
+pub async fn tshark_version(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Option<String>, String> {
+    let app = app.clone();
+    let state = state.inner().clone();
+    let v = tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+        let Some(bin) = tshark::resolve_cached(&app, &state) else {
+            return Ok(None); // 未找到 tshark:版本位留空,界面不展示
+        };
+        Ok(tshark::tshark_version(&bin))
+    })
+    .await
+    .map_err(|e| format!("tshark_version task failed: {e}"))??;
+    Ok(v)
+}
+
+#[tauri::command]
 pub async fn fetch_hex(
     path: String,
     frame_number: u32,

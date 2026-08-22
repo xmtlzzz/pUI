@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
-import { openCapture, openSample, fetchHex } from '../bridge/tauri'
+import { openCapture, openSample, fetchHex, getTsharkVersion } from '../bridge/tauri'
 import { emptyFilter } from '../model/types'
 import { overlapRange } from '../stats/histogram'
 import type { SortKey, SortDir } from '../app/sortConversations'
@@ -77,6 +77,9 @@ export interface AppState {
   /** 时间窗下钻:直方图点击桶后只显示与窗口重叠的会话 */
   timeRange: TimeRange | null
   setTimeRange: (r: TimeRange | null) => void
+  /** tshark 版本(顶部信息条展示),解析引擎就绪后置位 */
+  tsharkVersion: string | null
+  loadTsharkVersion: () => Promise<void>
   fetchHexFor: (n: number) => Promise<string>
   getHex: (n: number) => string | null
 }
@@ -99,6 +102,7 @@ export const useApp = create<AppState>((set, get) => ({
   searchQuery: '',
   highlight: [],
   timeRange: null,
+  tsharkVersion: null,
   loading: false,
   error: null,
   hexCache: {},
@@ -106,13 +110,14 @@ export const useApp = create<AppState>((set, get) => ({
   async openFile(path) {
     const seq = get().loadSeq + 1
     set({ loading: true, error: null, loadSeq: seq })
+    const t0 = performance.now()
     try {
       const { meta, packets, path: realPath } = await openCapture(path)
       if (get().loadSeq !== seq) return // 已被更新的加载覆盖
       const conversations = aggregateConversations(packets)
       const filter = emptyFilter()
       set({
-        meta, packets, conversations, options: collectFilterOptions(packets),
+        meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
         currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
       })
@@ -125,13 +130,14 @@ export const useApp = create<AppState>((set, get) => ({
   async openExample(name) {
     const seq = get().loadSeq + 1
     set({ loading: true, error: null, loadSeq: seq })
+    const t0 = performance.now()
     try {
       const { meta, packets, path } = await openSample(name)
       if (get().loadSeq !== seq) return
       const conversations = aggregateConversations(packets)
       const filter = emptyFilter()
       set({
-        meta, packets, conversations, options: collectFilterOptions(packets),
+        meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
         currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
       })
@@ -178,6 +184,10 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setHighlight(nums) {
     set({ highlight: nums })
+  },
+  async loadTsharkVersion() {
+    const v = await getTsharkVersion()
+    set({ tsharkVersion: v })
   },
   async fetchHexFor(n) {
     const path = get().currentPath

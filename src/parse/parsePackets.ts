@@ -171,6 +171,7 @@ export function parsePackets(jsonText: string): Packet[] {
       number: int(frame['frame.number']) ?? i + 1,
       time: float(frame['frame.time_relative']) ?? 0,
       timeEpoch: float(frame['frame.time_epoch']),
+      interfaceId: first(frame['frame.interface_id']),
       len: int(frame['frame.len']) ?? 0,
       transport,
       proto,

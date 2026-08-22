@@ -41,6 +41,32 @@ describe('parsePackets', () => {
     expect(p.direction).toBe('other') // 方向在聚合阶段确定
   })
 
+  it('解析 frame.interface_id 供接口数统计', () => {
+    const raw = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '1', 'frame.time_relative': '0.000000', 'frame.interface_id': '0', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:tcp' },
+            ip: { 'ip.src': '1.1.1.1', 'ip.dst': '2.2.2.2' },
+            tcp: { 'tcp.srcport': '12345', 'tcp.dstport': '80' },
+          },
+        },
+      },
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '2', 'frame.time_relative': '0.001000', 'frame.interface_id': '1', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:tcp' },
+            ip: { 'ip.src': '2.2.2.2', 'ip.dst': '1.1.1.1' },
+            tcp: { 'tcp.srcport': '80', 'tcp.dstport': '12345' },
+          },
+        },
+      },
+    ])
+    const [a, b] = parsePackets(raw)
+    expect(a.interfaceId).toBe('0')
+    expect(b.interfaceId).toBe('1')
+  })
+
   it('解析 frame.time_epoch 供绝对时间戳展示', () => {
     const withEpoch = JSON.stringify([
       {

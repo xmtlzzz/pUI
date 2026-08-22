@@ -192,6 +192,20 @@ fn run_stream_with_timeout(
     Ok(String::from_utf8_lossy(&result.unwrap()).to_string())
 }
 
+/// 从 `tshark -v` 输出首行提取版本号:"TShark (Wireshark) 4.2.5 …" → "4.2.5"
+pub fn parse_version_line(line: &str) -> Option<String> {
+    let line = line.trim();
+    let rest = line.strip_prefix("TShark (Wireshark)")?;
+    let token = rest.trim_start().split_whitespace().next()?;
+    Some(token.to_string())
+}
+
+pub fn tshark_version(bin: &Path) -> Option<String> {
+    // -v 输出(版本+版权信息)远小于 64KB,复用流式读取的防挂死/超时保护
+    let out = run_stream(bin, &["-v"], 64 * 1024).ok()?;
+    out.lines().find_map(parse_version_line)
+}
+
 pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
     if file.starts_with('-') {
         return Err("invalid capture path".into());
@@ -279,6 +293,20 @@ mod tests {
         assert!(run_stream(Path::new(bin), &args, 4).is_err());
         // 小输出正常返回
         assert!(run_stream(Path::new(bin), &args, 1024).is_ok());
+    }
+
+    #[test]
+    fn parse_version_line_extracts_version() {
+        assert_eq!(parse_version_line("TShark (Wireshark) 4.2.5 (v4.2.5-0-g0a45a5e2)").as_deref(), Some("4.2.5"));
+        assert_eq!(parse_version_line("TShark (Wireshark) 3.6.1").as_deref(), Some("3.6.1"));
+        assert_eq!(parse_version_line("  TShark (Wireshark) 99.0  ").as_deref(), Some("99.0"));
+        assert_eq!(parse_version_line("just some noise"), None);
+        assert_eq!(parse_version_line(""), None);
+    }
+
+    #[test]
+    fn tshark_version_handles_missing_binary() {
+        assert_eq!(tshark_version(Path::new("/nonexistent/tshark")), None);
     }
 
     #[test]

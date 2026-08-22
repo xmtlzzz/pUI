@@ -20,7 +20,17 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
   const setDiagramStyle = useApp((s) => s.setDiagramStyle)
   const timeMode = useApp((s) => s.timeMode)
   const setTimeMode = useApp((s) => s.setTimeMode)
+  const tsharkVersion = useApp((s) => s.tsharkVersion)
+  const loadTsharkVersion = useApp((s) => s.loadTsharkVersion)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // 解析引擎版本:应用启动后拉取一次,顶部信息条展示
+  useEffect(() => {
+    loadTsharkVersion()
+  }, [loadTsharkVersion])
+  // 解析耗时标签(毫秒/秒),供信息条展示
+  const parseMs = meta?.parseMs
+  const parseMsLabel = parseMs != null && parseMs > 0 ? (parseMs < 1000 ? `${Math.round(parseMs)}ms` : `${(parseMs / 1000).toFixed(1)}s`) : null
 
   const pickFile = async () => {
     if (isTauri()) {
@@ -75,6 +85,8 @@ export function Toolbar({ zoom, setZoom, onExport, hasConversation }: Props) {
         {meta && !loading && (
           <span className="meta" key={meta.fileName}>
             {meta.fileName} · {meta.packetCount} 报文 · {meta.interfaces} 接口 · {meta.timeStart.toFixed(2)}~{meta.timeEnd.toFixed(2)}s · {fmt(meta.fileSize)}
+            {parseMsLabel && <> · 解析 {parseMsLabel}</>}
+            {tsharkVersion && <> · tshark {tsharkVersion}</>}
           </span>
         )}
         {loading && <span className="meta pulse">解析中…</span>}

@@ -6,20 +6,24 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-export function computeMeta(fileName: string, packets: Packet[], fileSize = 0): CaptureMeta {
+export function computeMeta(fileName: string, packets: Packet[], fileSize = 0, parseMs = 0): CaptureMeta {
   let timeStart = Number.POSITIVE_INFINITY
   let timeEnd = Number.NEGATIVE_INFINITY
+  // 接口数:按 frame.interface_id 去重;缺失(旧版 tshark/纯 IP)时回落 1
+  const interfaces = new Set<string>()
   for (const p of packets) {
     if (p.time < timeStart) timeStart = p.time
     if (p.time > timeEnd) timeEnd = p.time
+    if (p.interfaceId != null) interfaces.add(p.interfaceId)
   }
   return {
     fileName,
     packetCount: packets.length,
-    interfaces: 1,
+    interfaces: interfaces.size || 1,
     timeStart: packets.length ? timeStart : 0,
     timeEnd: packets.length ? timeEnd : 0,
     fileSize,
+    parseMs,
   }
 }
 
@@ -71,6 +75,15 @@ export async function locateTshark(): Promise<string | null> {
   if (!isTauri()) return null
   try {
     return await invoke<string | null>('locate_tshark')
+  } catch {
+    return null
+  }
+}
+
+export async function getTsharkVersion(): Promise<string | null> {
+  if (!isTauri()) return null
+  try {
+    return await invoke<string | null>('tshark_version')
   } catch {
     return null
   }

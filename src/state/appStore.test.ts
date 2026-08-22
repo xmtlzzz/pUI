@@ -40,6 +40,16 @@ describe('appStore 加载一致性', () => {
     expect(useApp.getState().packets).toHaveLength(1)
   })
 
+  it('openFile 记录解析耗时 parseMs', async () => {
+    const packets = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets, path: p }))
+    await useApp.getState().openFile('b.pcap')
+    const m = useApp.getState().meta
+    expect(m).not.toBeNull()
+    expect(typeof m?.parseMs).toBe('number')
+    expect((m?.parseMs ?? -1) >= 0).toBe(true)
+  })
+
   it('慢加载不覆盖已完成的较新加载', async () => {
     const slowPackets = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
     const fastPackets = [pkt(1, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53)]

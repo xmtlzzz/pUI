@@ -5,6 +5,7 @@ export interface Packet {
   number: number
   time: number // frame.time_relative 秒
   timeEpoch?: number // frame.time_epoch(绝对时间,秒),供相对/绝对时间戳切换
+  interfaceId?: string // frame.interface_id(捕获接口索引),供接口数统计
   len: number // frame.len 字节
   transport: Transport
   proto: string // 应用层协议:http / dns / tls / tcp / udp / icmp / arp ...
@@ -78,6 +79,8 @@ export interface CaptureMeta {
   timeStart: number
   timeEnd: number
   fileSize: number
+  /** tshatk JSON → 会话聚合的解析耗时(毫秒),由顶层计时注入;旧数据缺失时可选 */
+  parseMs?: number
 }
 
 /**

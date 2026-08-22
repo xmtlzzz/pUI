@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useApp, selectSelectedPacket } from '../state/appStore'
-import type { Packet } from '../model/types'
+import { buildPacketTree, type DetailNode } from './packetTree'
 
 export function PacketDetail() {
   const packet = useApp((s) => selectSelectedPacket(s))
@@ -33,7 +33,7 @@ export function PacketDetail() {
   return (
     <div className="detail-bar">
       <div className="detail-title">报文详情 · #{packet.number}</div>
-      <Row p={packet} />
+      <Tree nodes={buildPacketTree(packet)} />
       {busy && <div style={{ color: '#94a3b8' }}>加载 hex…</div>}
       {err && <div style={{ color: '#b91c1c' }}>hex 不可用</div>}
       {hex && <pre className="detail-hex">{hex}</pre>}
@@ -41,26 +41,23 @@ export function PacketDetail() {
   )
 }
 
-function Row({ p }: { p: Packet }) {
-  const kv: Array<[string, string]> = [
-    ['时间', `${p.time.toFixed(3)}s`],
-    ['长度', `${p.len}B`],
-    ['协议', p.proto],
-    ['方向', p.direction === 'request' ? '请求' : p.direction === 'response' ? '响应' : '其他'],
-    ['源', p.srcIp ? (p.srcPort != null ? `${p.srcIp}:${p.srcPort}` : p.srcIp) : (p.srcMac ?? '—')],
-    ['目的', p.dstIp ? (p.dstPort != null ? `${p.dstIp}:${p.dstPort}` : p.dstIp) : (p.dstMac ?? '—')],
-    ['L2', p.srcMac && p.dstMac ? `${p.srcMac} → ${p.dstMac}` : '—'],
-    ['TCP', p.tcpFlags ? `flags=${p.tcpFlags} seq=${p.tcpSeq ?? '—'} ack=${p.tcpAck ?? '—'}` : '—'],
-    ['HTTP', p.httpMethod ? `${p.httpMethod} ${p.httpUri ?? ''}` : p.httpCode ? `status ${p.httpCode}` : '—'],
-    ['DNS', p.dnsQuery ?? '—'],
-  ]
+/** 分层树渲染:帧 → L2 → L3 → L4 → 应用层,每组可折叠 */
+function Tree({ nodes, depth = 0 }: { nodes: DetailNode[]; depth?: number }) {
   return (
-    <div style={{ marginBottom: 4 }}>
-      {kv.map(([k, v]) => (
-        <span key={k} style={{ marginRight: 12, color: '#475569' }}>
-          <b style={{ color: '#94a3b8' }}>{k}</b> {v}
-        </span>
-      ))}
+    <div style={{ marginLeft: depth * 10 }}>
+      {nodes.map((n) =>
+        n.children ? (
+          <details key={n.key} open={depth === 0} className="detail-group">
+            <summary className="detail-group-title">{n.label}</summary>
+            <Tree nodes={n.children} depth={depth + 1} />
+          </details>
+        ) : (
+          <div key={n.key} className="detail-kv">
+            <span className="detail-k">{n.label}</span>
+            <span className="detail-v">{n.value ?? '—'}</span>
+          </div>
+        ),
+      )}
     </div>
   )
 }

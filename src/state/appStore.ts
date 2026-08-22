@@ -62,6 +62,11 @@ export interface AppState {
   setDiagramStyle: (s: 'A' | 'B') => void
   setTimeMode: (m: 'relative' | 'absolute') => void
   setSort: (key: SortKey) => void
+  searchQuery: string
+  setSearchQuery: (q: string) => void
+  /** 搜索命中待高亮的报文号(时序图定位跳转) */
+  highlight: number[]
+  setHighlight: (nums: number[]) => void
   fetchHexFor: (n: number) => Promise<string>
   getHex: (n: number) => string | null
 }
@@ -81,6 +86,8 @@ export const useApp = create<AppState>((set, get) => ({
   timeMode: 'relative',
   sortKey: 'start',
   sortDir: 'asc',
+  searchQuery: '',
+  highlight: [],
   loading: false,
   error: null,
   hexCache: {},
@@ -96,7 +103,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: realPath, hexCache: resetHexCache(), loading: false,
+        currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], loading: false,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -115,7 +122,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: path, hexCache: resetHexCache(), loading: false,
+        currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], loading: false,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -151,6 +158,12 @@ export const useApp = create<AppState>((set, get) => ({
     } else {
       set({ sortKey: key, sortDir: 'asc' })
     }
+  },
+  setSearchQuery(q) {
+    set({ searchQuery: q, highlight: [] })
+  },
+  setHighlight(nums) {
+    set({ highlight: nums })
   },
   async fetchHexFor(n) {
     const path = get().currentPath

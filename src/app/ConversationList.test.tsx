@@ -16,6 +16,7 @@ const emptyState: Partial<AppState> = {
   meta: null, packets: [], conversations: [], filtered: [], options: { protocols: [], srcIps: [], dstIps: [], ports: [] },
   filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
   selectedId: null, selectedPacket: null, currentPath: '', loadSeq: 0, diagramStyle: 'A', loading: false, error: null, hexCache: {},
+  searchQuery: '', highlight: [],
 }
 
 describe('ConversationList 超长列表', () => {
@@ -44,6 +45,18 @@ describe('ConversationList 超长列表', () => {
     useApp.setState({ filtered: few, conversations: few })
     const { container } = render(<ConversationList />)
     expect(container.textContent).toContain('1.25s')
+  })
+
+  it('搜索过滤会话并在点击行时设置高亮定位', () => {
+    const c1: Conversation = { ...conv('k1'), client: 'a', start: 1, packets: [{ number: 3, time: 0, len: 60, transport: 'tcp', proto: 'http', srcIp: 'a', dstIp: 'b', direction: 'request', info: 'HTTP GET /search' }] }
+    const c2: Conversation = { ...conv('k2'), client: 'x', start: 2, packets: [{ number: 5, time: 0, len: 60, transport: 'tcp', proto: 'dns', srcIp: 'x', dstIp: 'y', direction: 'request', dnsQuery: 'other.net' }] }
+    useApp.setState({ filtered: [c1, c2], conversations: [c1, c2], searchQuery: '', highlight: [] })
+    const { container, getByLabelText } = render(<ConversationList />)
+    fireEvent.change(getByLabelText('搜索报文'), { target: { value: 'search' } })
+    expect(container.querySelectorAll('tbody tr').length).toBe(1)
+    expect(container.textContent).toContain('1 命中')
+    fireEvent.click(container.querySelector('tbody tr') as Element)
+    expect(useApp.getState().highlight).toEqual([3])
   })
 
   it('点击表头切换排序(同列再点反向)', () => {

@@ -71,6 +71,14 @@ describe('SequenceDiagram', () => {
     expect(container.textContent).toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/) // HH:MM:SS.mmm
   })
 
+  it('highlight 中的报文号带高亮样式', () => {
+    const onSelect = vi.fn()
+    const { container } = render(<SequenceDiagram conv={conv} style="B" highlight={[2]} onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    const msgs = container.querySelectorAll('.msg')
+    expect(msgs[1].getAttribute('class')).toContain('hl')
+    expect(msgs[0].getAttribute('class')).not.toContain('hl')
+  })
+
   it('relative 模式(默认)仍显示相对秒数', () => {
     const onSelect = vi.fn()
     const { container } = render(<SequenceDiagram conv={conv} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)

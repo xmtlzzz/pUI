@@ -22,12 +22,13 @@ interface Props {
   conv: Conversation | null
   style: 'A' | 'B'
   timeMode?: TimeMode
+  highlight?: readonly number[]
   onSelect: (n: number) => void
   svgRef: RefObject<SVGSVGElement | null>
   zoom: number
 }
 
-export function SequenceDiagram({ conv, style, timeMode = 'relative', onSelect, svgRef, zoom }: Props) {
+export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight, onSelect, svgRef, zoom }: Props) {
   const [hover, setHover] = useState<LayoutMessage | null>(null)
 
   if (!conv) {
@@ -100,10 +101,11 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', onSelect, 
           const line = retrans ? '#ea580c' : protocolColor(m.proto)
           const dir = DIR_COLOR[m.direction]
           const isHover = hover?.id === m.id
+          const isHit = highlight?.includes(m.id) ?? false
           return (
             <g
               key={`${style}-${m.id}`}
-              className={isHover ? 'msg hover' : 'msg'}
+              className={isHover ? 'msg hover' : isHit ? 'msg hl' : 'msg'}
               style={{ cursor: 'pointer', animationDelay: `${Math.min(i * 22, 300)}ms` }}
               onClick={() => onSelect(m.id)}
               onMouseEnter={() => setHover(m)}
@@ -116,7 +118,7 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', onSelect, 
                 x2={m.x2}
                 y2={m.y2}
                 stroke={line}
-                strokeWidth={isHover ? 2.6 : 1.6}
+                strokeWidth={isHover || isHit ? 2.6 : 1.6}
                 strokeDasharray={retrans || ooo ? '5,3' : undefined}
                 markerEnd={`url(#arr-${style})`}
               />

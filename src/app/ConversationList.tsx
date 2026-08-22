@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useApp, selectSelected } from '../state/appStore'
 import { protocolStyle } from '../model/protocolColors'
 import { sortConversations, type SortKey } from './sortConversations'
+import { searchConversations } from '../search/searchPackets'
 
 /** 列表渲染上限:数万会话时全量渲染会让 DOM 爆炸,超限截断并提示用筛选缩小范围 */
 const LIST_TRUNCATE = 1000
@@ -25,10 +26,19 @@ export function ConversationList() {
   const sortKey = useApp((s) => s.sortKey)
   const sortDir = useApp((s) => s.sortDir)
   const setSort = useApp((s) => s.setSort)
+  const searchQuery = useApp((s) => s.searchQuery)
+  const setSearchQuery = useApp((s) => s.setSearchQuery)
+  const setHighlight = useApp((s) => s.setHighlight)
   const truncated = filtered.length > LIST_TRUNCATE
+  // 搜索:命中会话+报文号;高亮联动在行点击时设置
+  const searchHits = useMemo(() => searchConversations(filtered, searchQuery), [filtered, searchQuery])
+  const searchActive = searchQuery.trim().length > 0
+  const hitMap = useMemo(() => new Map(searchHits.map((m) => [m.convId, m.numbers])), [searchHits])
+  const baseList = searchActive ? filtered.filter((c) => hitMap.has(c.id)) : filtered
+  const scoped = truncated ? baseList.slice(0, LIST_TRUNCATE) : baseList
   const visible = useMemo(
-    () => sortConversations(truncated ? filtered.slice(0, LIST_TRUNCATE) : filtered, sortKey, sortDir),
-    [filtered, sortKey, sortDir, truncated],
+    () => sortConversations(scoped, sortKey, sortDir),
+    [scoped, sortKey, sortDir],
   )
 
   if (!filtered.length) {
@@ -40,9 +50,20 @@ export function ConversationList() {
     )
   }
 
+  if (searchActive && !visible.length) {
+    return (
+      <>
+        <div className="pane-title">会话列表 ({filtered.length})</div>
+        <SearchBox query={searchQuery} setQuery={setSearchQuery} />
+        <div className="empty">无匹配「{searchQuery.trim()}」的报文,请调整关键词</div>
+      </>
+    )
+  }
+
   return (
     <>
-      <div className="pane-title">会话列表 ({filtered.length})</div>
+      <div className="pane-title">会话列表 ({searchActive ? visible.length : filtered.length})</div>
+      <SearchBox query={searchQuery} setQuery={setSearchQuery} />
       {truncated && <div className="truncate-hint">已显示前 {LIST_TRUNCATE} 个会话(共 {filtered.length} 个),请使用筛选缩小范围</div>}
       <table className="list">
         <thead>
@@ -72,7 +93,10 @@ export function ConversationList() {
                 key={c.id}
                 className={`row-in${selected?.id === c.id ? ' sel' : ''}${hasIssue ? ' has-issue' : ''}`}
                 style={{ animationDelay: `${Math.min(i * 28, 300)}ms` }}
-                onClick={() => select(c.id)}
+                onClick={() => {
+                  select(c.id)
+                  if (searchActive) setHighlight(hitMap.get(c.id) ?? []) // 定位:高亮命中的报文
+                }}
               >
                 <td className="col-issue">
                   {hasIssue && (
@@ -92,6 +116,7 @@ export function ConversationList() {
                 <td>{fmtBytes(c.bytes)}</td>
                 <td>{c.duration.toFixed(2)}s</td>
                 <td className="time-col">{c.start.toFixed(2)}s</td>
+                {searchActive && <td className="hit-col">{hitMap.get(c.id)?.length ?? 0} 命中</td>}
               </tr>
             )
           })}
@@ -103,4 +128,23 @@ export function ConversationList() {
 
 function fmtBytes(b: number): string {
   return b >= 1024 ? `${(b / 1024).toFixed(1)}KB` : `${b}B`
+}
+
+function SearchBox({ query, setQuery }: { query: string; setQuery: (q: string) => void }) {
+  return (
+    <div className="search-box">
+      <input
+        type="search"
+        value={query}
+        placeholder="搜索报文(协议/地址/端口/URL/DNS)…"
+        aria-label="搜索报文"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {query && (
+        <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="清除搜索">
+          ✕
+        </button>
+      )}
+    </div>
+  )
 }

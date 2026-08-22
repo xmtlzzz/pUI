@@ -116,6 +116,16 @@ table.list .time-col { color: #94a3b8; }
 .badge.chip { border: none; cursor: pointer; font-size: 12px; animation: chipIn .18s ease; transition: transform .12s ease, box-shadow .12s ease; }
 .badge.chip:hover { transform: translateY(-1px); box-shadow: 0 1px 3px rgba(15, 23, 42, .15); }
 .row-in { animation: rowIn .3s ease both; }
+.hit-col { color: #7c3aed; font-weight: 600; }
+
+/* 搜索框 */
+.search-box { position: relative; margin: 4px 8px 2px; }
+.search-box input { width: 100%; box-sizing: border-box; padding: 5px 26px 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; }
+.search-box .search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: none; background: none; color: #94a3b8; cursor: pointer; font-size: 11px; }
+
+/* 时序图搜索命中高亮 */
+.msg.hl .arr { stroke: #7c3aed !important; filter: drop-shadow(0 0 2px rgba(124, 58, 237, .6)); }
+.msg.hl .msg-label { fill: #7c3aed !important; font-weight: 700; }
 
 /* ---------- 时序图 ---------- */
 .seq-wrap { animation: fadeSlideIn .28s ease; box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }

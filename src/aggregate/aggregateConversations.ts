@@ -1,6 +1,6 @@
 import type { Conversation, Packet } from '../model/types'
 import { displayHost } from '../model/types'
-import { analyzeConversationIssues } from './issues'
+import { analyzeConversationIssues, type IssueOptions } from './issues'
 
 export function flowKey(p: Packet): string {
   let a: string
@@ -43,7 +43,7 @@ function bestProto(protos: Set<string>): string {
   return best
 }
 
-export function aggregateConversations(packets: Packet[]): Conversation[] {
+export function aggregateConversations(packets: Packet[], opts?: IssueOptions): Conversation[] {
   const map = new Map<string, Conversation>()
   for (const p of packets) {
     const key = flowKey(p)
@@ -122,7 +122,7 @@ export function aggregateConversations(packets: Packet[]): Conversation[] {
         packets,
         issues: [] as Conversation['issues'],
       }
-      return { ...built, issues: analyzeConversationIssues(built) }
+      return { ...built, issues: analyzeConversationIssues(built, opts) }
     })
     .sort((a, b) => a.start - b.start)
 }

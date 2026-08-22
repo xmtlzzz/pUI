@@ -77,6 +77,9 @@ export interface AppState {
   /** 时间窗下钻:直方图点击桶后只显示与窗口重叠的会话 */
   timeRange: TimeRange | null
   setTimeRange: (r: TimeRange | null) => void
+  /** 慢响应判定阈值(秒),可配置(默认 1.0);加载抓包时传给聚合器 */
+  slowThreshold: number
+  setSlowThreshold: (n: number) => void
   /** tshark 版本(顶部信息条展示),解析引擎就绪后置位 */
   tsharkVersion: string | null
   loadTsharkVersion: () => Promise<void>
@@ -103,6 +106,7 @@ export const useApp = create<AppState>((set, get) => ({
   highlight: [],
   timeRange: null,
   tsharkVersion: null,
+  slowThreshold: 1,
   loading: false,
   error: null,
   hexCache: {},
@@ -114,7 +118,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const { meta, packets, path: realPath } = await openCapture(path)
       if (get().loadSeq !== seq) return // 已被更新的加载覆盖
-      const conversations = aggregateConversations(packets)
+      const conversations = aggregateConversations(packets, { slowResponseThreshold: get().slowThreshold })
       const filter = emptyFilter()
       set({
         meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
@@ -134,7 +138,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const { meta, packets, path } = await openSample(name)
       if (get().loadSeq !== seq) return
-      const conversations = aggregateConversations(packets)
+      const conversations = aggregateConversations(packets, { slowResponseThreshold: get().slowThreshold })
       const filter = emptyFilter()
       set({
         meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
@@ -157,6 +161,11 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setTimeRange(r) {
     set({ timeRange: r, filtered: deriveFiltered(get().conversations, get().filter, r) })
+  },
+  setSlowThreshold(n) {
+    // 阈值可配置:)取合理区间,避免 0 或负值
+    const v = Number.isFinite(n) ? Math.max(0.05, Math.min(60, n)) : 1
+    set({ slowThreshold: v })
   },
   select(id) {
     set({ selectedId: id, selectedPacket: null })

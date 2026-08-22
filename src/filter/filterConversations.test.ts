@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from './filterConversations'
 import { emptyFilter } from '../model/types'
-import type { Packet } from '../model/types'
+import type { Conversation, Packet } from '../model/types'
 
 function pkt(n: number, proto: string, srcIp: string, srcPort: number, dstIp: string, dstPort: number, transport: 'tcp' | 'udp' = 'tcp'): Packet {
   return { number: n, time: n, len: 60, transport, proto, srcIp, dstIp, srcPort, dstPort, direction: 'other' }
@@ -53,6 +53,19 @@ describe('filterConversations', () => {
 
   it('empty filter keeps all', () => {
     expect(filterConversations(convs, emptyFilter())).toHaveLength(2)
+  })
+
+  it('按异常类型筛选会话,不互相串扰', () => {
+    const mk = (id: string, types: string[]): Conversation => ({
+      id, client: 'a', server: 'b', protocol: 'tcp', packetCount: 1, bytes: 60, start: 0, end: 1, duration: 1, packets: [],
+      issues: types.map((t) => ({ type: t as Conversation['issues'][number]['type'], message: t })),
+    })
+    const convs = [mk('rst', ['rst']), mk('retrans', ['retransmission']), mk('both', ['rst', 'retransmission']), mk('none', [])]
+    const base = emptyFilter()
+    const out = filterConversations(convs, { ...base, issueTypes: ['rst'] })
+    expect(out.map((c) => c.id)).toEqual(['rst', 'both'])
+    const only = filterConversations(convs, { ...base, issueOnly: true, issueTypes: ['retransmission'] })
+    expect(only.map((c) => c.id)).toEqual(['retrans', 'both'])
   })
 
   it('negate with no criteria keeps everything (取反不筛选)', () => {

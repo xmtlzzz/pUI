@@ -1,7 +1,11 @@
 import type { Conversation, ConversationIssue, Packet } from '../model/types'
 
-/** http.time 超过该阈值(秒)视为慢响应 */
+/** http.time 超过该阈值(秒)视为慢响应;可通过 opts.slowResponseThreshold 覆盖(不同网络环境误报率不同) */
 const SLOW_RESPONSE_THRESHOLD = 1.0
+
+export interface IssueOptions {
+  slowResponseThreshold?: number
+}
 
 /**
  * 会话级可疑丢包/异常检测。
@@ -17,7 +21,8 @@ const SLOW_RESPONSE_THRESHOLD = 1.0
  * - TCP 被 RST 重置
  * - 响应延迟异常(http.time 过大)
  */
-export function analyzeConversationIssues(conv: Conversation): ConversationIssue[] {
+export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions = {}): ConversationIssue[] {
+  const slowThreshold = opts.slowResponseThreshold ?? SLOW_RESPONSE_THRESHOLD
   const issues: ConversationIssue[] = []
   const packets = conv.packets
   const transport = packets[0]?.transport
@@ -72,8 +77,8 @@ export function analyzeConversationIssues(conv: Conversation): ConversationIssue
     issues.push({ type: 'unanswered', message: `HTTP 请求(#${httpReq.number})未收到响应`, packetNumber: httpReq.number })
   }
 
-  // 3. 慢响应(http.time 为请求→响应延迟)
-  const slow = packets.filter((p) => p.httpTime != null && p.httpTime > SLOW_RESPONSE_THRESHOLD)
+  // 3. 慢响应(http.time 为请求→响应延迟;阈值可配置)
+  const slow = packets.filter((p) => p.httpTime != null && p.httpTime > slowThreshold)
   if (slow.length) {
     const worst = Math.max(...slow.map((s) => s.httpTime as number))
     issues.push({ type: 'slow-response', message: `存在慢响应(最长 ${worst.toFixed(2)}s),可能有丢包/延迟` })

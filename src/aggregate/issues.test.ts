@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { aggregateConversations } from './aggregateConversations'
-import type { Packet } from '../model/types'
+import { analyzeConversationIssues } from './issues'
+import type { Conversation, Packet } from '../model/types'
 
 function pkt(
   n: number,
@@ -124,6 +125,30 @@ describe('丢包/异常会话检测', () => {
     ]
     const convs = aggregateConversations(packets)
     expect(convs[0].issues.some((i) => i.type === 'dup-ack')).toBe(true)
+  })
+
+  it('慢响应阈值可配置:低于默认 1.0 时按参数判定', () => {
+    const conv: Conversation = {
+      id: 'k', client: 'a:80', server: 'b:80', protocol: 'http', packetCount: 2, bytes: 120,
+      start: 0, end: 0.8, duration: 0.8, issues: [],
+      packets: [
+        pkt(1, 0, 'http', 'tcp', 'a', 12345, 'b', 80, { httpMethod: 'GET', direction: 'request' }),
+        pkt(2, 0.8, 'http', 'tcp', 'b', 80, 'a', 12345, { httpCode: '200', httpTime: 0.8, direction: 'response' }),
+      ],
+    }
+    expect(analyzeConversationIssues(conv).some((i) => i.type === 'slow-response')).toBe(false) // 0.8 < 默认 1.0
+    expect(analyzeConversationIssues(conv, { slowResponseThreshold: 0.5 }).some((i) => i.type === 'slow-response')).toBe(true)
+  })
+
+  it('aggregateConversations 透传阈值选项', () => {
+    const packets = [
+      pkt(1, 0, 'tcp', 'tcp', 'a', 12345, 'b', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 0.03, 'tcp', 'tcp', 'b', 80, 'a', 12345, { tcpFlags: '0x0012' }),
+      pkt(3, 0.05, 'http', 'tcp', 'a', 12345, 'b', 80, { httpMethod: 'GET', direction: 'request' }),
+      pkt(4, 0.9, 'http', 'tcp', 'b', 80, 'a', 12345, { httpCode: '200', httpTime: 0.85, direction: 'response' }),
+    ]
+    const convs = aggregateConversations(packets, { slowResponseThreshold: 0.5 })
+    expect(convs[0].issues.some((i) => i.type === 'slow-response')).toBe(true)
   })
 
   it('中途抓包片段(首包即数据段,无 SYN/FIN)不误报 no-close / lost-segment', () => {

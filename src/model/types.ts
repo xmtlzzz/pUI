@@ -59,10 +59,12 @@ export interface FilterCondition {
   dstPort: number[]
   negate: boolean
   issueOnly: boolean
+  /** 按异常类型细化筛选(可选:空数组 = 不限类型) */
+  issueTypes?: string[]
 }
 
 export function emptyFilter(): FilterCondition {
-  return { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false }
+  return { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false, issueTypes: [] }
 }
 
 export interface FilterOptions {

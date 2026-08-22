@@ -4,6 +4,19 @@ import type { FilterCondition } from '../model/types'
 
 type FieldKey = 'protocol' | 'srcIp' | 'dstIp' | 'srcPort' | 'dstPort'
 
+const ISSUE_TYPES: Array<{ type: string; label: string }> = [
+  { type: 'retransmission', label: '重传' },
+  { type: 'out-of-order', label: '乱序' },
+  { type: 'dup-ack', label: '重复ACK' },
+  { type: 'lost-segment', label: '丢段' },
+  { type: 'slow-response', label: '慢响应' },
+  { type: 'no-close', label: '未关闭' },
+  { type: 'rst', label: '被重置' },
+  { type: 'unanswered', label: '请求无响应' },
+  { type: 'syn-no-reply', label: '连接未建立' },
+  { type: 'one-way', label: '单向' },
+]
+
 export function FilterPanel() {
   const options = useApp((s) => s.options)
   const filter = useApp((s) => s.filter)
@@ -13,6 +26,9 @@ export function FilterPanel() {
   const total = useApp((s) => s.conversations.length)
   const issueCount = useApp((s) => s.conversations.filter((c) => c.issues.length > 0).length)
   const portsEnabled = options.ports.length > 0
+  const slowThreshold = useApp((s) => s.slowThreshold)
+  const setSlowThreshold = useApp((s) => s.setSlowThreshold)
+  const issueTypes = filter.issueTypes ?? []
 
   const patch = (key: FieldKey, list: string[]) => {
     const p: Partial<FilterCondition> = { ...filter }
@@ -49,6 +65,29 @@ export function FilterPanel() {
       </label>
       <label className="field">
         <input type="checkbox" checked={filter.issueOnly} onChange={(e) => setFilter({ issueOnly: e.target.checked })} /> 仅看异常会话
+      </label>
+      {ISSUE_TYPES.map((it) => (
+        <label key={it.type} className="field issue-type">
+          <input
+            type="checkbox"
+            checked={issueTypes.includes(it.type)}
+            onChange={(e) => setFilter({ issueTypes: e.target.checked ? [...issueTypes, it.type] : issueTypes.filter((x) => x !== it.type) })}
+          />{' '}
+          {it.label}
+        </label>
+      ))}
+      <label className="field" title="http.time 超过该阈值判定为慢响应">
+        慢响应阈值 {' '}
+        <input
+          type="number"
+          className="threshold-input"
+          min={0.05}
+          max={60}
+          step={0.05}
+          value={slowThreshold}
+          onChange={(e) => setSlowThreshold(Number(e.target.value))}
+        />{' '}
+        s
       </label>
       <div style={{ display: 'flex', gap: 8 }}>
         <button className="btn" onClick={clearFilter}>

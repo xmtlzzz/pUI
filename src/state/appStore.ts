@@ -9,7 +9,31 @@ function deriveFiltered(conversations: Conversation[], filter: FilterCondition):
   return filterConversations(conversations, filter)
 }
 
-interface AppState {
+/** hexCache 条目上限:长会话反复浏览报文时内存只增不减,超过上限按 LRU 逐出最旧条目 */
+const HEX_CACHE_LIMIT = 200
+const hexOrder: number[] = [] // LRU 顺序:末尾为最近使用;与 hexCache 同步维护
+
+function hexCachePut(cache: Record<number, string>, n: number, hex: string): Record<number, string> {
+  const next = { ...cache, [n]: hex }
+  const i = hexOrder.indexOf(n)
+  if (i >= 0) hexOrder.splice(i, 1)
+  hexOrder.push(n)
+  while (hexOrder.length > HEX_CACHE_LIMIT) {
+    const old = hexOrder.shift()!
+    delete next[old]
+  }
+  return next
+}
+
+function resetHexCache(): Record<number, string> {
+  hexOrder.length = 0
+  return {}
+}
+
+/** 同一帧的并发 fetchHex 去重:重复请求复用同一个 in-flight Promise */
+const hexInflight = new Map<number, Promise<string>>()
+
+export interface AppState {
   meta: CaptureMeta | null
   packets: Packet[]
   conversations: Conversation[]
@@ -63,7 +87,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: realPath, hexCache: {}, loading: false,
+        currentPath: realPath, hexCache: resetHexCache(), loading: false,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -82,7 +106,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: path, hexCache: {}, loading: false,
+        currentPath: path, hexCache: resetHexCache(), loading: false,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -112,10 +136,18 @@ export const useApp = create<AppState>((set, get) => ({
     if (!path) return ''
     const cached = get().hexCache[n]
     if (cached) return cached
-    const hex = await fetchHex(path, n)
-    if (get().currentPath !== path) return '' // 已切换文件,丢弃过期结果
-    set({ hexCache: { ...get().hexCache, [n]: hex } })
-    return hex
+    const pending = hexInflight.get(n)
+    if (pending) return pending
+    const p = (async () => {
+      const hex = await fetchHex(path, n)
+      if (get().currentPath !== path) return '' // 已切换文件,丢弃过期结果
+      set((s) => ({ hexCache: hexCachePut(s.hexCache, n, hex) }))
+      return hex
+    })().finally(() => {
+      hexInflight.delete(n)
+    })
+    hexInflight.set(n, p)
+    return p
   },
   getHex(n) {
     return get().hexCache[n] ?? null

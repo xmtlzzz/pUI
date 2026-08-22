@@ -1,12 +1,17 @@
 import { useApp, selectSelected } from '../state/appStore'
 import { protocolStyle } from '../model/protocolColors'
 
+/** 列表渲染上限:数万会话时全量渲染会让 DOM 爆炸,超限截断并提示用筛选缩小范围 */
+const LIST_TRUNCATE = 1000
+
 export function ConversationList() {
   const filtered = useApp((s) => s.filtered)
   const filter = useApp((s) => s.filter)
   const selected = useApp((s) => selectSelected(s))
   const select = useApp((s) => s.select)
   const hasData = useApp((s) => s.conversations.length > 0)
+  const truncated = filtered.length > LIST_TRUNCATE
+  const visible = truncated ? filtered.slice(0, LIST_TRUNCATE) : filtered
 
   if (!filtered.length) {
     return (
@@ -20,6 +25,7 @@ export function ConversationList() {
   return (
     <>
       <div className="pane-title">会话列表 ({filtered.length})</div>
+      {truncated && <div className="truncate-hint">已显示前 {LIST_TRUNCATE} 个会话(共 {filtered.length} 个),请使用筛选缩小范围</div>}
       <table className="list">
         <thead>
           <tr>
@@ -34,7 +40,7 @@ export function ConversationList() {
         </thead>
         {/* 筛选变化时重挂载 tbody,行逐条滑入,让刷新可见 */}
         <tbody key={JSON.stringify(filter)}>
-          {filtered.map((c, i) => {
+          {visible.map((c, i) => {
             const st = protocolStyle(c.protocol)
             const hasIssue = c.issues.length > 0
             return (

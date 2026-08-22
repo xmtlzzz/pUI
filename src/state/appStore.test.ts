@@ -62,6 +62,28 @@ describe('appStore 加载一致性', () => {
     expect(useApp.getState().currentPath).toBe('fast.pcap')
   })
 
+  it('fetchHexFor 并发请求同一帧只调用一次 fetchHex(去重)', async () => {
+    vi.mocked(fetchHex).mockResolvedValue('AA')
+    useApp.setState({ currentPath: 'x.pcap' })
+    const [a, b] = await Promise.all([useApp.getState().fetchHexFor(1), useApp.getState().fetchHexFor(1)])
+    expect(a).toBe('AA')
+    expect(b).toBe('AA')
+    expect(fetchHex).toHaveBeenCalledTimes(1)
+  })
+
+  it('hexCache 超过上限按 LRU 逐出最旧条目', async () => {
+    vi.mocked(fetchHex).mockImplementation((_p: string, n: number) => Promise.resolve(`hex${n}`))
+    useApp.setState({ currentPath: 'x.pcap' })
+    const N = 205 // HEX_CACHE_LIMIT=200,超出 5 条触发逐出
+    for (let i = 1; i <= N; i++) {
+      await useApp.getState().fetchHexFor(i)
+    }
+    const cache = useApp.getState().hexCache
+    expect(Object.keys(cache).length).toBeLessThanOrEqual(200)
+    expect(cache[1]).toBeUndefined() // 最早的被逐出
+    expect(cache[N]).toBe(`hex${N}`) // 最新的保留
+  })
+
   it('fetchHexFor 在切换文件后丢弃旧文件的 hex 结果', async () => {
     vi.mocked(fetchHex).mockResolvedValue('STALE')
     useApp.setState({ currentPath: 'old.pcap' })

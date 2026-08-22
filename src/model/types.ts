@@ -126,7 +126,9 @@ export function isBareIpv6(s: string): boolean {
   return empty >= 1
 }
 
-/** 展示用主机名:裸 IPv6 整体保留;其余(IPv4:port / IPv6:port / MAC)剥离端口 */
+/** 展示用主机名:裸 IPv6 整体保留;其余(IPv4:port / IPv6:port / MAC)剥离端口。
+ *  已知局限:带端口 IPv6("2001:db8::1:443")与尾段数字型裸地址("fe80::1:10")无法仅凭字符串区分,
+ *  故按"含 :: 且各组合法"判为裸 IPv6 整体保留——端口会混进展示(仅影响展示,方向判定双侧同串不受影响)。 */
 export function displayHost(s: string): string {
   return isBareIpv6(s) ? s : hostOf(s)
 }

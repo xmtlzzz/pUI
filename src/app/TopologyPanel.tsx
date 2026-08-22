@@ -1,4 +1,4 @@
-﻿import { useMemo } from 'react'
+import { useMemo } from 'react'
 import { useApp } from '../state/appStore'
 import { buildTopology, TOPO_W, TOPO_H, type TopologyNode } from '../stats/topology'
 import { fmtBytesShort } from './topoUtil'
@@ -20,8 +20,16 @@ export function TopologyPanel() {
   return (
     <div className="topo-wrap">
       <div className="pane-title">主机拓扑 ({topo.nodes.length} 主机 · {topo.edges.length} 边)</div>
-      <svg viewBox={`0 0 ${TOPO_W} ${TOPO_H}`} className="topo-svg">
-        {topo.edges.map((e) => (
+      <svg
+        viewBox={`0 0 ${TOPO_W} ${TOPO_H}`}
+        className="topo-svg"
+        onPointerDown={startPan}
+        onPointerMove={movePan}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+      >
+        <g transform={`translate(${view.x} ${view.y})`}>
+          {topo.edges.map((e) => (
           <line
             key={e.from + e.to}
             x1={nodeById(topo.nodes, e.from)?.x}
@@ -52,8 +60,9 @@ export function TopologyPanel() {
             </text>
           </g>
         ))}
+        </g>
       </svg>
-      <div className="topo-hint">点击边查看对应会话;节点大小 = 会话数,边宽 = 字节量,橙色虚线 = 含异常</div>
+      <div className="topo-hint">拖拽平移 · 点击边查看对应会话;节点大小 = 会话数,边宽 = 字节量,橙色虚线 = 含异常</div>
     </div>
   )
 }

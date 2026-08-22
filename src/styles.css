@@ -181,6 +181,9 @@ table.list .time-col { color: #94a3b8; }
 .topo-edge { cursor: pointer; transition: stroke .12s ease; }
 .topo-edge:hover { stroke: #7c3aed !important; }
 .topo-hint { margin-top: 4px; font-size: 11px; color: #94a3b8; }
+.boundary-err { margin: 8px; padding: 10px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; color: #b91c1c; font-size: 12px; }
+.boundary-title { font-weight: 600; margin-bottom: 4px; }
+.boundary-msg { font-family: ui-monospace, monospace; word-break: break-all; margin-bottom: 8px; }
 
 /* ---------- 其它 ---------- */
 .drop-zone { position: absolute; inset: 0; background: rgba(37, 99, 235, .08); border: 2px dashed #2563eb; display: flex; align-items: center; justify-content: center; color: #2563eb; z-index: 10; animation: dropPulse 1.3s ease-in-out infinite; font-size: 14px; }

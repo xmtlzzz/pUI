@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from '
 import { Toolbar } from './Toolbar'
 import { FilterPanel } from './FilterPanel'
 import { ListPane } from './ListPane'
+import { ErrorBoundary } from './ErrorBoundary'
 import { SequenceDiagram } from '../render/SequenceDiagram'
 import { PacketDetail } from '../detail/PacketDetail'
 import { useApp, selectSelected } from '../state/appStore'
@@ -166,14 +167,20 @@ export function AppLayout() {
           <FilterPanel />
         </div>
         <div className="pane list" style={{ width: listWidth }}>
-          <ListPane />
+          <ErrorBoundary name="会话列表">
+            <ListPane />
+          </ErrorBoundary>
         </div>
         <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
         <div className="pane view">
-          <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+          <ErrorBoundary name="时序图">
+            <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+          </ErrorBoundary>
           <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
           <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
-            <PacketDetail />
+            <ErrorBoundary name="报文详情">
+              <PacketDetail />
+            </ErrorBoundary>
           </div>
         </div>
       </div>

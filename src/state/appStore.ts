@@ -160,7 +160,33 @@ export const useApp = create<AppState>((set, get) => ({
     set({ filter, filtered: deriveFiltered(get().conversations, filter, get().timeRange) })
   },
   setTimeRange(r) {
-    set({ timeRange: r, filtered: deriveFiltered(get().conversations, get().filter, r) })
+    const s = get()
+    const patch: Partial<AppState> = { timeRange: r, filtered: deriveFiltered(s.conversations, s.filter, r) }
+    if (r) {
+      // 定位语义:选中窗口内报文最多的会话,并在时序图上高亮窗口内报文。
+      // 长会话区间横跨整个时间轴时,单纯的「区间重叠过滤」列表毫无变化——定位+高亮才是可见反应
+      let best: Conversation | null = null
+      let bestCount = 0
+      let bestNums: number[] = []
+      for (const c of s.conversations) {
+        const nums = c.packets
+          .filter((p) => p.time >= r.start && p.time <= r.end)
+          .map((p) => p.number)
+        if (nums.length > bestCount) {
+          bestCount = nums.length
+          best = c
+          bestNums = nums
+        }
+      }
+      if (best && bestCount > 0) {
+        patch.selectedId = best.id
+        patch.selectedPacket = null
+        patch.highlight = bestNums
+      }
+    } else {
+      patch.highlight = [] // 清除区间时一并清掉高亮,避免残留
+    }
+    set(patch)
   },
   setSlowThreshold(n) {
     // 阈值可配置:)取合理区间,避免 0 或负值

@@ -94,6 +94,32 @@ describe('appStore 加载一致性', () => {
     expect(useApp.getState().filtered).toHaveLength(2)
   })
 
+  it('setTimeRange 自动定位窗口内报文最多的会话并高亮其窗口内报文', async () => {
+    // 模拟真实:长会话横跨全部时间轴,单纯区间过滤列表不变;定位+高亮才是「能看到反应」的语义
+    const a = [
+      { ...pkt(101, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), time: 0.1 },
+      { ...pkt(102, 'http', '2.2.2.2', 80, '1.1.1.1', 5000), time: 0.2 },
+    ] as Packet[]
+    const b = [
+      { ...pkt(201, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53), time: 5.1 },
+      { ...pkt(202, 'dns', '8.8.8.8', 53, '1.1.1.1', 5000), time: 5.2 },
+      { ...pkt(203, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53), time: 5.3 },
+    ] as Packet[]
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [...a, ...b], path: p }),
+    )
+    await useApp.getState().openFile('x.pcap')
+    useApp.setState({ selectedId: null })
+    // 窗口 [5,6):b 会话 3 报文命中,a 会话 0 → 应选中 b 会话并高亮其 3 个报文
+    useApp.getState().setTimeRange({ start: 5, end: 6 })
+    const st = useApp.getState()
+    expect(st.selectedId).toBe(st.conversations.find((c) => c.protocol === 'dns')?.id)
+    expect(st.highlight.length).toBe(3)
+    expect(st.highlight).toEqual([201, 202, 203])
+    // filtered 仍按区间重叠
+    expect(st.filtered.map((c) => c.protocol)).toEqual(['dns'])
+  })
+
   it('hexCache 超过上限按 LRU 逐出最旧条目', async () => {
     vi.mocked(fetchHex).mockImplementation((_p: string, n: number) => Promise.resolve(`hex${n}`))
     useApp.setState({ currentPath: 'x.pcap' })

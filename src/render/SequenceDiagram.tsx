@@ -1,8 +1,9 @@
-import { useMemo, useState, type RefObject } from 'react'
+import { useMemo, useRef, useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
 import { displayHost } from '../model/types'
 import { protocolColor } from '../model/protocolColors'
 import { formatEpoch } from './timeFormat'
+import { segmentConversation } from '../aggregate/segmentConversation'
 import type { Conversation } from '../model/types'
 
 export type TimeMode = 'relative' | 'absolute'
@@ -30,15 +31,28 @@ interface Props {
 
 export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight, onSelect, svgRef, zoom }: Props) {
   const [hover, setHover] = useState<LayoutMessage | null>(null)
+  // 长会话分段:当前段为空表示全部;切段后时序图只渲染该段报文
+  const segments = useMemo(() => (conv ? segmentConversation(conv.packets) : []), [conv])
+  const [segIdx, setSegIdx] = useState<number | null>(null)
+  const convId = conv?.id
+  const prevConvRef = useRef(convId)
+  if (convId !== prevConvRef.current) {
+    prevConvRef.current = convId
+    setSegIdx(null) // 切换会话时回到「全部」
+  }
 
   if (!conv) {
     return <div className="empty">从左侧选择一个会话查看时序图</div>
   }
 
-  // 布局与大包提示只在会话/风格变化时重算:hover、zoom、选中等状态变化不再全量重排
-  const layout = useMemo(() => layoutSequence(conv.packets, style, conv.client, conv.server), [conv, style])
-  const many = conv.packets.length > 2000
-  const protos = useMemo(() => [...new Set(conv.packets.map((p) => p.proto))].sort(), [conv])
+  const activePackets = segIdx != null ? (segments[segIdx]?.packets ?? conv.packets) : conv.packets
+  // 布局与大包提示只在会话/风格/分段变化时重算:hover、zoom、选中等状态变化不再全量重排
+  const layout = useMemo(
+    () => layoutSequence(activePackets, style, conv.client, conv.server),
+    [activePackets, style, conv.client, conv.server],
+  )
+  const many = activePackets.length > 2000
+  const protos = useMemo(() => [...new Set(activePackets.map((p) => p.proto))].sort(), [activePackets])
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
@@ -72,6 +86,24 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
           </span>
         </span>
         {many && <span className="many-warn">报文较多,建议风格 B / 缩放</span>}
+        {segments.length > 1 && (
+          <span className="seg-nav">
+            <button type="button" className={segIdx == null ? 'on' : ''} onClick={() => setSegIdx(null)}>
+              全部
+            </button>
+            {segments.map((sg) => (
+              <button
+                key={sg.index}
+                type="button"
+                className={segIdx === sg.index ? 'on' : ''}
+                title={`${sg.start.toFixed(2)}~${sg.end.toFixed(2)}s · ${sg.packetCount} 包`}
+                onClick={() => setSegIdx(sg.index)}
+              >
+                {sg.index + 1}段
+              </button>
+            ))}
+          </span>
+        )}
       </div>
       {/* 盒尺寸随 zoom 同步放大:滚动容器按盒子尺寸计算,否则放大后图的下半部永远滚不到 */}
       <svg

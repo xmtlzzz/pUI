@@ -41,6 +41,54 @@ describe('parsePackets', () => {
     expect(p.direction).toBe('other') // 方向在聚合阶段确定
   })
 
+  it('tcp.flags 嵌套对象形态仍解析为十六进制(jsonraw/旧版 tshark 兼容)', () => {
+    const nested = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '1', 'frame.time_relative': '0.000000', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:tcp' },
+            ip: { 'ip.src': '1.1.1.1', 'ip.dst': '2.2.2.2' },
+            tcp: { 'tcp.srcport': '12345', 'tcp.dstport': '80', 'tcp.flags': { 'tcp.flags': '0x0012', 'tcp.flags.str': '....S.' } },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(nested)
+    expect(p.tcpFlags).toBe('0x0012')
+    expect(p.info).toBe('TCP SYN-ACK')
+  })
+
+  it('仅有 flags.str 位串时也能推出十六进制', () => {
+    const strOnly = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '1', 'frame.time_relative': '0.000000', 'frame.len': '60', 'frame.protocols': 'eth:ethertype:ip:tcp' },
+            ip: { 'ip.src': '1.1.1.1', 'ip.dst': '2.2.2.2' },
+            tcp: { 'tcp.srcport': '12345', 'tcp.dstport': '80', 'tcp.flags': { 'tcp.flags.str': '..S...' } },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(strOnly)
+    expect(p.tcpFlags).toBe('0x0002')
+  })
+
+  it('frame.protocols 缺失时 proto 为 unknown 而非空串', () => {
+    const bare = JSON.stringify([
+      {
+        _source: {
+          layers: {
+            frame: { 'frame.number': '1', 'frame.time_relative': '0.000000', 'frame.len': '42' },
+            eth: { 'eth.src': 'aa:bb:cc:dd:ee:01', 'eth.dst': 'aa:bb:cc:dd:ee:02' },
+          },
+        },
+      },
+    ])
+    const [p] = parsePackets(bare)
+    expect(p.proto).toBe('unknown')
+  })
+
   it('extracts method/uri nested under the request-line key', () => {
     const lineRaw = JSON.stringify([
       {

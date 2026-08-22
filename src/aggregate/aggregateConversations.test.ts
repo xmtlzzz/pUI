@@ -72,6 +72,25 @@ describe('aggregateConversations', () => {
     expect(c.packets.map((p) => p.direction)).toEqual(['response', 'request', 'response'])
   })
 
+  it('单侧端口缺失时同一流仍聚合为一个会话(不拆成两个单向)', () => {
+    // dstPort 缺失(畸形/截断帧之类):双向 flowKey 必须一致,否则会话被拆
+    const req: Packet = { number: 1, time: 0, len: 66, transport: 'tcp', proto: 'tcp', srcIp: '1.1.1.1', srcPort: 12345, dstIp: '2.2.2.2', direction: 'other' }
+    const resp: Packet = { number: 2, time: 0.01, len: 60, transport: 'tcp', proto: 'tcp', srcIp: '2.2.2.2', srcPort: 80, dstIp: '1.1.1.1', direction: 'other' }
+    const convs = aggregateConversations([req, resp])
+    expect(convs).toHaveLength(1)
+    expect(convs[0].packetCount).toBe(2)
+    expect(convs[0].bytes).toBe(126)
+  })
+
+  it('仅一侧端口存在时双向 key 一致(退化到地址级)', () => {
+    // source 侧端口缺失:与上一条互补,退化到地址级 key 保证不拆会话
+    const a: Packet = { number: 1, time: 0, len: 66, transport: 'udp', proto: 'dns', srcIp: '1.1.1.1', dstIp: '2.2.2.2', dstPort: 53, direction: 'other' }
+    const b: Packet = { number: 2, time: 0.01, len: 60, transport: 'udp', proto: 'dns', srcIp: '2.2.2.2', srcPort: 53, dstIp: '1.1.1.1', direction: 'other' }
+    const convs = aggregateConversations([a, b])
+    expect(convs).toHaveLength(1)
+    expect(convs[0].bytes).toBe(126)
+  })
+
   it('UDP 无 SYN 时,客户端用低端口也不反转方向', () => {
     const req = pkt(1, 0.0, 'dns', 'udp', '192.168.1.10', 1024, '5.6.7.8', 8080)
     const resp = pkt(2, 0.01, 'dns', 'udp', '5.6.7.8', 8080, '192.168.1.10', 1024)

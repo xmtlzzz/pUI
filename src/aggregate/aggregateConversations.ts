@@ -2,23 +2,23 @@ import type { Conversation, Packet } from '../model/types'
 import { displayHost } from '../model/types'
 import { analyzeConversationIssues } from './issues'
 
-function side(p: Packet): string {
-  if (p.transport === 'tcp' || p.transport === 'udp') {
-    if (p.srcIp && p.srcPort != null && p.dstIp && p.dstPort != null) return `${p.srcIp}:${p.srcPort}`
-  }
-  if (p.srcIp) return p.srcIp
-  if (p.srcMac) return p.srcMac
-  return '?'
-}
-
 export function flowKey(p: Packet): string {
-  const a = side(p)
-  const b =
-    p.transport === 'tcp' || p.transport === 'udp'
-      ? p.dstIp && p.dstPort != null
-        ? `${p.dstIp}:${p.dstPort}`
-        : (p.dstIp ?? p.dstMac ?? '?')
-      : (p.dstIp ?? p.dstMac ?? '?')
+  let a: string
+  let b: string
+  if (p.transport === 'tcp' || p.transport === 'udp') {
+    if (p.srcPort != null && p.dstPort != null) {
+      a = p.srcIp ? `${p.srcIp}:${p.srcPort}` : (p.srcMac ?? '?')
+      b = p.dstIp ? `${p.dstIp}:${p.dstPort}` : (p.dstMac ?? '?')
+    } else {
+      // 任一侧端口缺失(畸形/截断帧等):端口化端点会因方向不同而换边,
+      // 双侧统一退化为地址级 key,保证同流双向 key 一致(否则会话被拆成两个单向)
+      a = p.srcIp ?? p.srcMac ?? '?'
+      b = p.dstIp ?? p.dstMac ?? '?'
+    }
+  } else {
+    a = p.srcIp ?? p.srcMac ?? '?'
+    b = p.dstIp ?? p.dstMac ?? '?'
+  }
   const [lo, hi] = a <= b ? [a, b] : [b, a]
   return `${p.transport}|${lo}|${hi}`
 }

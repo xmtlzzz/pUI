@@ -7,6 +7,33 @@ interface RawJson {
 function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v
 }
+
+const FLAG_CHARS: Record<string, number> = { F: 0x01, S: 0x02, R: 0x04, P: 0x08, A: 0x10, U: 0x20 }
+
+/** 由 tcp.flags.str 位串(如 "..S.A.")推出十六进制标志值 */
+function flagsStrToHex(s: string | undefined): string | undefined {
+  if (!s) return undefined
+  let n = 0
+  for (const ch of s) {
+    const bit = FLAG_CHARS[ch]
+    if (bit != null) n |= bit
+  }
+  return n ? `0x${n.toString(16).padStart(4, '0')}` : undefined
+}
+
+/** tcp.flags 兼容多种 tshark 输出形态:平铺字符串 / 数组 / 嵌套对象(jsonraw、旧版)。
+ *  嵌套形态如 { 'tcp.flags': '0x0002', 'tcp.flags.str': '..S.' } → 取 hex;只有 str 时按位串推导。 */
+function tcpFlagsHex(v: unknown): string | undefined {
+  if (typeof v === 'string') return v
+  if (Array.isArray(v)) return v.length ? tcpFlagsHex(v[0]) : undefined
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    const hex = tcpFlagsHex(o['tcp.flags'])
+    if (hex != null) return hex
+    return flagsStrToHex(tcpFlagsHex(o['tcp.flags.str']))
+  }
+  return undefined
+}
 function int(v: string | string[] | undefined): number | undefined {
   const s = first(v)
   if (s == null) return undefined
@@ -118,7 +145,7 @@ export function parsePackets(jsonText: string): Packet[] {
     const http = L['http'] ?? {}
     const dns = L['dns'] ?? {}
     const tls = L['tls'] ?? {}
-    const protocols = (first(frame['frame.protocols']) ?? '').split(':')
+    const protocols = (first(frame['frame.protocols']) ?? '').split(':').filter((s) => s !== '')
     const transport = transportOf(protocols)
     const srcIp = first(ip['ip.src']) ?? first(ipv6['ipv6.src'])
     const dstIp = first(ip['ip.dst']) ?? first(ipv6['ipv6.dst'])
@@ -134,7 +161,7 @@ export function parsePackets(jsonText: string): Packet[] {
     const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
       proto,
       transport,
-      tcpFlags: first(tcp['tcp.flags']),
+      tcpFlags: tcpFlagsHex(tcp['tcp.flags']),
       httpMethod: deepFind(http, 'http.request.method') ?? parseRequestLine(reqLine).method,
       httpUri: deepFind(http, 'http.request.uri') ?? parseRequestLine(reqLine).uri,
       httpCode: deepFind(http, 'http.response.code') ?? parseResponseCode(resLine),

@@ -171,6 +171,11 @@ table.list .time-col { color: #94a3b8; }
 .seg-nav { display: inline-flex; gap: 4px; margin-left: 6px; }
 .seg-nav button { font-size: 11px; padding: 1px 6px; border: 1px solid #e2e8f0; background: #fff; color: #64748b; border-radius: 4px; cursor: pointer; }
 .seg-nav button.on { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; font-weight: 600; }
+.topo-wrap { padding: 0 8px 8px; }
+.topo-svg { width: 100%; height: auto; background: #fff; border: 1px solid #eef2f7; border-radius: 8px; }
+.topo-edge { cursor: pointer; transition: stroke .12s ease; }
+.topo-edge:hover { stroke: #7c3aed !important; }
+.topo-hint { margin-top: 4px; font-size: 11px; color: #94a3b8; }
 
 /* ---------- 其它 ---------- */
 .drop-zone { position: absolute; inset: 0; background: rgba(37, 99, 235, .08); border: 2px dashed #2563eb; display: flex; align-items: center; justify-content: center; color: #2563eb; z-index: 10; animation: dropPulse 1.3s ease-in-out infinite; font-size: 14px; }

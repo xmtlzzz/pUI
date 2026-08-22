@@ -1,4 +1,4 @@
-import { useState, type RefObject } from 'react'
+import { useMemo, useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
 import { displayHost } from '../model/types'
 import { protocolColor } from '../model/protocolColors'
@@ -25,9 +25,10 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
     return <div className="empty">从左侧选择一个会话查看时序图</div>
   }
 
-  const layout = layoutSequence(conv.packets, style, conv.client, conv.server)
+  // 布局与大包提示只在会话/风格变化时重算:hover、zoom、选中等状态变化不再全量重排
+  const layout = useMemo(() => layoutSequence(conv.packets, style, conv.client, conv.server), [conv, style])
   const many = conv.packets.length > 2000
-  const protos = [...new Set(conv.packets.map((p) => p.proto))].sort()
+  const protos = useMemo(() => [...new Set(conv.packets.map((p) => p.proto))].sort(), [conv])
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
@@ -62,12 +63,13 @@ export function SequenceDiagram({ conv, style, onSelect, svgRef, zoom }: Props) 
         </span>
         {many && <span className="many-warn">报文较多,建议风格 B / 缩放</span>}
       </div>
+      {/* 盒尺寸随 zoom 同步放大:滚动容器按盒子尺寸计算,否则放大后图的下半部永远滚不到 */}
       <svg
         ref={svgRef}
-        width={layout.width}
-        height={layout.height}
+        width={layout.width * zoom}
+        height={layout.height * zoom}
         viewBox={`0 0 ${layout.width} ${layout.height}`}
-        style={{ display: 'block', font: '11px system-ui, sans-serif', transform: `scale(${zoom})`, transformOrigin: 'top left' }}
+        style={{ display: 'block', font: '11px system-ui, sans-serif' }}
       >
         {/* lifelines + endpoint labels(顶部留白区) */}
         <line x1={CLIENT_X} y1={10} x2={CLIENT_X} y2={layout.height - 8} stroke="#cbd5e1" strokeDasharray="4 4" />

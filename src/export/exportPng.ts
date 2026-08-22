@@ -1,5 +1,13 @@
 import { hostOf } from '../model/types'
 
+/** 导出画布高度上限:超大会议导出会先分配巨型 canvas 直接 OOM
+ * (520×(72+30n)px,2 万包 >1GB RGBA),超过上限拒绝导出并提示先筛选。 */
+export const MAX_EXPORT_HEIGHT = 20000
+
+export function exportHeightWithinLimit(h: number): boolean {
+  return h <= MAX_EXPORT_HEIGHT
+}
+
 /** Windows 文件名非法字符(含 IPv6 冒号)替换为连字符 */
 const WIN_ILLEGAL = /[<>:"/\\|?*\x00-\x1f]/g
 function safePart(s: string): string {
@@ -45,6 +53,9 @@ function svgToBlob(svgEl: SVGSVGElement): Promise<Blob> {
       const canvas = document.createElement('canvas')
       const w = svgEl.viewBox.baseVal.width || svgEl.width.baseVal.value
       const h = svgEl.viewBox.baseVal.height || svgEl.height.baseVal.value
+      if (!exportHeightWithinLimit(h)) {
+        return reject(new Error(`会话过大(时序图高度 ${Math.round(h)}px 超出导出上限),请先筛选后再导出`))
+      }
       canvas.width = w
       canvas.height = h
       const ctx = canvas.getContext('2d')

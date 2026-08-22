@@ -43,7 +43,12 @@ export function AppLayout() {
 
   const onExport = async () => {
     if (!selected) return
-    await exportSvgPng(svgRef.current, defaultPngName(selected.client, selected.server, selected.protocol))
+    try {
+      await exportSvgPng(svgRef.current, defaultPngName(selected.client, selected.server, selected.protocol))
+    } catch (err) {
+      // 导出失败(如会话过大超上限):把原因展示给用户,而非静默失败
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
   }
 
   // 可拖拽尺寸:用 pointer capture 挂在分隔条上,拖出窗口也不泄漏监听;

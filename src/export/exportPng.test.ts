@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { defaultPngName, serializeSvgForExport } from './exportPng'
+import { defaultPngName, serializeSvgForExport, exportHeightWithinLimit, MAX_EXPORT_HEIGHT } from './exportPng'
 
 describe('defaultPngName', () => {
   it('builds a readable filename', () => {
@@ -13,6 +13,13 @@ describe('defaultPngName', () => {
 
   it('sanitizes Windows-illegal chars from ipv6 hosts', () => {
     expect(defaultPngName('2001:db8::1:443', 'fe80::1:10', 'tls')).toBe('2001-db8-1-fe80-1-tls.png')
+  })
+})
+
+describe('exportHeightWithinLimit', () => {
+  it('拒绝超大高度导出(防巨型 canvas OOM)', () => {
+    expect(exportHeightWithinLimit(MAX_EXPORT_HEIGHT)).toBe(true)
+    expect(exportHeightWithinLimit(MAX_EXPORT_HEIGHT + 1)).toBe(false)
   })
 })
 

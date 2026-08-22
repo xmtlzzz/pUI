@@ -174,8 +174,8 @@ describe('丢包/异常会话检测', () => {
     const packets = [pkt(1, 0, 'dns', 'udp', '192.168.1.10', 54322, '8.8.8.8', 53, { dnsQuery: 'lost.example.com' })]
     const convs = aggregateConversations(packets)
     const types = convs[0].issues.map((i) => i.type)
-    expect(types).toContain('one-way') // 请求方向可见、响应缺失
-    expect(types).toContain('unanswered') // DNS 层更精确的结论
+    expect(types).toContain('unanswered') // DNS 层给出更精确结论
+    expect(types).not.toContain('one-way') // unanswered 已覆盖,one-way 被抑制(更精确优先,避免双报)
   })
 
   it('HTTP 204/304 等无 body 响应(code 存在)不误报 unanswered', () => {

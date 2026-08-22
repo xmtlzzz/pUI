@@ -46,13 +46,22 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
   }
 
   const activePackets = segIdx != null ? (segments[segIdx]?.packets ?? conv.packets) : conv.packets
-  // 布局与大包提示只在会话/风格/分段变化时重算:hover、zoom、选中等状态变化不再全量重排
+  // 大包抽稀:>2000 报文按步长降采样渲染(首尾保底),交互仍基于原始报文号
+  const stride = activePackets.length > 2000 ? Math.ceil(activePackets.length / 2000) : 1
+  const downsampled = useMemo(() => {
+    if (stride === 1) return activePackets
+    const sampled = activePackets.filter((_, i) => i % stride === 0)
+    const last = activePackets[activePackets.length - 1]
+    if (sampled[sampled.length - 1] !== last) sampled.push(last) // 保底:尾包必须可见
+    return sampled
+  }, [activePackets, stride])
+  // 布局与大包提示只在会话/风格/分段/抽稀变化时重算:hover、zoom、选中等状态变化不再全量重排
   const layout = useMemo(
-    () => layoutSequence(activePackets, style, conv.client, conv.server),
-    [activePackets, style, conv.client, conv.server],
+    () => layoutSequence(downsampled, style, conv.client, conv.server),
+    [downsampled, style, conv.client, conv.server],
   )
-  const many = activePackets.length > 2000
-  const protos = useMemo(() => [...new Set(activePackets.map((p) => p.proto))].sort(), [activePackets])
+  const many = activePackets.length > 2000 // 标注按原始报文数(抽稀本身即提示)
+  const protos = useMemo(() => [...new Set(downsampled.map((p) => p.proto))].sort(), [downsampled])
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
@@ -85,7 +94,11 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
             响应
           </span>
         </span>
-        {many && <span className="many-warn">报文较多,建议风格 B / 缩放</span>}
+        {many && (
+          <span className="many-warn">
+            报文较多:已抽稀显示 {downsampled.length}/{activePackets.length} 条(步长 {stride}),建议分段查看
+          </span>
+        )}
         {segments.length > 1 && (
           <span className="seg-nav">
             <button type="button" className={segIdx == null ? 'on' : ''} onClick={() => setSegIdx(null)}>

@@ -71,6 +71,21 @@ describe('SequenceDiagram', () => {
     expect(container.textContent).toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/) // HH:MM:SS.mmm
   })
 
+  it('>2000 报文自动抽稀渲染并标注,首尾保底', () => {
+    const onSelect = vi.fn()
+    const manyPackets: Packet[] = Array.from({ length: 5000 }, (_, i) => ({
+      number: i + 1, time: i * 0.001, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP',
+    }))
+    const convMany: Conversation = { ...conv, packets: manyPackets, packetCount: 5000, bytes: 300000 }
+    const { container, getByText } = render(<SequenceDiagram conv={convMany} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    const msgs = container.querySelectorAll('.msg')
+    expect(msgs.length).toBeLessThan(5000) // 抽稀:stride=3 → ~1667 行
+    expect(msgs.length).toBeGreaterThan(1500)
+    expect(getByText(/已抽稀/)).toBeTruthy()
+    // 首尾保底:尾包 #5000 必须渲染
+    expect(container.textContent).toContain('5000')
+  })
+
   it('highlight 中的报文号带高亮样式', () => {
     const onSelect = vi.fn()
     const { container } = render(<SequenceDiagram conv={conv} style="B" highlight={[2]} onSelect={onSelect} svgRef={svgRef} zoom={1} />)

@@ -30,12 +30,25 @@ describe('exportTranscript', () => {
     const md = exportTranscript(conv)
     const rows = md.split('\n').filter((l) => l.startsWith('| '))
     expect(rows).toHaveLength(4) // 表头 + 3 报文(分隔行以 |--- 开头,不计入)
-    expect(md).toContain('| 1 | 0.000 | → 请求 | tcp | TCP SYN | 60B |')
-    expect(md).toContain('⚠[retransmission]')
+    expect(md).toContain('| 1 | 0.000 | → 请求 | `tcp` | `TCP SYN` | 60B |')
+    expect(md).toContain('⚠[`retransmission`]')
   })
 
   it('无异常时省略异常行', () => {
     const md = exportTranscript({ ...conv, issues: [] })
     expect(md).not.toContain('⚠ 异常')
+  })
+
+  it('不可信报文内容被 mdCell 转义:管道符/反引号/换行/尖括号不破坏表格结构', () => {
+    const evil: Packet[] = [
+      { number: 9, time: 1, len: 60, transport: 'tcp', proto: 'http', srcIp: '1.1.1.1', dstIp: '2.2.2.2', direction: 'request',
+        info: 'HTTP GET /a|b<img src=x onerror=alert(1)>`q`\nsecond line' },
+    ]
+    const md = exportTranscript({ ...conv, packets: evil, packetCount: 1 })
+    const rows = md.split('\n').filter((l) => l.startsWith('| '))
+    expect(rows).toHaveLength(2) // 表头 + 1 报文:注入的换行/竖线未拆出多余表格行(分隔行 |--- 不以 "| " 开头)
+    // 尖括号剥除、管道符转义、内部反引号转义、换行折叠为空格
+    expect(md).toContain('\\|bimg src=x onerror=alert(1)\\`q\\` second line')
+    expect(md).not.toContain('<img')
   })
 })

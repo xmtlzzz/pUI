@@ -17,6 +17,11 @@ const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 /// stdout 已 EOF 但子进程未退出时的收尾宽限,超宽限 kill
 const EXIT_GRACE: Duration = Duration::from_secs(5);
+/// stderr 缓冲上限:恶意抓包可诱导逐包 dissector 错误风暴,无上限会在超时 kill 前积累数百 MB;
+/// 超限后丢弃式继续排空(防子进程阻塞在写 stderr 上死锁),只停止追加
+const MAX_STDERR: usize = 1024 * 1024;
+/// 回传前端的错误信息截断长度:完整 stderr 可能达 MB 级,IPC 整体传输同样打内存
+const MAX_ERR_MSG: usize = 4 * 1024;
 
 pub fn resolve(app: &tauri::AppHandle, state: &AppState) -> Option<PathBuf> {
     // ① 用户设置路径
@@ -96,11 +101,26 @@ fn run_stream_with_timeout(
 
     let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
 
-    // stderr 由专用线程并发排空,内容仅用于错误诊断
+    // stderr 由专用线程并发排空,带字节上限(超限丢弃式排空防死锁),内容仅用于错误诊断
     let stderr_thread = child.stderr.take().map(|mut stderr| {
         std::thread::spawn(move || {
             let mut s = String::new();
-            let _ = stderr.read_to_string(&mut s);
+            let mut chunk = [0u8; 8192];
+            let mut total = 0usize;
+            loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if total < MAX_STDERR {
+                            let take = n.min(MAX_STDERR - total);
+                            let _ = s.push_str(&String::from_utf8_lossy(&chunk[..take]));
+                            total += take;
+                        }
+                        // 超限:继续读但不追加,维持管道排空
+                    }
+                    Err(_) => break,
+                }
+            }
             s
         })
     });
@@ -186,13 +206,25 @@ fn run_stream_with_timeout(
         }
     }
     let _ = reader.join();
-    let err = stderr_thread.and_then(|h| h.join().ok()).unwrap_or_default();
+    let err = truncate_err(&stderr_thread.and_then(|h| h.join().ok()).unwrap_or_default());
     if let Some(st) = status {
         if !st.success() {
             return Err(err.trim().to_string());
         }
     }
     Ok(String::from_utf8_lossy(&result.unwrap()).to_string())
+}
+
+/// 错误信息截断:完整 stderr 可达 MB 级,IPC 回传前裁到 MAX_ERR_MSG
+fn truncate_err(s: &str) -> String {
+    if s.len() <= MAX_ERR_MSG {
+        return s.to_string();
+    }
+    let mut cut = MAX_ERR_MSG;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}\n…[truncated]", &s[..cut])
 }
 
 /// 从 `tshark -v` 输出首行提取版本号:"TShark (Wireshark) 4.2.5 …" → "4.2.5"
@@ -402,6 +434,21 @@ mod tests {
             std::time::Duration::from_secs(60),
         );
         assert!(out.is_err(), "oversized output should be capped: {out:?}");
+    }
+
+    #[test]
+    fn truncate_err_caps_length_on_char_boundary() {
+        let long = "x".repeat(10 * 1024);
+        let cut = truncate_err(&long);
+        assert!(cut.len() < 8 * 1024, "should be capped near 4KB: {}", cut.len());
+        assert!(cut.ends_with("…[truncated]"));
+        // 短文本原样返回
+        assert_eq!(truncate_err("short"), "short");
+        // 多字节字符不在中间截断(UTF-8 边界安全)
+        let cjk = "汉".repeat(4000); // 12KB
+        let cut_cjk = truncate_err(&cjk);
+        assert!(cut_cjk.ends_with("…[truncated]"));
+        assert!(cut_cjk.starts_with("汉"));
     }
 
     #[test]

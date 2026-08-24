@@ -14,6 +14,8 @@ export interface TopologyNode {
 export interface TopologyEdge {
   from: string
   to: string
+  /** 唯一键:带 SEP 拼接,防 "1.1.1.1"+"23.0.0.5" 与 "1.1.1.12"+"3.0.0.5" 无分隔符碰撞 */
+  key: string
   bytes: number
   protocols: string[]
   hasIssue: boolean
@@ -67,7 +69,7 @@ export function buildTopology(convs: Conversation[], maxNodes = 24): Topology {
     if (a === b || !pos.has(a) || !pos.has(b)) continue
     const key = a < b ? a + SEP + b : b + SEP + a
     let e = edgeMap.get(key)
-    if (!e) { e = { from: a, to: b, bytes: 0, protocols: [], hasIssue: false, convIds: [] }; edgeMap.set(key, e) }
+    if (!e) { e = { from: a, to: b, key, bytes: 0, protocols: [], hasIssue: false, convIds: [] }; edgeMap.set(key, e) }
     e.bytes += c.bytes
     if (!e.protocols.includes(c.protocol)) e.protocols.push(c.protocol)
     if (c.issues.length) e.hasIssue = true

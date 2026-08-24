@@ -46,4 +46,18 @@ describe('buildTopology', () => {
     expect(t.nodes).toEqual([])
     expect(t.edges).toEqual([])
   })
+
+  it('边 key 含分隔符:无分隔符拼接会碰撞的 IP 对 key 各不相同', () => {
+    // ("1.1.1.1","23.0.0.5") 与 ("1.1.1.12","3.0.0.5") 无分隔符拼接同为 "1.1.1.123.0.0.5"
+    const SEP = String.fromCharCode(0)
+    const convs = [conv('1', '1.1.1.1:1000', '23.0.0.5:80', 100), conv('2', '1.1.1.12:2000', '3.0.0.5:80', 50)]
+    const t = buildTopology(convs)
+    expect(t.edges).toHaveLength(2)
+    expect(t.edges[0].key).not.toBe(t.edges[1].key)
+    // key 与 from/to 的无分隔符拼接不同(证明含分隔符)
+    for (const e of t.edges) {
+      expect(e.key).toBe(e.from < e.to ? e.from + SEP + e.to : e.to + SEP + e.from)
+      expect(new Set(t.edges.map((x) => x.key)).size).toBe(t.edges.length)
+    }
+  })
 })

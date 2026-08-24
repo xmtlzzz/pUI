@@ -49,7 +49,7 @@ export function TopologyPanel() {
         <g transform={`translate(${view.x} ${view.y})`}>
           {topo.edges.map((e) => (
           <line
-            key={e.from + e.to}
+            key={e.key}
             x1={nodeById(topo.nodes, e.from)?.x}
             y1={nodeById(topo.nodes, e.from)?.y}
             x2={nodeById(topo.nodes, e.to)?.x}

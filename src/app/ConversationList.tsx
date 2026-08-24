@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useApp, selectSelected } from '../state/appStore'
 import { protocolStyle } from '../model/protocolColors'
 import { sortConversations, type SortKey } from './sortConversations'
@@ -141,17 +141,36 @@ function fmtBytes(b: number): string {
 }
 
 function SearchBox({ query, setQuery }: { query: string; setQuery: (q: string) => void }) {
+  const [text, setText] = useState(query)
+  // 防抖:输入只写本地 state 即时回显,停笔 200ms 后才写 store,避免逐字触发几十万报文的全量搜索
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(text), 200)
+    return () => clearTimeout(t)
+  }, [text, setQuery])
+  // store 侧变化(打开新文件清空 searchQuery)时取消挂起定时器并同步本地值
+  useEffect(() => {
+    setText(query)
+  }, [query])
+
   return (
     <div className="search-box">
       <input
         type="search"
-        value={query}
+        value={text}
         placeholder="搜索报文(协议/地址/端口/URL/DNS)…"
         aria-label="搜索报文"
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => setText(e.target.value)}
       />
-      {query && (
-        <button type="button" className="search-clear" onClick={() => setQuery('')} aria-label="清除搜索">
+      {text && (
+        <button
+          type="button"
+          className="search-clear"
+          aria-label="清除搜索"
+          onClick={() => {
+            setText('')
+            setQuery('') // 清除不走防抖,立即同步
+          }}
+        >
           ✕
         </button>
       )}

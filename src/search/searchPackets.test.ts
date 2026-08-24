@@ -48,4 +48,20 @@ describe('searchConversations', () => {
     const hits = searchConversations([c1, c2], 'x.com')
     expect(hits.map((h) => [h.convId, h.numbers])).toEqual([['k1', [1]], ['k2', [2]]])
   })
+
+  it('同一会话二次搜索命中 WeakMap 缓存路径,不同关键词结果正确且不抛错', () => {
+    const conv: Conversation = {
+      id: 'k', client: 'a', server: 'b', protocol: 'http', packetCount: 2, bytes: 120,
+      start: 0, end: 0.1, duration: 0.1,
+      packets: [pkt(1, { info: 'HTTP GET /alpha' }), pkt(2, { dnsQuery: 'beta.example.com' })],
+      issues: [],
+    }
+    // 首次搜索构建并缓存 haystack
+    expect(searchConversations([conv], 'alpha').map((m) => m.numbers)).toEqual([[1]])
+    // 同一 conv 复用缓存,不同关键词各自命中
+    expect(searchConversations([conv], 'beta').map((m) => m.numbers)).toEqual([[2]])
+    expect(searchConversations([conv], 'example').map((m) => m.numbers)).toEqual([[2]])
+    // 缓存路径下无命中也不抛错
+    expect(searchConversations([conv], 'zzz')).toEqual([])
+  })
 })

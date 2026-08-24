@@ -214,6 +214,8 @@ pub async fn fetch_hex(
     let app = app.clone();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // 与 open_capture 同一道闸门:FIFO/设备路径会让 `-r` 空转占线,超大文件不受限
+        check_capture_path(&path)?;
         let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
         tshark::run_hex(&bin, &path, frame_number)
     })
@@ -221,41 +223,51 @@ pub async fn fetch_hex(
     .map_err(|e| format!("fetch_hex task failed: {e}"))?
 }
 
+// 导出与 open_* 同为 async + spawn_blocking:rfd 阻塞式对话框禁止在主线程调用(macOS 会挂死),
+// base64 解码(≤64MB)与文件落盘也不应冻结 UI
 #[tauri::command]
-pub fn save_text(default_name: String, content: String) -> Result<Option<String>, String> {
-    if content.len() > MAX_TEXT_BYTES {
-        return Err("text too large".into());
-    }
-    let path = rfd::FileDialog::new()
-        .set_file_name(&default_name)
-        .add_filter("Markdown", &["md"])
-        .save_file();
-    if let Some(p) = path {
-        std::fs::write(&p, content).map_err(|e| e.to_string())?;
-        Ok(Some(p.to_string_lossy().into_owned()))
-    } else {
-        Ok(None)
-    }
+pub async fn save_text(default_name: String, content: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if content.len() > MAX_TEXT_BYTES {
+            return Err("text too large".into());
+        }
+        let path = rfd::FileDialog::new()
+            .set_file_name(&default_name)
+            .add_filter("Markdown", &["md"])
+            .save_file();
+        if let Some(p) = path {
+            std::fs::write(&p, content).map_err(|e| e.to_string())?;
+            Ok(Some(p.to_string_lossy().into_owned()))
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| format!("save_text task failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn save_png(default_name: String, base64_data: String) -> Result<Option<String>, String> {
+pub async fn save_png(default_name: String, base64_data: String) -> Result<Option<String>, String> {
     use base64::engine::general_purpose::STANDARD as B64;
     use base64::Engine as _;
     if base64_data.len() > MAX_PNG_BASE64 {
         return Err("png data too large".into());
     }
     let bytes = B64.decode(base64_data).map_err(|e| e.to_string())?;
-    let path = rfd::FileDialog::new()
-        .set_file_name(&default_name)
-        .add_filter("PNG", &["png"])
-        .save_file();
-    if let Some(p) = path {
-        std::fs::write(&p, &bytes).map_err(|e| e.to_string())?;
-        Ok(Some(p.to_string_lossy().into_owned()))
-    } else {
-        Ok(None)
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = rfd::FileDialog::new()
+            .set_file_name(&default_name)
+            .add_filter("PNG", &["png"])
+            .save_file();
+        if let Some(p) = path {
+            std::fs::write(&p, &bytes).map_err(|e| e.to_string())?;
+            Ok(Some(p.to_string_lossy().into_owned()))
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| format!("save_png task failed: {e}"))?
 }
 
 #[cfg(test)]

@@ -60,10 +60,17 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
   )
   const many = activePackets.length > 2000 // 标注按原始报文数(抽稀本身即提示)
   const protos = useMemo(() => [...new Set(downsampled.map((p) => p.proto))].sort(), [downsampled])
+  // 高亮报文号集合:highlight 数组线性扫描在每条报文渲染时是 O(行数·k)(大抓包高亮可达数十万元素);
+  // 提前转 Set 后单条命中判定降到 O(1),与数组 includes 语义一致
+  const hlSet = useMemo(() => (highlight ? new Set(highlight) : null), [highlight])
 
   if (!conv) {
     return <div className="empty">从左侧选择一个会话查看时序图</div>
   }
+  // 跨会话残留防护:旧会话的 hover 对象引用不在当前布局数组中则视为无效。
+  // 该判断只依赖 layout、与具体报文无关——提到 map 外一次算好,避免逐条报文各做一次 O(n)
+  // 扫描(全量重排后每帧的会话级比较从 O(n²) 降到 O(n),n≈2000 时每帧省约 400 万次比较)
+  const hoverInLayout = hover != null && layout.messages.some((mm) => mm === hover)
 
   return (
     <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
@@ -148,9 +155,8 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
           const lostSeg = m.analysis?.includes('lost-segment')
           const line = retrans || lostSeg ? '#ea580c' : protocolColor(m.proto)
           const dir = DIR_COLOR[m.direction]
-          // 跨会话残留防护:旧会话的 hover 对象引用不在当前布局数组中则视为无效
-          const isHover = hover != null && layout.messages.some((mm) => mm === hover)
-          const isHit = highlight?.includes(m.id) ?? false
+          const isHover = hoverInLayout && m === hover
+          const isHit = hlSet?.has(m.id) ?? false
           return (
             <g
               key={`${style}-${m.id}`}

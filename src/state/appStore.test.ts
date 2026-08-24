@@ -120,6 +120,23 @@ describe('appStore 加载一致性', () => {
     expect(st.filtered.map((c) => c.protocol)).toEqual(['dns'])
   })
 
+  it('setTimeRange 高亮报文号超过 2000 时截断(仅保留前 2000),选中与计数仍用完整报文', async () => {
+    const many = Array.from({ length: 2500 }, (_, i) => ({
+      ...pkt(i + 1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80),
+      time: i * 0.001,
+    }) as Packet)
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets: many, path: p }))
+    await useApp.getState().openFile('x.pcap')
+    const big = useApp.getState().conversations[0]
+    expect(big.packets.length).toBe(2500)
+    // 窗口覆盖全部包:命中 2500 > 2000,高亮截断到前 2000,但选中仍指向该会话(bestCount 用原始计数)
+    useApp.getState().setTimeRange({ start: 0, end: 3 })
+    const st = useApp.getState()
+    expect(st.selectedId).toBe(big.id)
+    expect(st.highlight.length).toBeLessThanOrEqual(2000)
+    expect(st.highlight).toEqual(many.slice(0, 2000).map((p) => p.number))
+  })
+
   it('hexCache 超过上限按 LRU 逐出最旧条目', async () => {
     vi.mocked(fetchHex).mockImplementation((_p: string, n: number) => Promise.resolve(`hex${n}`))
     useApp.setState({ currentPath: 'x.pcap' })

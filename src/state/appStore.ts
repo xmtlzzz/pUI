@@ -19,6 +19,9 @@ function deriveFiltered(conversations: Conversation[], filter: FilterCondition, 
 
 /** hexCache 条目上限:长会话反复浏览报文时内存只增不减,超过上限按 LRU 逐出最旧条目 */
 const HEX_CACHE_LIMIT = 200
+/** 时序图高亮的最大报文号数(与时序图 2000 抽稀护栏同档):高亮仅用于视觉定位,
+ *  数量截断不影响列表定位语义——bestCount 仍用原始计数判断 */
+const HIGHLIGHT_LIMIT = 2000
 const hexOrder: number[] = [] // LRU 顺序:末尾为最近使用;与 hexCache 同步维护
 
 function hexCachePut(cache: Record<number, string>, n: number, hex: string): Record<number, string> {
@@ -181,7 +184,9 @@ export const useApp = create<AppState>((set, get) => ({
       if (best && bestCount > 0) {
         patch.selectedId = best.id
         patch.selectedPacket = null
-        patch.highlight = bestNums
+        // 高亮仅用于视觉定位,窗口内命中报文超过上限时只保留前 2000 个报文号;
+        // 截断只作用于写入 highlight 的数组,bestCount 判定仍用完整计数
+        patch.highlight = bestNums.length > HIGHLIGHT_LIMIT ? bestNums.slice(0, HIGHLIGHT_LIMIT) : bestNums
       }
     } else {
       patch.highlight = [] // 清除区间时一并清掉高亮,避免残留

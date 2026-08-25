@@ -12,6 +12,13 @@ function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v
 }
 
+/** 取多值字段的全部取值:平铺(-e)模式下 tshark 把同名重复字段渲染成并行数组
+ *  (如三块 SACK 的 sack_le = ["201","401","601"]),用 first() 会静默丢掉第 2..n 个。 */
+function all(v: string | string[] | undefined): string[] {
+  if (v == null) return []
+  return Array.isArray(v) ? v : [v]
+}
+
 const FLAG_CHARS: Record<string, number> = { F: 0x01, S: 0x02, R: 0x04, P: 0x08, A: 0x10, U: 0x20 }
 
 /** 由 tcp.flags.str 位串(如 "..S.A.")推出十六进制标志值 */
@@ -68,7 +75,24 @@ const ANALYSIS_FIELDS: Array<[string, string]> = [
   ['tcp.analysis.duplicate_ack', 'duplicate-ack'],
   ['tcp.analysis.lost-segment', 'lost-segment'],
   ['tcp.analysis.lost_segment', 'lost-segment'],
+  ['tcp.analysis.spurious-retransmission', 'spurious-retransmission'],
+  ['tcp.analysis.spurious_retransmission', 'spurious-retransmission'],
 ]
+
+/** SACK 块解析:平铺模式下左右边界是并行数组,按下标配对;
+ *  树形态下 tshark 只保留最后一块(其 sack.count 仍是原始块数)。
+ *  边界数量不匹配(截断/畸形)时只取成对的部分,宁可少报也不产出 NaN 污染序列空间运算。 */
+function sackBlocks(le: string[], re: string[]): Array<[number, number]> | undefined {
+  const n = Math.min(le.length, re.length)
+  const out: Array<[number, number]> = []
+  for (let i = 0; i < n; i++) {
+    const l = Number.parseInt(le[i], 10)
+    const r = Number.parseInt(re[i], 10)
+    if (Number.isNaN(l) || Number.isNaN(r)) continue
+    out.push([l, r])
+  }
+  return out.length ? out : undefined
+}
 
 function appProto(protocols: string[]): string {
   for (let i = protocols.length - 1; i >= 0; i--) {
@@ -208,7 +232,10 @@ export function parsePackets(jsonText: string): Packet[] {
     const resLine = first(F.get('http.response.line'))
     const analysisTags: string[] = []
     for (const [field, tag] of ANALYSIS_FIELDS) {
-      if (F.get(field) != null) analysisTags.push(tag)
+      // 去重两种来源的重复:①同一标签的连字符/下划线两种字段名都命中;
+      // ②平铺模式下单个 dup ACK 报文的 duplicate_ack 值是 ["1","1"](实测),
+      // 按数组条目计数会让重复 ACK 数翻倍 —— 标签只表示"该报文有此现象",按报文计一次
+      if (F.get(field) != null && !analysisTags.includes(tag)) analysisTags.push(tag)
     }
     const dnsResp = first(F.get('dns.flags.response'))
     const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
@@ -226,6 +253,7 @@ export function parsePackets(jsonText: string): Packet[] {
       timeEpoch: float(F.get('frame.time_epoch')),
       interfaceId: first(F.get('frame.interface_id')),
       len: int(F.get('frame.len')) ?? 0,
+      capLen: int(F.get('frame.cap_len')),
       transport,
       proto,
       srcIp,
@@ -237,6 +265,11 @@ export function parsePackets(jsonText: string): Packet[] {
       tcpFlags: base.tcpFlags,
       tcpSeq: float(F.get('tcp.seq_raw')),
       tcpAck: float(F.get('tcp.ack_raw')),
+      tcpStream: int(F.get('tcp.stream')),
+      tcpLen: int(F.get('tcp.len')),
+      tcpCompleteness: int(F.get('tcp.completeness')),
+      tcpSackBlocks: sackBlocks(all(F.get('tcp.options.sack_le')), all(F.get('tcp.options.sack_re'))),
+      tcpDupAckNum: int(F.get('tcp.analysis.duplicate_ack_num')) ?? int(F.get('tcp.analysis.duplicate-ack-num')),
       tcpAnalysis: analysisTags.length ? analysisTags : undefined,
       httpTime: float(F.get('http.time')),
       httpMethod: base.httpMethod,

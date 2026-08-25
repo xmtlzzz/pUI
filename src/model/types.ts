@@ -7,6 +7,8 @@ export interface Packet {
   timeEpoch?: number // frame.time_epoch(绝对时间,秒),供相对/绝对时间戳切换
   interfaceId?: string // frame.interface_id(捕获接口索引),供接口数统计
   len: number // frame.len 字节
+  /** frame.cap_len(实际捕获字节)。< len 即被 snaplen 截断,属采集完整性信号而非网络丢包证据 */
+  capLen?: number
   transport: Transport
   proto: string // 应用层协议:http / dns / tls / tcp / udp / icmp / arp ...
   srcIp?: string
@@ -18,7 +20,22 @@ export interface Packet {
   tcpFlags?: string // "0x0012"
   tcpSeq?: number
   tcpAck?: number
-  /** tshark TCP 分析标签:retransmission / fast-retransmission / out-of-order / duplicate-ack / lost-segment */
+  /** tcp.stream:tshark 的流 id。同一端点对复用端口/并发连接时,只有它能区分不同连接;
+   *  缺失(旧抓包/非 TCP)时为 undefined —— 不可用 0 代替,0 是合法流 id */
+  tcpStream?: number
+  /** tcp.len:TCP 载荷字节数。序列号推进必须用它,frame.len 含各层头部不可用于序列空间。
+   *  0 表示纯 ACK/keep-alive(与 undefined "字段缺失"语义不同) */
+  tcpLen?: number
+  /** tcp.completeness 位掩码:SYN=1 SYN-ACK=2 ACK=4 DATA=8 FIN=16 RST=32。
+   *  (值 & 0x03) === 0 即中途抓包,此时"流起始丢段/未正常关闭"结论不可信 */
+  tcpCompleteness?: number
+  /** SACK 块 [左边界, 右边界)。平铺 -e 模式下 tshark 以并行数组给出多块,逐对 zip 得到;
+   *  协议树形态只保留最后一块(tshark 限制),故块数可能少于实际 —— 由分析层降级为限制而非事实 */
+  tcpSackBlocks?: Array<[number, number]>
+  /** tcp.analysis.duplicate_ack_num:这是第几个重复 ACK(tshark 自己的计数) */
+  tcpDupAckNum?: number
+  /** tshark TCP 分析标签:retransmission / fast-retransmission / duplicate-ack / lost-segment /
+   *  out-of-order / spurious-retransmission。仅为「观察到的现象」,不等于结论 */
   tcpAnalysis?: string[]
   httpTime?: number // http.time:请求到响应延迟(秒)
   httpMethod?: string

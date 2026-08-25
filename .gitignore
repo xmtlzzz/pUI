@@ -10,6 +10,9 @@ src-tauri/target/
 # local CodeGraph index
 .codegraph/
 
+# 本地探针/临时抓包(字段形态验证用,非源码)
+.probe/
+
 # misc
 *.log
 .DS_Store

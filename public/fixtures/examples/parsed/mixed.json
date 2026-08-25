@@ -19,6 +19,9 @@
         "frame.len": [
           "42"
         ],
+        "frame.cap_len": [
+          "42"
+        ],
         "frame.protocols": [
           "eth:ethertype:arp"
         ],
@@ -51,6 +54,9 @@
         "frame.len": [
           "42"
         ],
+        "frame.cap_len": [
+          "42"
+        ],
         "frame.protocols": [
           "eth:ethertype:arp"
         ],
@@ -81,6 +87,9 @@
           "0"
         ],
         "frame.len": [
+          "69"
+        ],
+        "frame.cap_len": [
           "69"
         ],
         "frame.protocols": [
@@ -128,6 +137,9 @@
           "0"
         ],
         "frame.len": [
+          "81"
+        ],
+        "frame.cap_len": [
           "81"
         ],
         "frame.protocols": [
@@ -180,6 +192,9 @@
         "frame.len": [
           "54"
         ],
+        "frame.cap_len": [
+          "54"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:tcp"
         ],
@@ -209,6 +224,15 @@
         ],
         "tcp.ack_raw": [
           "0"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "0"
         ]
       }
     }
@@ -231,6 +255,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -262,6 +289,15 @@
         ],
         "tcp.ack_raw": [
           "1001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "1"
         ]
       }
     }
@@ -284,6 +320,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -315,6 +354,15 @@
         ],
         "tcp.ack_raw": [
           "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "3"
         ]
       }
     }
@@ -337,6 +385,9 @@
           "0"
         ],
         "frame.len": [
+          "113"
+        ],
+        "frame.cap_len": [
           "113"
         ],
         "frame.protocols": [
@@ -368,6 +419,15 @@
         ],
         "tcp.ack_raw": [
           "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "59"
+        ],
+        "tcp.completeness": [
+          "7"
         ],
         "http.request.method": [
           "GET"
@@ -402,6 +462,9 @@
         "frame.len": [
           "54"
         ],
+        "frame.cap_len": [
+          "54"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:tcp"
         ],
@@ -431,6 +494,15 @@
         ],
         "tcp.ack_raw": [
           "1060"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "15"
         ]
       }
     }
@@ -453,6 +525,9 @@
           "0"
         ],
         "frame.len": [
+          "126"
+        ],
+        "frame.cap_len": [
           "126"
         ],
         "frame.protocols": [
@@ -484,6 +559,15 @@
         ],
         "tcp.ack_raw": [
           "1060"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "72"
+        ],
+        "tcp.completeness": [
+          "15"
         ],
         "http.request.uri": [
           "/"
@@ -521,6 +605,9 @@
         "frame.len": [
           "54"
         ],
+        "frame.cap_len": [
+          "54"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:tcp"
         ],
@@ -550,6 +637,15 @@
         ],
         "tcp.ack_raw": [
           "5073"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "15"
         ]
       }
     }
@@ -574,6 +670,9 @@
         "frame.len": [
           "54"
         ],
+        "frame.cap_len": [
+          "54"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:tcp"
         ],
@@ -603,6 +702,15 @@
         ],
         "tcp.ack_raw": [
           "5073"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "15"
         ]
       }
     }
@@ -625,6 +733,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -656,6 +767,15 @@
         ],
         "tcp.ack_raw": [
           "1061"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "31"
         ]
       }
     }
@@ -678,6 +798,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -709,6 +832,15 @@
         ],
         "tcp.ack_raw": [
           "1061"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "31"
         ]
       }
     }
@@ -731,6 +863,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -762,6 +897,15 @@
         ],
         "tcp.ack_raw": [
           "5074"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "31"
         ]
       }
     }

@@ -22,13 +22,16 @@ const FIELDS = [...captureFieldsSrc.matchAll(/'([a-z0-9_.]+)'/g)].map((m) => m[1
 if (FIELDS.length < 30) throw new Error(`captureFields.ts 解析异常,仅得 ${FIELDS.length} 个字段`)
 
 const eArgs = FIELDS.flatMap((f) => ['-e', f])
+// 与 Rust run_capture 同步:关闭相对序号,让 seq/ack/SACK 统一落在 raw 空间
+// (默认相对序号会让 sack_le 与 seq_raw 处于不同空间,比较后造出假 Gap)
+const OPTS = ['-o', 'tcp.relative_sequence_numbers:FALSE']
 
 mkdirSync(join(OUT, 'examples', 'parsed'), { recursive: true })
 mkdirSync(join(OUT, 'parsed'), { recursive: true })
 
 for (const name of EXAMPLES) {
   const pcap = join(OUT, 'examples', `${name}.pcapng`)
-  const json = execFileSync(TSHARK, ['-r', pcap, '-T', 'json', ...eArgs], { maxBuffer: 256 * 1024 * 1024 })
+  const json = execFileSync(TSHARK, [...OPTS, '-r', pcap, '-T', 'json', ...eArgs], { maxBuffer: 256 * 1024 * 1024 })
   writeFileSync(join(OUT, 'examples', 'parsed', `${name}.json`), json)
   if (name === 'http') writeFileSync(join(OUT, 'parsed', `${name}.json`), json) // 浏览器回退 fixture
   console.log(`parsed: ${name}.json (${(json.length / 1024).toFixed(1)}KB)`)

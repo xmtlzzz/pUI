@@ -19,6 +19,9 @@
         "frame.len": [
           "69"
         ],
+        "frame.cap_len": [
+          "69"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:udp:dns"
         ],
@@ -64,6 +67,9 @@
           "0"
         ],
         "frame.len": [
+          "81"
+        ],
+        "frame.cap_len": [
           "81"
         ],
         "frame.protocols": [

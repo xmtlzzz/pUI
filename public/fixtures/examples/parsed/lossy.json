@@ -19,6 +19,9 @@
         "frame.len": [
           "54"
         ],
+        "frame.cap_len": [
+          "54"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:tcp"
         ],
@@ -48,6 +51,15 @@
         ],
         "tcp.ack_raw": [
           "0"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "0"
         ]
       }
     }
@@ -70,6 +82,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -101,6 +116,15 @@
         ],
         "tcp.ack_raw": [
           "1001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "1"
         ]
       }
     }
@@ -123,6 +147,9 @@
           "0"
         ],
         "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
           "54"
         ],
         "frame.protocols": [
@@ -154,6 +181,15 @@
         ],
         "tcp.ack_raw": [
           "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.completeness": [
+          "3"
         ]
       }
     }
@@ -176,6 +212,9 @@
           "0"
         ],
         "frame.len": [
+          "113"
+        ],
+        "frame.cap_len": [
           "113"
         ],
         "frame.protocols": [
@@ -207,6 +246,15 @@
         ],
         "tcp.ack_raw": [
           "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "59"
+        ],
+        "tcp.completeness": [
+          "7"
         ],
         "http.request.method": [
           "GET"
@@ -241,6 +289,9 @@
         "frame.len": [
           "113"
         ],
+        "frame.cap_len": [
+          "113"
+        ],
         "frame.protocols": [
           "eth:ethertype:ip:tcp"
         ],
@@ -270,6 +321,15 @@
         ],
         "tcp.ack_raw": [
           "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "59"
+        ],
+        "tcp.completeness": [
+          "15"
         ],
         "tcp.analysis.retransmission": [
           "1"

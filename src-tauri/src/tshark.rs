@@ -9,8 +9,9 @@ use tauri::Manager;
 use crate::commands::AppState;
 
 /// tshark `-T json` 输出上限:超过即终止子进程,防止超大抓包把内存打爆。
-/// 128MB 与前端 parsePackets 守卫同档;配合 `-e` 精选字段(输出比全协议树小 4-5 倍),
-/// 等效可开约 90-100MB 抓包(约 8-10 万包)
+/// 128MB 与前端 parsePackets 守卫同档;配合 `-e` 精选字段(输出比全协议树小 4-5 倍)。
+/// M0 新增 9 个分析字段后实测 TCP 密集抓包约 1082 → 1298 B/包(+19%),
+/// 等效可开约 75-85MB 抓包(约 6.5-8 万包);DNS 等非 TCP 流量增幅仅 5% 左右
 const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
 /// 单帧 hex 文本上限(正常 <1MB;恶意巨型帧由该上限兜底,防全量缓冲 OOM)
 const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
@@ -79,6 +80,7 @@ pub const CAPTURE_FIELDS: &[&str] = &[
     "frame.time_epoch",
     "frame.interface_id",
     "frame.len",
+    "frame.cap_len",
     "frame.protocols",
     "eth.src",
     "eth.dst",
@@ -91,11 +93,18 @@ pub const CAPTURE_FIELDS: &[&str] = &[
     "tcp.flags",
     "tcp.seq_raw",
     "tcp.ack_raw",
+    "tcp.stream",
+    "tcp.len",
+    "tcp.completeness",
+    "tcp.options.sack_le",
+    "tcp.options.sack_re",
     "tcp.analysis.retransmission",
     "tcp.analysis.fast_retransmission",
     "tcp.analysis.out_of_order",
     "tcp.analysis.duplicate_ack",
+    "tcp.analysis.duplicate_ack_num",
     "tcp.analysis.lost_segment",
+    "tcp.analysis.spurious_retransmission",
     "udp.srcport",
     "udp.dstport",
     "http.request.method",
@@ -113,8 +122,14 @@ pub fn run_capture(bin: &Path, file: &str) -> Result<String, String> {
     if file.starts_with('-') {
         return Err("invalid capture path".into()); // 防 `-` 前缀选项混淆/`-r -` 卡读 stdin
     }
-    // -e 平铺字段模式:每帧只输出 CAPTURE_FIELDS,替代全协议树(-J)的 4-5 倍体积
-    let mut args: Vec<&str> = vec!["-r", file, "-T", "json"];
+    // -e 平铺字段模式:每帧只输出 CAPTURE_FIELDS,替代全协议树(-J)的 4-5 倍体积。
+    //
+    // tcp.relative_sequence_numbers:FALSE 是分析引擎的硬前提:tshark 默认把 tcp.seq / tcp.ack /
+    // tcp.options.sack_le/re 显示为相对 ISN 的序号,而 tcp.seq_raw 是原始序号——两种空间混在同一帧里。
+    // 实测中途抓包(base seq 500001):线上 SACK 是 500201-500301,tshark 却解析成 201-301,
+    // 若与 seq_raw 比较会凭空造出约 50 万字节的 Gap。关掉相对序号后 seq/ack/SACK 全部落在 raw 空间,
+    // 从源头消掉这一类假阳性(实测该选项不改变 tcp.analysis.* 标签)。
+    let mut args: Vec<&str> = vec!["-o", "tcp.relative_sequence_numbers:FALSE", "-r", file, "-T", "json"];
     for f in CAPTURE_FIELDS {
         args.push("-e");
         args.push(f);

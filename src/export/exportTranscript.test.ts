@@ -11,7 +11,7 @@ const packets: Packet[] = [
 const conv: Conversation = {
   id: 'k', client: '1.1.1.1:54321', server: '2.2.2.2:80', protocol: 'http', packetCount: 3, bytes: 420,
   start: 0, end: 0.5, duration: 0.5, packets,
-  issues: [{ type: 'retransmission', message: '检测到 1 次 TCP 重传,可能存在丢包' }],
+  issues: [{ type: 'retransmission', message: '观察到 1 次 TCP 重传(重传本身不等于丢包,需结合序列空间缺口判断)' }],
 }
 
 describe('exportTranscript', () => {

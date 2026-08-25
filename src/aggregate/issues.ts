@@ -8,18 +8,23 @@ export interface IssueOptions {
 }
 
 /**
- * 会话级可疑丢包/异常检测。
+ * 会话级异常标注。
  *
- * 场景:「本地发出请求 → 对端可能收到并回包,但本地未收到响应」在抓包里的体现
- * 通常是请求在,响应缺失;TCP 则表现为重传/乱序/未关闭等。用可达数据做规则推断:
+ * 定位:这一层只做**会话级现象提示**,不做故障定性。措辞遵循"观察与推断分离"
+ * (指南第 6、21 节):tshark 的 retransmission / lost-segment 等标签只是现象,
+ * 不能等价成网络丢包 —— 重传可能是伪重传(数据已到、ACK 未被看到)或乱序迟到,
+ * lost-segment 只是 tshark 基于单一观察点的推断。
+ * 真正的定性由 src/analysis/ 的序列空间与事件引擎给出(带证据链与限制说明)。
+ *
+ * 规则:
  * - TCP:SYN 发出但无 SYN-ACK → 连接未建立
- * - HTTP:有请求但全程无响应 → 响应可能丢失
+ * - HTTP:有请求但全程无响应
  * - DNS:有查询但无响应
- * - 会话仅含请求方向(无任何响应)→ 单向,可能丢包
+ * - 会话仅含请求方向(无任何响应)→ 单向
  * - TCP 未正常关闭(无 FIN)
- * - TCP 重传 / 乱序(tshark tcp.analysis.*)
+ * - TCP 重传 / 乱序 / 重复 ACK / 丢段(tshark tcp.analysis.*,仅作现象记录)
  * - TCP 被 RST 重置
- * - 响应延迟异常(http.time 过大)
+ * - 响应延迟偏高(http.time 过大)
  */
 export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions = {}): ConversationIssue[] {
   const slowThreshold = opts.slowResponseThreshold ?? SLOW_RESPONSE_THRESHOLD
@@ -50,12 +55,15 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
     }
     const retrans = packets.filter((p) => p.tcpAnalysis?.includes('retransmission') || p.tcpAnalysis?.includes('fast-retransmission'))
     if (retrans.length) {
-      issues.push({ type: 'retransmission', message: `检测到 ${retrans.length} 次 TCP 重传,可能存在丢包`, packetNumber: retrans[0].number })
+      // 只陈述观察到的现象。重传 ≠ 丢包(指南第 6 节):数据可能已到达而 ACK 未被发送端看到
+      // (伪重传),也可能只是乱序迟到。是否存在真实数据缺口由分析层的序列空间结论给出。
+      issues.push({ type: 'retransmission', message: `观察到 ${retrans.length} 次 TCP 重传(重传本身不等于丢包,需结合序列空间缺口判断)`, packetNumber: retrans[0].number })
     }
     const lost = packets.filter((p) => p.tcpAnalysis?.includes('lost-segment'))
     if (lost.length && !startsMidStream) {
-      // 流起始处的 lost-segment 是 tshark 假阳性,中途接入时不可信
-      issues.push({ type: 'lost-segment', message: `检测到 ${lost.length} 段丢失,可能存在丢包`, packetNumber: lost[0].number })
+      // 流起始处的 lost-segment 是 tshark 假阳性,中途接入时不可信。
+      // 即便可信,它也只是 tshark 的推断("某段未在预期位置出现"),不是实测到的网络丢包
+      issues.push({ type: 'lost-segment', message: `tshark 推断有 ${lost.length} 处数据段未按预期位置出现(仅为观察点视角,不能据此断定网络丢包位置)`, packetNumber: lost[0].number })
     }
     const ooo = packets.filter((p) => p.tcpAnalysis?.includes('out-of-order'))
     if (ooo.length) {
@@ -70,7 +78,7 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
     }
   }
 
-  // 2. HTTP 请求无响应(RST 是显式拒绝,不算"未收到响应可能丢包")
+  // 2. HTTP 请求无响应(RST 是显式拒绝,属于"收到了明确回应",不计入未响应)
   const httpReq = packets.find((p) => p.httpMethod != null)
   const hasHttpResp = packets.some((p) => p.httpCode != null)
   if (httpReq && !hasHttpResp && !rst) {
@@ -81,7 +89,8 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
   const slow = packets.filter((p) => p.httpTime != null && p.httpTime > slowThreshold)
   if (slow.length) {
     const worst = Math.max(...slow.map((s) => s.httpTime as number))
-    issues.push({ type: 'slow-response', message: `存在慢响应(最长 ${worst.toFixed(2)}s),可能有丢包/延迟` })
+    // 延迟的成因可能是服务端处理慢、排队、传输异常等;不单独归因为丢包
+    issues.push({ type: 'slow-response', message: `观察到响应延迟偏高(最长 ${worst.toFixed(2)}s),成因需结合传输层证据判断` })
   }
 
   // 4. DNS 查询无响应(RST 场景同上)
@@ -96,7 +105,8 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
   const hasAnyResp = packets.some((p) => p.direction === 'response')
   const hasAppUnanswered = issues.some((i) => i.type === 'unanswered' || i.type === 'syn-no-reply')
   if (!hasAnyResp && !hasAppUnanswered) {
-    issues.push({ type: 'one-way', message: '会话仅见请求方向,未收到任何响应(可能丢包)' })
+    // 只见单向可能是路由不对称、抓包点只看到一侧、或对端确实无响应;单观察点无法区分
+    issues.push({ type: 'one-way', message: '会话仅见请求方向,未观察到任何响应(单观察点抓包无法区分"对端未回应"与"回应未经过抓包点")' })
   }
 
   return issues

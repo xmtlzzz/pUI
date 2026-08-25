@@ -20,7 +20,11 @@ export function flowKey(p: Packet): string {
     b = p.dstIp ?? p.dstMac ?? '?'
   }
   const [lo, hi] = a <= b ? [a, b] : [b, a]
-  return `${p.transport}|${lo}|${hi}`
+  // tcp.stream 是连接身份的权威来源:同一端点对复用端口或并发连接时(实测 tshark 给出
+  // stream=0/1),仅按端点对归并会把多条连接混成一个会话,其握手、序列号与异常统计
+  // 全部串味,TCP 状态机在这种会话上运行没有意义。缺该字段(旧抓包/非 TCP)时才退回端点对。
+  const stream = p.tcpStream != null ? `|s${p.tcpStream}` : ''
+  return `${p.transport}|${lo}|${hi}${stream}`
 }
 
 const PROTO_RANK: Record<string, number> = {

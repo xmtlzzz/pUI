@@ -2,7 +2,13 @@ import { useMemo } from 'react'
 import { useApp } from '../state/appStore'
 import { deriveSummary } from '../stats/summaryStats'
 import { buildHistogram } from '../stats/histogram'
+import { deriveTcpStats } from '../stats/tcpStats'
+import { tcpStatRows } from '../stats/tcpStatHints'
 import { protocolColor } from '../model/protocolColors'
+import { displayHost } from '../model/types'
+
+/** 下钻高亮上限:与 appStore 时序图高亮护栏同档,超出截断仅影响视觉定位 */
+const HIGHLIGHT_LIMIT = 2000
 
 /** 左侧「摘要」面板:协议的体检报告(安全初看/教学场景) */
 export function SummaryPanel() {
@@ -10,8 +16,16 @@ export function SummaryPanel() {
   const packets = useApp((s) => s.packets)
   const timeRange = useApp((s) => s.timeRange)
   const setTimeRange = useApp((s) => s.setTimeRange)
+  const selectedId = useApp((s) => s.selectedId)
+  const setHighlight = useApp((s) => s.setHighlight)
   const summary = useMemo(() => deriveSummary(conversations), [conversations])
   const buckets = useMemo(() => buildHistogram(packets, 24), [packets])
+  // TCP 异常统计:针对当前选中会话的全量报文(不受分段/抽稀影响),点击行高亮下钻
+  const conv = useMemo(() => conversations.find((c) => c.id === selectedId) ?? null, [conversations, selectedId])
+  const tcpRows = useMemo(
+    () => (conv ? tcpStatRows(deriveTcpStats(conv.packets), conv.packets.length) : []),
+    [conv],
+  )
 
   if (!summary.conversationCount) {
     return <div className="empty">打开文件后显示分析摘要</div>
@@ -38,11 +52,36 @@ export function SummaryPanel() {
           <span className="bar-val">{p.count}</span>
         </div>
       ))}
-      {summary.issueTypeCounts.length > 0 && (
+      {tcpRows.length > 0 ? (
         <>
-          <div className="sub-title">异常类型</div>
-          <div className="issue-line">{summary.issueTypeCounts.map((i) => `${i.type}×${i.count}`).join(' · ')}</div>
+          <div className="sub-title">TCP 异常统计({displayHost(conv!.client)} ⇄ {displayHost(conv!.server)})</div>
+          <div className="tcp-stat">
+            <div className="tcp-stat-head">
+              <span>标记</span>
+              <span className="num">数量</span>
+              <span>先怎么理解</span>
+            </div>
+            {tcpRows.map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                className="tcp-stat-row"
+                title="点击在时序图中高亮该类报文"
+                onClick={() => {
+                  // 下钻:高亮该会话中带此类标签的报文(时序图紫色高亮 + 定位)
+                  const nums = (conv?.packets ?? []).filter((p) => p.tcpAnalysis?.includes(r.key)).map((p) => p.number)
+                  setHighlight(nums.length > HIGHLIGHT_LIMIT ? nums.slice(0, HIGHLIGHT_LIMIT) : nums)
+                }}
+              >
+                <span className="mark">{r.label}</span>
+                <span className="num">{r.count}</span>
+                <span className="hint">{r.hint}</span>
+              </button>
+            ))}
+          </div>
         </>
+      ) : (
+        conv && <div className="sub-title">TCP 异常统计:当前会话无重传/乱序等标记</div>
       )}
       <div className="sub-title">Top 主机</div>
       <div className="issue-line">{summary.topHosts.map((h) => `${h.host} ${fmtBytes(h.bytes)}`).join(' · ')}</div>

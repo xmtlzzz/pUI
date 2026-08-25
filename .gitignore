@@ -7,6 +7,9 @@ src-tauri/target/
 # brainstorming visual companion (local mockups, not source)
 .superpowers/
 
+# local CodeGraph index
+.codegraph/
+
 # misc
 *.log
 .DS_Store

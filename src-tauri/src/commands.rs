@@ -66,7 +66,11 @@ fn check_capture_path(path: &str) -> Result<u64, String> {
     }
     let size = meta.len();
     if size > MAX_CAPTURE_FILE {
-        return Err("capture file too large".into());
+        return Err(format!(
+            "抓包文件 {}MB 超过 {}MB 上限:请先用显示过滤器缩小范围,或用 editcap 分割后打开",
+            size / 1024 / 1024,
+            MAX_CAPTURE_FILE / 1024 / 1024
+        ));
     }
     Ok(size)
 }
@@ -92,8 +96,8 @@ const MAX_CAPTURE_BASE64: usize = 128 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
 /// PNG(base64)上限:约 64MB,时序图导出远小于此
 const MAX_PNG_BASE64: usize = 64 * 1024 * 1024;
-/// 输入抓包文件上限:与 JSON 上限(64MB)匹配——超大输入经 IPC+JSON.parse 会放大数 GB,
-/// 档位回收:128MB 输入(中等抓包)仍可打开,巨型文件明确拒绝
+/// 输入抓包文件上限:与 JSON 上限(128MB)同档位——超大输入经 IPC+JSON.parse 会放大数 GB,
+/// 巨型文件明确拒绝并给出可操作提示
 const MAX_CAPTURE_FILE: u64 = 128 * 1024 * 1024;
 
 /// 校验 tshark 路径:须为绝对路径、真实常规文件(拒绝符号链接冒名)、文件名含 tshark。

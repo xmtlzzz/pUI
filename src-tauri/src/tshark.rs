@@ -9,8 +9,9 @@ use tauri::Manager;
 use crate::commands::AppState;
 
 /// tshark `-T json` 输出上限:超过即终止子进程,防止超大抓包把内存打爆。
-/// 64MB 与前端 parsePackets 守卫同档:JSON.parse 的对象图放大 4-8 倍仍可控
-const MAX_CAPTURE_JSON: u64 = 64 * 1024 * 1024;
+/// 128MB 与前端 parsePackets 守卫同档;配合 `-e` 精选字段(输出比全协议树小 4-5 倍),
+/// 等效可开约 90-100MB 抓包(约 8-10 万包)
+const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
 /// 单帧 hex 文本上限(正常 <1MB;恶意巨型帧由该上限兜底,防全量缓冲 OOM)
 const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
 /// 子进程墙钟超时:超时 kill 并返回可读错误,防止挂死的 tshark 永久占线
@@ -69,15 +70,56 @@ fn bundled(app: &tauri::AppHandle) -> Option<PathBuf> {
     }
 }
 
+/// `-e` 精选字段清单:只取 pUI 解析层用到的字段,输出比全协议树(-J)小 4-5 倍。
+/// 注意字段名为 tshark -G fields 的规范名(下划线,如 tcp.analysis.lost_segment);
+/// 前端解析器同时兼容树形态的连字符键。新增前端字段时须同步此清单与 gen-parsed.mjs。
+pub const CAPTURE_FIELDS: &[&str] = &[
+    "frame.number",
+    "frame.time_relative",
+    "frame.time_epoch",
+    "frame.interface_id",
+    "frame.len",
+    "frame.protocols",
+    "eth.src",
+    "eth.dst",
+    "ip.src",
+    "ip.dst",
+    "ipv6.src",
+    "ipv6.dst",
+    "tcp.srcport",
+    "tcp.dstport",
+    "tcp.flags",
+    "tcp.seq_raw",
+    "tcp.ack_raw",
+    "tcp.analysis.retransmission",
+    "tcp.analysis.fast_retransmission",
+    "tcp.analysis.out_of_order",
+    "tcp.analysis.duplicate_ack",
+    "tcp.analysis.lost_segment",
+    "udp.srcport",
+    "udp.dstport",
+    "http.request.method",
+    "http.request.uri",
+    "http.response.code",
+    "http.time",
+    "http.request.line",
+    "http.response.line",
+    "dns.qry.name",
+    "dns.flags.response",
+    "tls.handshake.type",
+];
+
 pub fn run_capture(bin: &Path, file: &str) -> Result<String, String> {
     if file.starts_with('-') {
         return Err("invalid capture path".into()); // 防 `-` 前缀选项混淆/`-r -` 卡读 stdin
     }
-    run_stream(
-        bin,
-        &["-r", file, "-T", "json", "-J", "frame eth ip ipv6 tcp udp http dns tls"],
-        MAX_CAPTURE_JSON,
-    )
+    // -e 平铺字段模式:每帧只输出 CAPTURE_FIELDS,替代全协议树(-J)的 4-5 倍体积
+    let mut args: Vec<&str> = vec!["-r", file, "-T", "json"];
+    for f in CAPTURE_FIELDS {
+        args.push("-e");
+        args.push(f);
+    }
+    run_stream(bin, &args, MAX_CAPTURE_JSON)
 }
 
 /// 流式读取子进程 stdout,带字节上限 + 墙钟超时 + stderr 并发排空:
@@ -142,7 +184,10 @@ fn run_stream_with_timeout(
             };
             total += n as u64;
             if total > max_stdout {
-                let _ = tx.send(Err("capture too large: tshark output exceeds limit".into()));
+                let _ = tx.send(Err(format!(
+                    "抓包解析输出超过 {}MB 上限:请先用显示过滤器缩小范围,或用 editcap/traceshark 分割后打开",
+                    max_stdout / 1024 / 1024
+                )));
                 return;
             }
             buf.extend_from_slice(&chunk[..n]);

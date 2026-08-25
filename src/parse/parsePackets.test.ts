@@ -42,7 +42,7 @@ describe('parsePackets', () => {
   })
 
   it('超过解析上限的 JSON 文本直接拒绝(防 JSON.parse 对象图放大数 GB)', () => {
-    const huge = '['.padEnd(64 * 1024 * 1024 + 1, ' ')
+    const huge = '['.padEnd(128 * 1024 * 1024 + 1, ' ')
     expect(() => parsePackets(huge)).toThrow(/过大/)
     // 略小于上限的畸形文本仍走 JSON 语法错误(守卫只挡体积)
     expect(() => parsePackets('[')).toThrow()
@@ -238,5 +238,123 @@ describe('parsePackets', () => {
     ])
     const [p] = parsePackets(raw)
     expect(p.httpTime).toBeCloseTo(2.95)
+  })
+})
+
+describe('parsePackets -e 平铺形态(-T json -e 输出,大文件模式)', () => {
+  // 真实 tshark 4.6 -e 输出形态:键直接平铺在 layers 上,值为数组;缺失字段整个不出现
+  function flatFrame(layers: Record<string, string | string[]>): string {
+    return JSON.stringify([{ _source: { layers } }])
+  }
+
+  it('平铺键直接映射到 Packet 字段', () => {
+    const [p] = parsePackets(flatFrame({
+      'frame.number': ['1'],
+      'frame.time_relative': ['0.000000000'],
+      'frame.time_epoch': ['0.000000000'],
+      'frame.interface_id': ['0'],
+      'frame.len': ['54'],
+      'frame.protocols': ['eth:ethertype:ip:tcp'],
+      'eth.src': ['00:11:22:33:44:55'],
+      'eth.dst': ['00:aa:bb:cc:dd:ee'],
+      'ip.src': ['192.168.1.10'],
+      'ip.dst': ['93.184.216.34'],
+      'tcp.srcport': ['54321'],
+      'tcp.dstport': ['80'],
+      'tcp.flags': ['0x0002'],
+      'tcp.seq_raw': ['1000'],
+      'tcp.ack_raw': ['0'],
+    }))
+    expect(p.number).toBe(1)
+    expect(p.transport).toBe('tcp')
+    expect(p.proto).toBe('tcp')
+    expect(p.srcIp).toBe('192.168.1.10')
+    expect(p.srcPort).toBe(54321)
+    expect(p.tcpFlags).toBe('0x0002')
+    expect(p.tcpSeq).toBe(1000)
+    expect(p.srcMac).toBe('00:11:22:33:44:55')
+    expect(p.info).toBe('TCP SYN')
+  })
+
+  it('-e 规范名(下划线)的 tcp.analysis 字段识别为标签', () => {
+    const [p] = parsePackets(flatFrame({
+      'frame.number': ['5'],
+      'frame.time_relative': ['0.4'],
+      'frame.len': ['113'],
+      'frame.protocols': ['eth:ethertype:ip:tcp'],
+      'ip.src': ['1.1.1.1'],
+      'ip.dst': ['2.2.2.2'],
+      'tcp.srcport': ['54321'],
+      'tcp.dstport': ['80'],
+      'tcp.analysis.retransmission': ['1'],
+    }))
+    expect(p.tcpAnalysis).toContain('retransmission')
+  })
+
+  it('dns.flags.response 的 -e 取值(True/False)正确判定方向信息', () => {
+    const [q] = parsePackets(flatFrame({
+      'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['70'],
+      'frame.protocols': ['eth:ethertype:ip:udp:dns'],
+      'ip.src': ['1.1.1.1'], 'ip.dst': ['8.8.8.8'],
+      'udp.srcport': ['54322'], 'udp.dstport': ['53'],
+      'dns.flags.response': ['False'], 'dns.qry.name': ['example.com'],
+    }))
+    expect(q.info).toContain('query')
+    const [r] = parsePackets(flatFrame({
+      'frame.number': ['2'], 'frame.time_relative': ['0.02'], 'frame.len': ['81'],
+      'frame.protocols': ['eth:ethertype:ip:udp:dns'],
+      'ip.src': ['8.8.8.8'], 'ip.dst': ['1.1.1.1'],
+      'udp.srcport': ['53'], 'udp.dstport': ['54322'],
+      'dns.flags.response': ['True'], 'dns.qry.name': ['example.com'],
+    }))
+    expect(r.info).toContain('response')
+  })
+
+  it('http 字段平铺时正常解析 method/uri/code/time', () => {
+    const [get] = parsePackets(flatFrame({
+      'frame.number': ['4'], 'frame.time_relative': ['0.045'], 'frame.len': ['113'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:http'],
+      'ip.src': ['1.1.1.1'], 'ip.dst': ['2.2.2.2'],
+      'tcp.srcport': ['54321'], 'tcp.dstport': ['80'],
+      'http.request.method': ['GET'], 'http.request.uri': ['/'],
+      'http.request.line': ['Host: example.com\r\n', 'User-Agent: pUI-test\r\n'],
+    }))
+    expect(get.httpMethod).toBe('GET')
+    expect(get.httpUri).toBe('/')
+    expect(get.info).toContain('GET')
+    const [ok] = parsePackets(flatFrame({
+      'frame.number': ['6'], 'frame.time_relative': ['0.18'], 'frame.len': ['150'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:http'],
+      'ip.src': ['2.2.2.2'], 'ip.dst': ['1.1.1.1'],
+      'tcp.srcport': ['80'], 'tcp.dstport': ['54321'],
+      'http.response.code': ['200'], 'http.time': ['0.135'],
+      'http.response.line': ['HTTP/1.1 200 OK'],
+    }))
+    expect(ok.httpCode).toBe('200')
+    expect(ok.httpTime).toBeCloseTo(0.135)
+    expect(ok.info).toContain('200')
+  })
+
+  it('ipv6 平铺字段回退正确', () => {
+    const [p] = parsePackets(flatFrame({
+      'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['74'],
+      'frame.protocols': ['eth:ethertype:ipv6:tcp'],
+      'ipv6.src': ['2001:db8::1'], 'ipv6.dst': ['2001:db8::2'],
+      'tcp.srcport': ['54321'], 'tcp.dstport': ['443'],
+    }))
+    expect(p.srcIp).toBe('2001:db8::1')
+    expect(p.dstIp).toBe('2001:db8::2')
+  })
+
+  it('tls.handshake.type 平铺字段解析', () => {
+    const [p] = parsePackets(flatFrame({
+      'frame.number': ['3'], 'frame.time_relative': ['0.05'], 'frame.len': ['317'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:tls'],
+      'ip.src': ['1.1.1.1'], 'ip.dst': ['2.2.2.2'],
+      'tcp.srcport': ['54321'], 'tcp.dstport': ['443'],
+      'tls.handshake.type': ['1'],
+    }))
+    expect(p.tlsType).toBe('1')
+    expect(p.proto).toBe('tls')
   })
 })

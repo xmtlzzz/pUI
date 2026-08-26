@@ -1,0 +1,261 @@
+{
+ "scenario": "case-3-spurious",
+ "note": "由 src/analysis/tcp/fixtures/scenarios.ts 构造的合成抓包经真实 tshark(-o tcp.relative_sequence_numbers:FALSE)与生产引擎(analyzeStream/detectTcpEvents)生成",
+ "packets": [
+  {
+   "number": 1,
+   "time": 0,
+   "dir": "c2s",
+   "flags": "0x0002",
+   "seq": 0,
+   "ack": 0,
+   "len": 0
+  },
+  {
+   "number": 2,
+   "time": 0.01,
+   "dir": "s2c",
+   "flags": "0x0012",
+   "seq": 0,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 3,
+   "time": 0.02,
+   "dir": "c2s",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 4,
+   "time": 0.03,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 1,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 5,
+   "time": 0.04,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 101,
+   "len": 0
+  },
+  {
+   "number": 6,
+   "time": 0.05,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 101,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 7,
+   "time": 0.06,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 201,
+   "len": 0
+  },
+  {
+   "number": 8,
+   "time": 0.3,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 101,
+   "ack": 1,
+   "len": 100,
+   "tags": [
+    "retransmission",
+    "spurious-retransmission"
+   ]
+  },
+  {
+   "number": 9,
+   "time": 0.31,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 201,
+   "len": 0,
+   "tags": [
+    "duplicate-ack"
+   ],
+   "dupNum": 1
+  }
+ ],
+ "facts": {
+  "streamId": 0,
+  "midStream": false,
+  "lengthUnavailable": false,
+  "segments": [
+   {
+    "packetNumber": 1,
+    "time": 0,
+    "direction": "c2s",
+    "seq": 0,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 2,
+    "time": 0.01,
+    "direction": "s2c",
+    "seq": 0,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 3,
+    "time": 0.02,
+    "direction": "c2s",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 4,
+    "time": 0.03,
+    "direction": "c2s",
+    "seq": 1,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 5,
+    "time": 0.04,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 6,
+    "time": 0.05,
+    "direction": "c2s",
+    "seq": 101,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 7,
+    "time": 0.06,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 8,
+    "time": 0.3,
+    "direction": "c2s",
+    "seq": 101,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "pure-duplicate",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 9,
+    "time": 0.31,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   }
+  ],
+  "gaps": [],
+  "seenBytes": {
+   "c2s": 201,
+   "s2c": 1
+  },
+  "unorderableInput": false
+ },
+ "events": [
+  {
+   "id": "0:c2s:possible-ack-loss-or-spurious:101",
+   "kind": "possible-ack-loss-or-spurious",
+   "direction": "c2s",
+   "startTime": 0.3,
+   "endTime": 0.31,
+   "severity": "low",
+   "recovered": true,
+   "evidenceScore": 3,
+   "retransmissionPacket": 8,
+   "recoveryAckPacket": 9,
+   "duplicateAckCount": 0,
+   "duplicateAckPackets": [],
+   "sackPresent": false,
+   "observations": [
+    {
+     "id": "c2s:101:o1",
+     "statement": "该报文重发的字节此前已在序列空间中观察到(新增字节 0 / 100)",
+     "packetNumber": 8,
+     "field": "tcp.seq_raw",
+     "value": 101
+    },
+    {
+     "id": "c2s:101:o2",
+     "statement": "该重发对应的序列区间没有有意义的缺口",
+     "packetNumber": 8,
+     "field": "tcp.len",
+     "value": 100
+    },
+    {
+     "id": "c2s:101:o3",
+     "statement": "tshark 对该报文的标注:retransmission, spurious-retransmission",
+     "packetNumber": 8,
+     "field": "tcp.analysis.*",
+     "value": "retransmission,spurious-retransmission"
+    }
+   ],
+   "inference": {
+    "statement": "发送端重发了接收端已经收到的数据,序列空间中没有对应缺口。更可能是确认未被发送端及时看到(ACK 丢失/延迟),而非数据丢失",
+    "confidence": "medium",
+    "evidenceRefs": [
+     {
+      "observationId": "c2s:101:o1",
+      "packetNumber": 8
+     },
+     {
+      "observationId": "c2s:101:o2",
+      "packetNumber": 8
+     },
+     {
+      "observationId": "c2s:101:o3",
+      "packetNumber": 8
+     }
+    ]
+   },
+   "limitations": [
+    "单观察点抓包:可确认本地观察到的到达情况,但无法定位丢包发生在哪个网络节点,也无法确认对端是否已发出",
+    "无法排除抓包点自身漏包(网卡/ring buffer/镜像口),缺口不等于网络丢包"
+   ],
+   "rationale": "重发段的字节此前已全部观察到且序列空间无对应缺口:支持\"数据早已到达、确认未及时送达\",不支持数据丢失"
+  }
+ ]
+}

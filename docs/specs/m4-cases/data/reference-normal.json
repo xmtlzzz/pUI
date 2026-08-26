@@ -1,0 +1,324 @@
+{
+ "scenario": "reference-normal",
+ "note": "由 src/analysis/tcp/fixtures/scenarios.ts 构造的合成抓包经真实 tshark(-o tcp.relative_sequence_numbers:FALSE)与生产引擎(analyzeStream/detectTcpEvents)生成",
+ "packets": [
+  {
+   "number": 1,
+   "time": 0,
+   "dir": "c2s",
+   "flags": "0x0002",
+   "seq": 0,
+   "ack": 0,
+   "len": 0
+  },
+  {
+   "number": 2,
+   "time": 0.01,
+   "dir": "s2c",
+   "flags": "0x0012",
+   "seq": 0,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 3,
+   "time": 0.02,
+   "dir": "c2s",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 4,
+   "time": 0.03,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 1,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 5,
+   "time": 0.04,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 101,
+   "len": 0
+  },
+  {
+   "number": 6,
+   "time": 0.05,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 101,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 7,
+   "time": 0.06,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 201,
+   "len": 0
+  },
+  {
+   "number": 8,
+   "time": 0.07,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 201,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 9,
+   "time": 0.08,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 301,
+   "len": 0
+  },
+  {
+   "number": 10,
+   "time": 0.09,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 301,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 11,
+   "time": 0.1,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 401,
+   "len": 0
+  },
+  {
+   "number": 12,
+   "time": 0.11,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 401,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 13,
+   "time": 0.12,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 501,
+   "len": 0
+  },
+  {
+   "number": 14,
+   "time": 0.2,
+   "dir": "c2s",
+   "flags": "0x0011",
+   "seq": 501,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 15,
+   "time": 0.21,
+   "dir": "s2c",
+   "flags": "0x0011",
+   "seq": 1,
+   "ack": 502,
+   "len": 0
+  },
+  {
+   "number": 16,
+   "time": 0.22,
+   "dir": "c2s",
+   "flags": "0x0010",
+   "seq": 502,
+   "ack": 2,
+   "len": 0
+  }
+ ],
+ "facts": {
+  "streamId": 0,
+  "midStream": false,
+  "lengthUnavailable": false,
+  "segments": [
+   {
+    "packetNumber": 1,
+    "time": 0,
+    "direction": "c2s",
+    "seq": 0,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 2,
+    "time": 0.01,
+    "direction": "s2c",
+    "seq": 0,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 3,
+    "time": 0.02,
+    "direction": "c2s",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 4,
+    "time": 0.03,
+    "direction": "c2s",
+    "seq": 1,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 5,
+    "time": 0.04,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 6,
+    "time": 0.05,
+    "direction": "c2s",
+    "seq": 101,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 7,
+    "time": 0.06,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 8,
+    "time": 0.07,
+    "direction": "c2s",
+    "seq": 201,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 9,
+    "time": 0.08,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 10,
+    "time": 0.09,
+    "direction": "c2s",
+    "seq": 301,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 11,
+    "time": 0.1,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 12,
+    "time": 0.11,
+    "direction": "c2s",
+    "seq": 401,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 13,
+    "time": 0.12,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 14,
+    "time": 0.2,
+    "direction": "c2s",
+    "seq": 501,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 15,
+    "time": 0.21,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 16,
+    "time": 0.22,
+    "direction": "c2s",
+    "seq": 502,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   }
+  ],
+  "gaps": [],
+  "seenBytes": {
+   "c2s": 502,
+   "s2c": 2
+  },
+  "unorderableInput": false
+ },
+ "events": []
+}

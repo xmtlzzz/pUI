@@ -1,0 +1,450 @@
+{
+ "scenario": "case-1-gap-sack",
+ "note": "由 src/analysis/tcp/fixtures/scenarios.ts 构造的合成抓包经真实 tshark(-o tcp.relative_sequence_numbers:FALSE)与生产引擎(analyzeStream/detectTcpEvents)生成",
+ "packets": [
+  {
+   "number": 1,
+   "time": 0,
+   "dir": "c2s",
+   "flags": "0x0002",
+   "seq": 0,
+   "ack": 0,
+   "len": 0
+  },
+  {
+   "number": 2,
+   "time": 0.01,
+   "dir": "s2c",
+   "flags": "0x0012",
+   "seq": 0,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 3,
+   "time": 0.02,
+   "dir": "c2s",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 1,
+   "len": 0
+  },
+  {
+   "number": 4,
+   "time": 0.03,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 1,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 5,
+   "time": 0.04,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 101,
+   "len": 0
+  },
+  {
+   "number": 6,
+   "time": 0.05,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 201,
+   "ack": 1,
+   "len": 100,
+   "tags": [
+    "lost-segment"
+   ]
+  },
+  {
+   "number": 7,
+   "time": 0.06,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 101,
+   "len": 0,
+   "sack": [
+    [
+     201,
+     301
+    ]
+   ],
+   "tags": [
+    "duplicate-ack"
+   ],
+   "dupNum": 1
+  },
+  {
+   "number": 8,
+   "time": 0.07,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 301,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 9,
+   "time": 0.08,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 101,
+   "len": 0,
+   "sack": [
+    [
+     201,
+     401
+    ]
+   ],
+   "tags": [
+    "duplicate-ack"
+   ],
+   "dupNum": 2
+  },
+  {
+   "number": 10,
+   "time": 0.09,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 401,
+   "ack": 1,
+   "len": 100
+  },
+  {
+   "number": 11,
+   "time": 0.1,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 101,
+   "len": 0,
+   "sack": [
+    [
+     201,
+     501
+    ]
+   ],
+   "tags": [
+    "duplicate-ack"
+   ],
+   "dupNum": 3
+  },
+  {
+   "number": 12,
+   "time": 0.25,
+   "dir": "c2s",
+   "flags": "0x0018",
+   "seq": 101,
+   "ack": 1,
+   "len": 100,
+   "tags": [
+    "retransmission"
+   ]
+  },
+  {
+   "number": 13,
+   "time": 0.26,
+   "dir": "s2c",
+   "flags": "0x0010",
+   "seq": 1,
+   "ack": 501,
+   "len": 0
+  }
+ ],
+ "facts": {
+  "streamId": 0,
+  "midStream": false,
+  "lengthUnavailable": false,
+  "segments": [
+   {
+    "packetNumber": 1,
+    "time": 0,
+    "direction": "c2s",
+    "seq": 0,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 2,
+    "time": 0.01,
+    "direction": "s2c",
+    "seq": 0,
+    "payloadLen": 0,
+    "seqLen": 1,
+    "classification": "new-in-order",
+    "newBytes": 1
+   },
+   {
+    "packetNumber": 3,
+    "time": 0.02,
+    "direction": "c2s",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 4,
+    "time": 0.03,
+    "direction": "c2s",
+    "seq": 1,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 5,
+    "time": 0.04,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 6,
+    "time": 0.05,
+    "direction": "c2s",
+    "seq": 201,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-ahead-of-gap",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 7,
+    "time": 0.06,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 8,
+    "time": 0.07,
+    "direction": "c2s",
+    "seq": 301,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 9,
+    "time": 0.08,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 10,
+    "time": 0.09,
+    "direction": "c2s",
+    "seq": 401,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "new-in-order",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 11,
+    "time": 0.1,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   },
+   {
+    "packetNumber": 12,
+    "time": 0.25,
+    "direction": "c2s",
+    "seq": 101,
+    "payloadLen": 100,
+    "seqLen": 100,
+    "classification": "out-of-order-fill",
+    "newBytes": 100
+   },
+   {
+    "packetNumber": 13,
+    "time": 0.26,
+    "direction": "s2c",
+    "seq": 1,
+    "payloadLen": 0,
+    "seqLen": 0,
+    "classification": "no-payload",
+    "newBytes": 0
+   }
+  ],
+  "gaps": [
+   {
+    "direction": "c2s",
+    "start": 101,
+    "end": 201,
+    "byteCount": 100,
+    "firstObservedPacket": 6,
+    "firstObservedTime": 0.05,
+    "sackCovered": true,
+    "startAbs": 101,
+    "filled": true,
+    "filledByPacket": 12,
+    "filledTime": 0.25,
+    "durationSeconds": 0.2
+   }
+  ],
+  "seenBytes": {
+   "c2s": 501,
+   "s2c": 1
+  },
+  "unorderableInput": false
+ },
+ "events": [
+  {
+   "id": "0:c2s:possible-loss-or-delay:101",
+   "kind": "possible-loss-or-delay",
+   "direction": "c2s",
+   "startTime": 0.05,
+   "endTime": 0.25,
+   "severity": "medium",
+   "recovered": true,
+   "evidenceScore": 15,
+   "gap": {
+    "start": 101,
+    "end": 201,
+    "byteCount": 100
+   },
+   "originalSegmentPacket": 6,
+   "retransmissionPacket": 12,
+   "recoveryAckPacket": 13,
+   "duplicateAckCount": 3,
+   "duplicateAckPackets": [
+    7,
+    9,
+    11
+   ],
+   "sackPresent": true,
+   "observations": [
+    {
+     "id": "c2s:101:o1",
+     "statement": "序列空间存在缺口 101–201(100 字节),由该报文越过缺口到达而暴露",
+     "packetNumber": 6,
+     "field": "tcp.seq_raw",
+     "value": 101
+    },
+    {
+     "id": "c2s:101:o2",
+     "statement": "累计 ACK 停在 101 未前进(重复确认)",
+     "packetNumber": 7,
+     "field": "tcp.ack_raw",
+     "value": 101
+    },
+    {
+     "id": "c2s:101:o3",
+     "statement": "累计 ACK 停在 101 未前进(重复确认)",
+     "packetNumber": 9,
+     "field": "tcp.ack_raw",
+     "value": 101
+    },
+    {
+     "id": "c2s:101:o4",
+     "statement": "累计 ACK 停在 101 未前进(重复确认)",
+     "packetNumber": 11,
+     "field": "tcp.ack_raw",
+     "value": 101
+    },
+    {
+     "id": "c2s:101:o5",
+     "statement": "SACK 报告缺口之后的数据已到达接收端:201–301",
+     "packetNumber": 7,
+     "field": "tcp.options.sack_le/re",
+     "value": "201-301"
+    },
+    {
+     "id": "c2s:101:o6",
+     "statement": "tshark 对该报文的标注:retransmission",
+     "packetNumber": 12,
+     "field": "tcp.analysis.*",
+     "value": "retransmission"
+    },
+    {
+     "id": "c2s:101:o7",
+     "statement": "缺失数据被重新发送",
+     "packetNumber": 12,
+     "field": "tcp.seq_raw",
+     "value": 101
+    },
+    {
+     "id": "c2s:101:o8",
+     "statement": "ACK 前进到 501,缺口已恢复",
+     "packetNumber": 13,
+     "field": "tcp.ack_raw",
+     "value": 501
+    }
+   ],
+   "inference": {
+    "statement": "观察到数据未按连续序列到达,随后由重传补齐;证据支持\"数据未及时到达\",但不能据此断定丢包位置",
+    "confidence": "medium",
+    "evidenceRefs": [
+     {
+      "observationId": "c2s:101:o1",
+      "packetNumber": 6
+     },
+     {
+      "observationId": "c2s:101:o2",
+      "packetNumber": 7
+     },
+     {
+      "observationId": "c2s:101:o3",
+      "packetNumber": 9
+     },
+     {
+      "observationId": "c2s:101:o4",
+      "packetNumber": 11
+     },
+     {
+      "observationId": "c2s:101:o5",
+      "packetNumber": 7
+     },
+     {
+      "observationId": "c2s:101:o6",
+      "packetNumber": 12
+     },
+     {
+      "observationId": "c2s:101:o7",
+      "packetNumber": 12
+     },
+     {
+      "observationId": "c2s:101:o8",
+      "packetNumber": 13
+     }
+    ]
+   },
+   "limitations": [
+    "单观察点抓包:可确认本地观察到的到达情况,但无法定位丢包发生在哪个网络节点,也无法确认对端是否已发出",
+    "无法排除抓包点自身漏包(网卡/ring buffer/镜像口),缺口不等于网络丢包"
+   ],
+   "classificationSignals": {
+    "fillerCarriesOnlyNewBytes": true,
+    "durationSeconds": 0.2,
+    "duplicateAckCount": 3
+   },
+   "rationale": "填补段全为新字节,但缺口开放期间出现 3 个重复 ACK(快重传触发条件),接收端曾持续等待缺失字节"
+  }
+ ]
+}

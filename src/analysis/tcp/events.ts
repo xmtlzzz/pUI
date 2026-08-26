@@ -175,6 +175,25 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
   for (const p of packets) byNumber.set(p.number, p)
   const ordered = [...packets].sort((a, b) => a.time - b.time || a.number - b.number)
 
+  // 性能护栏(VDI 抓包实测冻死主线程的根因):每 gap 的 ACK 停滞扫描若对全量报文
+  // 线性遍历、且内嵌 segments.find() 线性查找,复杂度为 O(gaps × n²) —— 重传风暴下
+  // 几千 gap × 几万段是百亿级操作。预建两个索引把每 gap 成本压到窗口大小:
+  //   segByPacket:packetNumber -> segment(替代内层 find)
+  //   timeWindow :ordered 数组上按时间的二分边界(只扫 [firstObservedTime, filledTime] 窗口)
+  const segByPacket = new Map<number, StreamAnalysisFacts['segments'][number]>()
+  for (const s of facts.segments) segByPacket.set(s.packetNumber, s)
+  const times = ordered.map((p) => p.time)
+  const lowerBound = (t: number): number => {
+    let lo = 0
+    let hi = times.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (times[mid] < t) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+
   const baseLimitations = (): string[] => {
     const l = [SINGLE_POINT_LIMITATION, CAPTURE_DROP_LIMITATION]
     if (facts.midStream) l.unshift(MID_STREAM_LIMITATION)
@@ -202,10 +221,12 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
     const ackDir: StreamDirection = gap.direction === 'c2s' ? 's2c' : 'c2s'
     const dupAckPackets: number[] = []
     let sackPresent = gap.sackCovered
-    for (const p of ordered) {
-      if (p.time < gap.firstObservedTime) continue
-      if (gap.filledTime != null && p.time > gap.filledTime) break
-      const seg = facts.segments.find((s) => s.packetNumber === p.number)
+    // 只扫缺口开放窗口(二分定界);未填补时窗口为 [firstObservedTime, 抓包结束]
+    const winStart = lowerBound(gap.firstObservedTime)
+    const winEnd = gap.filledTime != null ? lowerBound(gap.filledTime + 1e-9) : ordered.length
+    for (let wi = winStart; wi < winEnd; wi++) {
+      const p = ordered[wi]
+      const seg = segByPacket.get(p.number)
       if (seg?.direction !== ackDir) continue
       // 累计 ACK 停在缺口起点 = 接收端还没等到缺失字节。
       // 逐报文遍历,天然按报文计数一次 —— 不能改成统计 tcp.analysis.duplicate_ack 的取值个数:
@@ -220,9 +241,15 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       mk(`累计 ACK 停在 ${gap.start} 未前进(重复确认)`, n, 'tcp.ack_raw', p?.tcpAck ?? gap.start)
     }
     if (sackPresent) {
-      const sackPkt = ordered.find(
-        (p) => p.tcpSackBlocks?.length && p.time >= gap.firstObservedTime && (gap.filledTime == null || p.time <= gap.filledTime),
-      )
+      // 同样只扫缺口开放窗口(二分定界)
+      let sackPkt: Packet | undefined
+      for (let wi = winStart; wi < winEnd; wi++) {
+        const p = ordered[wi]
+        if (p.tcpSackBlocks?.length) {
+          sackPkt = p
+          break
+        }
+      }
       if (sackPkt) {
         mk(
           `SACK 报告缺口之后的数据已到达接收端:${sackPkt.tcpSackBlocks!.map(([l, r]) => `${l}–${r}`).join(', ')}`,
@@ -235,7 +262,7 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
 
     // 填补者是"重发已发送过的数据",还是"迟到的原始段"?这决定丢包 vs 乱序。
     // 判断交给显式分类器(见 classifyFill):信号原样记录在事件上,规则可解释、可复核。
-    const filler = gap.filledByPacket != null ? facts.segments.find((s) => s.packetNumber === gap.filledByPacket) : undefined
+    const filler = gap.filledByPacket != null ? segByPacket.get(gap.filledByPacket) : undefined
     const fillerPkt = gap.filledByPacket != null ? byNumber.get(gap.filledByPacket) : undefined
     const fillClassification = filler
       ? classifyFill({
@@ -257,18 +284,19 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       mk(`缺失数据被重新发送`, gap.filledByPacket!, 'tcp.seq_raw', gap.start)
     }
 
-    // 恢复 ACK:填补之后第一个 ACK 越过缺口终点
+    // 恢复 ACK:填补之后第一个 ACK 越过缺口终点(从填补时刻的二分位置向后找)
     let recoveryAck: number | undefined
     if (gap.filledTime != null) {
-      const rec = ordered.find((p) => {
-        if (p.time < gap.filledTime!) return false
-        const seg = facts.segments.find((s) => s.packetNumber === p.number)
-        if (seg?.direction !== ackDir) return false
-        return p.tcpAck != null && seqDiff(p.tcpAck, gap.end) >= 0
-      })
-      if (rec) {
-        recoveryAck = rec.number
-        mk(`ACK 前进到 ${rec.tcpAck},缺口已恢复`, rec.number, 'tcp.ack_raw', rec.tcpAck!)
+      const recStart = lowerBound(gap.filledTime)
+      for (let wi = recStart; wi < ordered.length; wi++) {
+        const p = ordered[wi]
+        const seg = segByPacket.get(p.number)
+        if (seg?.direction !== ackDir) continue
+        if (p.tcpAck != null && seqDiff(p.tcpAck, gap.end) >= 0) {
+          recoveryAck = p.number
+          mk(`ACK 前进到 ${p.tcpAck},缺口已恢复`, p.number, 'tcp.ack_raw', p.tcpAck)
+          break
+        }
       }
     }
 
@@ -330,13 +358,21 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
   }
 
   // ---- 2) 无缺口的重复/重叠段:伪重传 / 可能 ACK 丢失 ----
-  // 这类段说明数据其实已经到过,只是发送端没看到确认 —— 绝不能算数据丢失
-  const gapCovered = (seq: number): boolean =>
-    facts.gaps.some((g) => seqDiff(seq, g.start) >= 0 && seqDiff(seq, g.end) < 0)
+  // 这类段说明数据其实已经到过,只是发送端没看到确认 —— 绝不能算数据丢失。
+  //
+  // 守卫(VDI 风暴实测暴露):已被第 1 步缺口事件覆盖的报文(作为缺口的填补者/
+  // 重传者)不得再进本分支,否则同一段重发被报成两个事件 —— 实测 100 个缺口
+  // 事件外又多出 99 个 spurious 事件。用"已覆盖报文号集合"一次排除,
+  // 比事后逐个 seq 落点判断既准确又 O(1)。
+  const coveredByGapEvent = new Set<number>()
+  for (const g of facts.gaps) {
+    if (g.filledByPacket != null) coveredByGapEvent.add(g.filledByPacket)
+    coveredByGapEvent.add(g.firstObservedPacket)
+  }
 
   for (const seg of facts.segments) {
     if (seg.classification !== 'pure-duplicate' && seg.classification !== 'overlapping-retransmit') continue
-    if (gapCovered(seg.seq)) continue // 已由上面的缺口事件覆盖
+    if (coveredByGapEvent.has(seg.packetNumber)) continue // 已由缺口事件覆盖
     const p = byNumber.get(seg.packetNumber)
     const obs: Observation[] = []
     const oid = `${seg.direction}:${seg.seq}:o`
@@ -363,13 +399,18 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
         value: p.tcpAnalysis.join(','),
       })
     }
-    // 恢复 ACK:重发之后对端的确认(通常仍停在原处,说明数据早已收到)
+    // 恢复 ACK:重发之后对端的确认(通常仍停在原处,说明数据早已收到)。
+    // 二分定位重发时刻,只向后扫到第一个反向 ACK 为止。
     const ackDir: StreamDirection = seg.direction === 'c2s' ? 's2c' : 'c2s'
-    const rec = ordered.find((q) => {
-      if (q.time < seg.time) return false
-      const s = facts.segments.find((x) => x.packetNumber === q.number)
-      return s?.direction === ackDir && q.tcpAck != null
-    })
+    let rec: Packet | undefined
+    for (let wi = lowerBound(seg.time); wi < ordered.length; wi++) {
+      const q = ordered[wi]
+      const s = segByPacket.get(q.number)
+      if (s?.direction === ackDir && q.tcpAck != null) {
+        rec = q
+        break
+      }
+    }
 
     events.push({
       id: eventId('possible-ack-loss-or-spurious', seg.direction, facts.streamId, seg.seq),

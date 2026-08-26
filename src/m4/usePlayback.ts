@@ -26,6 +26,13 @@ export interface Playback {
   stepBack: () => void
   /** 中断并回到终态(Esc) */
   stop: () => void
+  /**
+   * 系统偏好要求减少动效(prefers-reduced-motion)。
+   * UI 据此展示"为什么点播放没反应"的解释与手动覆盖开关 —— 静默失败是缺陷。
+   */
+  systemReducedMotion: boolean
+  /** 用户明确要求时越过系统偏好评播一次("仍要播放一次"按钮) */
+  overrideOnce: () => void
 }
 
 const DURATION_MS = 3600 // 与 case-1 分镜总时长一致
@@ -38,6 +45,7 @@ function prefersReducedMotion(): boolean {
 }
 
 export function usePlayback(stages: StageBandEntry[], stageAt: (t: number) => number): Playback {
+  const [systemReduced] = useState(() => prefersReducedMotion())
   const [phase, setPhase] = useState<PlaybackPhase>(() => (prefersReducedMotion() ? 'static' : 'idle'))
   const [time, setTime] = useState(0)
   const tweenRef = useRef<gsap.core.Tween | null>(null)
@@ -50,29 +58,36 @@ export function usePlayback(stages: StageBandEntry[], stageAt: (t: number) => nu
   // 卸载时清理 tween,避免泄漏
   useEffect(() => kill, [kill])
 
-  const play = useCallback(() => {
-    if (prefersReducedMotion()) return // 静态模式拒绝播放
-    kill()
-    setPhase('playing')
-    // 从当前 time 续播;已到终点则从头再来(重放)
-    const from = time >= 0.999 ? 0 : time
-    setTime(from)
-    tweenRef.current = gsap.to(
-      { t: from },
-      {
-        t: 1,
-        duration: DURATION_MS * (1 - from),
-        ease: 'none',
-        paused: false,
-        onComplete: () => setPhase('done'),
-        onUpdate() {
-          // this.targets()[0] 是补间对象本身
-          const cur = (this.targets()[0] as { t: number }).t
-          setTime(cur)
+  const startTween = useCallback(
+    (force: boolean) => {
+      if (systemReduced && !force) return // 静态模式拒绝播放(UI 必须给出可见的解释,不允许静默)
+      kill()
+      setPhase('playing')
+      // 从当前 time 续播;已到终点则从头再来(重放)
+      const from = time >= 0.999 ? 0 : time
+      setTime(from)
+      tweenRef.current = gsap.to(
+        { t: from },
+        {
+          t: 1,
+          duration: DURATION_MS * (1 - from),
+          ease: 'none',
+          paused: false,
+          onComplete: () => setPhase('done'),
+          onUpdate() {
+            const c = (this.targets()[0] as { t: number }).t
+            setTime(c)
+          },
         },
-      },
-    )
-  }, [kill, time])
+      )
+    },
+    [kill, systemReduced, time],
+  )
+
+  /** 常规播放:遵守系统 reduced-motion 偏好(偏好开启时不动作) */
+  const play = useCallback(() => startTween(false), [startTween])
+  /** 用户显式要求("仍要播放一次"):越过系统偏好评播本次 */
+  const overrideOnce = useCallback(() => startTween(true), [startTween])
 
   const pause = useCallback(() => {
     if (tweenRef.current) {
@@ -124,10 +139,21 @@ export function usePlayback(stages: StageBandEntry[], stageAt: (t: number) => nu
     kill()
     // 中断 = 直接呈现终态(信息等价的静态视图)
     setTime(1)
-    setPhase(prefersReducedMotion() ? 'static' : 'done')
-  }, [kill])
+    setPhase(systemReduced ? 'static' : 'done')
+  }, [kill, systemReduced])
 
   const activeStageIndex = useMemo(() => stageAt(time), [stageAt, time])
 
-  return { phase, time, activeStageIndex, play, pause, stepForward, stepBack, stop }
+  return {
+    phase,
+    time,
+    activeStageIndex,
+    play,
+    pause,
+    stepForward,
+    stepBack,
+    stop,
+    systemReducedMotion: systemReduced,
+    overrideOnce,
+  }
 }

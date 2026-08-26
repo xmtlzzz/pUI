@@ -72,6 +72,7 @@ export function FaultCompare({ vm, onSelectPacket, onBack }: FaultCompareProps) 
       case ' ':
         e.preventDefault()
         if (pb.phase === 'playing') pb.pause()
+        else if (pb.phase === 'static') pb.overrideOnce() // 显式按键 = 用户主动选择
         else pb.play()
         break
       case 'ArrowRight':
@@ -112,9 +113,23 @@ export function FaultCompare({ vm, onSelectPacket, onBack }: FaultCompareProps) 
             </button>
           </span>
         )}
+        {/* 静态模式下单步仍可用(纯状态操作,无动画,对减少动效用户安全) */}
+        {pb.phase === 'static' && (
+          <span className="fc-controls">
+            <button type="button" onClick={pb.stepBack} aria-label="上一阶段">
+              |◀ 上一阶段
+            </button>
+            <button type="button" onClick={pb.stepForward} aria-label="下一阶段">
+              下一阶段 ▶|
+            </button>
+          </span>
+        )}
         {pb.phase === 'static' && (
           <span className="fc-static-note" role="status">
-            已按系统偏好停用动画:全部阶段信息以静态方式完整呈现
+            系统已开启「减少动效」,播放动画被停用;全部阶段信息以静态完整呈现,可点选下方阶段带或用「上一/下一阶段」遍历。
+            <button type="button" data-testid="fc-enable-animation" onClick={pb.overrideOnce}>
+              仍要播放一次
+            </button>
           </span>
         )}
       </div>

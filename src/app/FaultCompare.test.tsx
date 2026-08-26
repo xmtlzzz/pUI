@@ -69,19 +69,24 @@ describe('FaultCompare 对照页', () => {
     expect(panel.textContent).toContain('seq=101')
   })
 
-  it('键盘:Space 播放/暂停、←→ 单步、Esc 中断至终态;jsdom 无 matchMedia 时按静态模式降级', () => {
-    // 键盘处理挂在组件容器(tabindex)上;通过容器派发按键
+  it('键盘/静态模式:jsdom 无 matchMedia 时进入静态模式,给出解释且单步仍可用(不允许静默失败)', () => {
     const { container } = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
     const wrap = container.querySelector('.fc-wrap') as HTMLElement
     expect(wrap).toBeTruthy()
-    fireEvent.keyDown(wrap, { key: ' ' })
-    // jsdom 缺 matchMedia -> prefersReducedMotion() 保守返回 true -> 静态模式:
-    // 播放被拒绝但全部阶段信息仍完整可见(reduced-motion 信息等价的组件级体现)
-    expect(screen.getByText(/停用动画/)).toBeTruthy()
+    // 初始即静态模式(jsdom 缺 matchMedia -> 保守降级):解释文案可见,不静默失败
+    expect(screen.getByText(/减少动效/)).toBeTruthy()
+    // 静态模式下全部阶段信息完整可见(信息等价)
     const band = screen.getByTestId('fc-stageband')
     for (const label of ['正常传输', '缺口显露', '重传回补', '恢复']) {
       expect(band.textContent).toContain(label)
     }
+    // 静态模式下"上一/下一阶段"可用:点击后阶段面板切换到第 2 阶段(阶段遍历无动画,安全)
+    fireEvent.click(screen.getByRole('button', { name: '下一阶段' }))
+    const panel = screen.getByTestId('fc-stage-panel')
+    expect(panel.textContent).toContain('阶段 2/5')
+    // Space = 用户显式选择 -> 覆盖静态模式开始播放(phase 离开 static)
+    fireEvent.keyDown(wrap, { key: ' ' })
+    expect(screen.queryByText(/减少动效/)).toBeNull()
   })
 
   it('右栏示意基线不含任何真实包号(数据保真红线)', () => {

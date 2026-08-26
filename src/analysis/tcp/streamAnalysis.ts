@@ -206,13 +206,37 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     // 必须"对账"而不能只做"新增登记":部分填补(常见于无 SACK 时发送端每 RTT 只补一个 MSS)
     // 会把一个宽空洞切成若干窄空洞。若只按 (start,end) 精确匹配判重,旧的宽记录既不会消失、
     // 新的窄记录又被当作新空洞加入,于是同一段字节被重复计入缺失量 ——
-    // 实测 700 字节的真实缺失会被报成 1100 字节、1 个事件会变成 4 个,属于典型过度报告。
+    // 实测 700 字节的真实缺失会被报成 1100 字节、1 个事件会变成 4 个。
+    //
+    // 复杂度护栏(VDI 重传风暴实测冻死主线程的根因之一):两侧都按序列位置有序,
+    // 用双指针归并替代逐对 find —— 每报文 O(k) 而非 O(k²)。
     if (classification === 'new-ahead-of-gap' || classification === 'out-of-order-fill' || classification === 'overlapping-retransmit') {
-      const current = ranges.gapsWithAbs()
+      const current = ranges.gapsWithAbs() // 按 startAbs 升序、互不重叠
+      const open = openGaps[dir] // 同样有序、互不重叠(幸存者天然保持)
       const survivors: SequenceGapFact[] = []
+      let oi = 0
       for (const { start: gs0, end: ge0, startAbs } of current) {
-        // 找一个与该空洞重叠的既有记录,继承它的"首次观察"信息(空洞被缩小不等于重新发现)
-        const prior = openGaps[dir].find((g) => seqDiff(g.end, gs0) > 0 && seqDiff(ge0, g.start) > 0)
+        // a) 跳过完全落在当前空洞之前的开放记录:它们已消失 → 被本报文填平
+        while (oi < open.length && seqDiff(open[oi].end, gs0) <= 0) {
+          const g = open[oi++]
+          g.filled = true
+          g.filledByPacket = p.number
+          g.filledTime = p.time
+          g.durationSeconds = p.time - g.firstObservedTime
+          closedGaps.push(g)
+        }
+        // b) 收集与当前空洞重叠的开放记录,取最早者为 prior;
+        //    只有被完全覆盖(end <= ge0)的才前移 —— 部分重叠的最后一条
+        //    要留给下一条 current 空洞继续匹配(宽空洞被切成两段时,
+        //    两段幸存者继承同一个 prior:缩小 ≠ 重新发现)。
+        let prior: SequenceGapFact | undefined
+        let scan = oi
+        while (scan < open.length && seqDiff(ge0, open[scan].start) > 0) {
+          if (prior === undefined) prior = open[scan]
+          if (seqDiff(open[scan].end, ge0) <= 0) scan++
+          else break
+        }
+        oi = scan
         survivors.push({
           direction: dir,
           start: gs0,
@@ -225,17 +249,14 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
           filled: false,
         })
       }
-      // 不再出现于 tracker 的开放空洞 = 已被本报文填平
-      for (const g of openGaps[dir]) {
-        const stillThere = current.some(({ start: gs0, end: ge0 }) => g.start === gs0 && g.end === ge0)
-        const shrunk = current.some(({ start: gs0, end: ge0 }) => seqDiff(g.end, gs0) > 0 && seqDiff(ge0, g.start) > 0)
-        if (!stillThere && !shrunk) {
-          g.filled = true
-          g.filledByPacket = p.number
-          g.filledTime = p.time
-          g.durationSeconds = p.time - g.firstObservedTime
-          closedGaps.push(g)
-        }
+      // c) 尾部剩余的开放记录:不再出现于 tracker → 已被本报文填平
+      for (; oi < open.length; oi++) {
+        const g = open[oi]
+        g.filled = true
+        g.filledByPacket = p.number
+        g.filledTime = p.time
+        g.durationSeconds = p.time - g.firstObservedTime
+        closedGaps.push(g)
       }
       openGaps[dir] = survivors
     }

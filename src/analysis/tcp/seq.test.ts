@@ -91,3 +91,58 @@ describe('32 位序列号算术', () => {
     expect(seqCmp(4294967296, 0)).toBe(0) // 2^32 ≡ 0
   })
 })
+
+describe('2^31 边界:比较器反对称性与排序稳定性', () => {
+  const HALF = 0x8000_0000
+
+  it('恰为 2^31 时两个方向符号相反(反对称)', () => {
+    // 有符号差值在边界两向同为 -2^31,会让 seqCmp(a,b)/seqCmp(b,a) 同为负,
+    // 成为非法比较器;修复后按归一化数值兜底,两方向必须反号
+    const ab = seqCmp(0, HALF)
+    const ba = seqCmp(HALF, 0)
+    expect(Math.sign(ab)).toBe(-Math.sign(ba))
+    expect(ab).not.toBe(0)
+    expect(seqCmp(0, HALF)).toBe(ab) // 确定性:同输入同输出
+  })
+
+  it('伪随机样本上反对称处处成立', () => {
+    // LCG 伪随机:固定序列、可复现,覆盖环上各个区域(含回绕附近)
+    let x = 0x1234_5678
+    const next = (): number => {
+      x = (Math.imul(x, 1664525) + 1013904223) >>> 0
+      return x
+    }
+    for (let i = 0; i < 2000; i++) {
+      const a = next()
+      const b = next()
+      expect(Math.sign(seqCmp(a, b))).toBe(-Math.sign(seqCmp(b, a)))
+    }
+  })
+
+  it('存在一致全序的集合:不同输入排列的排序结果一致', () => {
+    // 集合整体落在不超过半空间的弧内(含恰为 2^31 的边界对,由数值兜底定序),
+    // 此时 seqCmp 是合格的全序比较器,Array#sort 结果必须与输入顺序无关
+    const expected = [0, 100, HALF - 100, HALF]
+    const perms: number[][] = [
+      [0, 100, HALF - 100, HALF],
+      [HALF, HALF - 100, 100, 0],
+      [HALF - 100, 0, HALF, 100],
+      [100, HALF, 0, HALF - 100],
+    ]
+    for (const p of perms) {
+      expect([...p].sort((a, b) => seqCmp(a, b))).toEqual(expected)
+    }
+  })
+
+  it('三点张成整环时不存在全序,但两两判定确定且符合环近侧规则', () => {
+    // RFC 1982 固有局限:A/B/C 两两相差均 <2^31,各自有确定的近侧先后;
+    // 三点整体绕环一周则无一致全序(任何比较器都做不到),这里只钉住两两确定性
+    const A = 0
+    const B = 0x6000_0000
+    const C = 0xc000_0000
+    expect(seqCmp(B, A)).toBeGreaterThan(0)
+    expect(seqCmp(C, B)).toBeGreaterThan(0)
+    expect(seqCmp(A, C)).toBeGreaterThan(0) // A 经回绕后在 C 的近侧前方
+    expect(seqCmp(C, A)).toBeLessThan(0)
+  })
+})

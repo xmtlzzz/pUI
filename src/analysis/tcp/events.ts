@@ -37,6 +37,27 @@ export interface Inference {
   evidenceRefs: Array<{ observationId: string; packetNumber: number }>
 }
 
+/**
+ * 缺口被填补时的启发信号。分类器只依据这三个信号做判断,
+ * 且原样记录到事件上 —— Why 面板(指南第 10 节)必须能把"为什么这么分类"
+ * 还原成用户可见的数字,而不是藏在代码里的魔法数字。
+ */
+export interface FillSignals {
+  /** 填补段带来的全部是新字节(迟到的原始段),还是与已见数据重叠(真正的重发) */
+  fillerCarriesOnlyNewBytes: boolean
+  /** 缺口从暴露到被填补的时长(秒) */
+  durationSeconds: number
+  /** 缺口开放期间累计 ACK 停在缺口起点的报文数(重复确认次数) */
+  duplicateAckCount: number
+}
+
+/** 分类结果:事件类型 + 置信度 + 一句话理由(理由必须可被 Why 面板直接展示) */
+export interface FillClassification {
+  kind: TcpEventKind
+  confidence: Confidence
+  rationale: string
+}
+
 export interface TcpEvent {
   /** 稳定 id:仅由流/方向/类型/序列号导出,与输入顺序、数组下标无关 */
   id: string
@@ -62,12 +83,81 @@ export interface TcpEvent {
   observations: Observation[]
   inference: Inference
   limitations: string[]
+  /** 缺口类事件:分类所依据的原始信号(供 Why 面板渲染;伪重传类无此字段) */
+  classificationSignals?: FillSignals
+  /** 分类理由:一句话说明依据了哪些信号、为何得出该 kind(不断言确定性丢包) */
+  rationale?: string
 }
 
 const SINGLE_POINT_LIMITATION =
   '单观察点抓包:可确认本地观察到的到达情况,但无法定位丢包发生在哪个网络节点,也无法确认对端是否已发出'
 const MID_STREAM_LIMITATION = '抓包从连接中途开始(未见完整握手):流起始处的缺失不构成丢包证据,结论置信度下调'
 const CAPTURE_DROP_LIMITATION = '无法排除抓包点自身漏包(网卡/ring buffer/镜像口),缺口不等于网络丢包'
+
+/**
+ * 模糊区限制:乱序与丢包在单观察点下可能表现完全相同 ——
+ * 只有"填补段全为新字节 + 短时长 + 少量/无重复确认"三者同时成立时,
+ * 才允许把事件归为乱序;信号不全时置信度必须降级并附加本说明。
+ */
+const AMBIGUOUS_CLASSIFICATION_LIMITATION =
+  '该分类基于启发信号(时长/重复 ACK 数/填补字节新旧),单观察点下乱序与丢包可能表现相同'
+
+/**
+ * 填补分类器:把「丢包还是乱序」的判断从隐式布尔合取提升为显式规则表。
+ *
+ * 判据是 TCP 的机制,不是经验阈值:
+ * - 迟到的原始段带来的全是新字节,且接收端无需触发快重传(0–2 个重复 ACK)
+ *   就能等它到达 —— 这是纯乱序的形态;
+ * - 3 个重复 ACK 正是 RFC 快重传的触发条件,出现 ≥3 说明接收端确实在催缺失数据;
+ * - RTO(通常 ≥200ms)量级的静默期后重传,说明发送端已超时放弃等待,
+ *   是真丢失后超时重传的典型形态;
+ * - 填补段与已见字节重叠 = 同一段字节被发了两次,本身就是重发证据。
+ *
+ * 单观察点永远无法 100% 区分两者,因此除高置信情形外一律保守降级。
+ */
+export function classifyFill(s: FillSignals): FillClassification {
+  // 重叠填补:同一段字节被发送了两次,这是最直接的丢失证据 → 高置信
+  if (!s.fillerCarriesOnlyNewBytes) {
+    return {
+      kind: 'possible-loss-or-delay',
+      confidence: 'high',
+      rationale: `填补段与此前已见数据重叠(${s.duplicateAckCount} 个重复 ACK、${s.durationSeconds}s):同一段字节被发送了两次,支持"原始段未按时到达后重发"`,
+    }
+  }
+  // 全新字节的填补段 + ≥3 个重复 ACK:3 个重复 ACK 正是快重传触发条件,
+  // 接收端明确在催缺失数据 → 走快重传路径,疑似真丢失
+  if (s.duplicateAckCount >= 3) {
+    return {
+      kind: 'possible-loss-or-delay',
+      confidence: 'medium',
+      rationale: `填补段全为新字节,但缺口开放期间出现 ${s.duplicateAckCount} 个重复 ACK(快重传触发条件),接收端曾持续等待缺失字节`,
+    }
+  }
+  // 全新字节 + RTO 量级时长(≥200ms)且重复 ACK 不足:发送端大概率已超时重传,
+  // 静默期说明数据确实长时间未到 → 疑似真丢失
+  if (s.durationSeconds >= 0.2) {
+    return {
+      kind: 'possible-loss-or-delay',
+      confidence: 'medium',
+      rationale: `填补段全为新字节且间隔 ${s.durationSeconds}s(RTO 量级)、仅 ${s.duplicateAckCount} 个重复 ACK:疑似原始段丢失后由超时重传补齐`,
+    }
+  }
+  // 全新字节 + 短时长(<100ms)+ 重复 ACK <3:迟到的原始段,接收端无需催促即等到 → 纯乱序
+  if (s.durationSeconds < 0.1) {
+    return {
+      kind: 'reordering',
+      confidence: 'high',
+      rationale: `填补段全为新字节,间隔 ${s.durationSeconds}s(<100ms)且仅 ${s.duplicateAckCount} 个重复 ACK:符合迟到原始段形态,未观察到重发`,
+    }
+  }
+  // 其余(100ms ≤ 时长 <200ms 且重复 ACK <3):模糊区。单观察点无法排除丢包,
+  // 归为乱序但置信度压到最低,并强制附带不确定性说明。
+  return {
+    kind: 'reordering',
+    confidence: 'low',
+    rationale: `填补段全为新字节,间隔 ${s.durationSeconds}s 处于模糊区且仅 ${s.duplicateAckCount} 个重复 ACK:更可能是迟到原始段,但无法排除该段确曾丢失`,
+  }
+}
 
 /** 事件 id:同一条缺口在任何输入顺序下都得到同一 id */
 function eventId(kind: TcpEventKind, dir: StreamDirection, streamId: number | undefined, anchor: number): string {
@@ -143,12 +233,18 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       }
     }
 
-    // 填补者是"重发已发送过的数据",还是"迟到的原始段"?这决定丢包 vs 乱序
+    // 填补者是"重发已发送过的数据",还是"迟到的原始段"?这决定丢包 vs 乱序。
+    // 判断交给显式分类器(见 classifyFill):信号原样记录在事件上,规则可解释、可复核。
     const filler = gap.filledByPacket != null ? facts.segments.find((s) => s.packetNumber === gap.filledByPacket) : undefined
     const fillerPkt = gap.filledByPacket != null ? byNumber.get(gap.filledByPacket) : undefined
-    // 迟到的原始段带来的全是新字节;真正的重传会与已见数据重叠,或距首次暴露有明显时延
-    const isLateArrival =
-      filler != null && filler.newBytes === filler.seqLen && (gap.durationSeconds ?? 0) < 0.1 && dupAckPackets.length < 3
+    const fillClassification = filler
+      ? classifyFill({
+          fillerCarriesOnlyNewBytes: filler.newBytes === filler.seqLen,
+          durationSeconds: gap.durationSeconds ?? 0,
+          duplicateAckCount: dupAckPackets.length,
+        })
+      : undefined
+    const isLateArrival = fillClassification?.kind === 'reordering'
 
     if (fillerPkt?.tcpAnalysis?.length) {
       // 如实记录 tshark 标签(仅作为观察,不参与分类)
@@ -176,16 +272,28 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       }
     }
 
-    const confidence: Confidence = facts.midStream ? 'low' : sackPresent && dupAckPackets.length > 0 ? 'high' : 'medium'
-    const statement =
-      kind === 'reordering'
-        ? '数据到达顺序与序列号顺序不同,缺口随后由迟到的原始段补齐,未观察到重发 —— 乱序不等于丢包'
-        : gap.filled
-          ? '观察到数据未按连续序列到达,随后由重传补齐;证据支持"数据未及时到达",但不能据此断定丢包位置'
-          : '观察到数据未按连续序列到达,且在抓包范围内始终未被补齐'
+    // 置信度:中途抓包一律封顶 low(流起点不完整,任何分类都缺前提);
+    // 否则采用分类器给出的置信度 —— 它已经按"多少个启发信号相互印证"分了级
+    const confidence: Confidence = facts.midStream ? 'low' : fillClassification?.confidence ?? 'medium'
+    let statement: string
+    if (kind === 'reordering') {
+      statement =
+        confidence === 'low'
+          ? '缺口由全新字节的段在模糊区间内补齐:更可能是迟到的原始段(乱序),但单观察点无法排除该段确曾丢失后重传'
+          : '数据到达顺序与序列号顺序不同,缺口随后由迟到的原始段补齐,未观察到重发 —— 乱序不等于丢包'
+    } else if (gap.filled) {
+      statement = '观察到数据未按连续序列到达,随后由重传补齐;证据支持"数据未及时到达",但不能据此断定丢包位置'
+    } else {
+      statement = '观察到数据未按连续序列到达,且在抓包范围内始终未被补齐'
+    }
 
     const evidenceScore =
       obs.length + (sackPresent ? 2 : 0) + dupAckPackets.length + (recoveryAck != null ? 1 : 0) + (gap.filled ? 1 : 0)
+
+    const limitations = baseLimitations()
+    // 低置信度的分类必须把不确定性说透:置信度被压到 low(模糊区,或中途抓包封顶)时,
+    // 单观察点下乱序与丢包不可区分,必须显式告知用户。
+    if (confidence === 'low') limitations.push(AMBIGUOUS_CLASSIFICATION_LIMITATION)
 
     events.push({
       id: eventId(kind, gap.direction, facts.streamId, gap.start),
@@ -209,7 +317,15 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
         confidence,
         evidenceRefs: obs.map((o) => ({ observationId: o.id, packetNumber: o.packetNumber })),
       },
-      limitations: baseLimitations(),
+      limitations,
+      classificationSignals: filler
+        ? {
+            fillerCarriesOnlyNewBytes: filler.newBytes === filler.seqLen,
+            durationSeconds: gap.durationSeconds ?? 0,
+            duplicateAckCount: dupAckPackets.length,
+          }
+        : undefined,
+      rationale: fillClassification?.rationale,
     })
   }
 
@@ -279,6 +395,8 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
         evidenceRefs: obs.map((o) => ({ observationId: o.id, packetNumber: o.packetNumber })),
       },
       limitations: baseLimitations(),
+      // 伪重传分支不走 classifyFill(无缺口可填补),但 Why 面板同样需要一句分类理由
+      rationale: '重发段的字节此前已全部观察到且序列空间无对应缺口:支持"数据早已到达、确认未及时送达",不支持数据丢失',
     })
   }
 

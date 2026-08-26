@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Packet } from '../../model/types'
 import { analyzeStream } from './streamAnalysis'
+import { detectTcpEvents } from './events'
 
 /** 构造一个 TCP 报文;只填分析引擎关心的字段 */
 function pkt(o: Partial<Packet> & { number: number; time: number }): Packet {
@@ -285,5 +286,84 @@ describe('analyzeStream — 序列空间与 Gap 生命周期', () => {
       c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100 }),
     ]
     expect(JSON.stringify(analyzeStream(build()))).toBe(JSON.stringify(analyzeStream(build())))
+  })
+})
+
+describe('analyzeStream — 回绕排序、不可信输入与部分填补去重(M2 加固)', () => {
+  // 每步 256MB,24 跳累计约 6.17GB > 2^32:必然跨回绕,且相邻步距远小于 2^31(展开坐标精确)
+  const STEP = 0x1000_0000
+
+  const wrappedStream = (): Packet[] => {
+    const ps: Packet[] = []
+    let seq = 0
+    for (let i = 0; i < 24; i++) {
+      ps.push(
+        c2s({ number: i + 1, time: (i + 1) * 0.001, tcpFlags: PSHACK, tcpSeq: seq >>> 0, tcpLen: 1000, tcpCompleteness: 15 }),
+      )
+      seq += STEP
+    }
+    return ps
+  }
+
+  it('跨回绕长流:Gap 按传输顺序(绝对坐标)排列,输入数组反序后顺序不变', () => {
+    const base = wrappedStream()
+    const f1 = analyzeStream(base)
+    const f2 = analyzeStream([...base].reverse())
+
+    // 24 段之间恰 23 个空洞,每洞 STEP-1000 字节;两份输入产出完全相同的记录集合
+    expect(f1.gaps).toHaveLength(23)
+    expect(f2.gaps.map((g) => [g.start, g.end])).toEqual(f1.gaps.map((g) => [g.start, g.end]))
+
+    // 语义正确序 = 发送顺序:第 i 个空洞起于第 i 段末尾、止于第 i+1 段开头(均对 2^32 取模)。
+    // 注意第 16 洞的 32 位起点回到 1000(已回绕)——这正是按原始序号排序必然出错的原因
+    const expected = Array.from({ length: 23 }, (_, i) => [
+      ((i * STEP + 1000) % 4294967296) >>> 0,
+      (((i + 1) * STEP) % 4294967296) >>> 0,
+    ])
+    expect(f1.gaps.map((g) => [g.start, g.end])).toEqual(expected)
+
+    // startAbs 必须严格递增(跨回绕处原始序号从 0xF00003E8 跳回 1000,seqDiff 序在此反转)
+    const abss = f1.gaps.map((g) => g.startAbs)
+    expect(abss[0]).toBe(1000)
+    expect(abss[22]).toBe(22 * STEP + 1000)
+    for (let i = 1; i < abss.length; i++) expect(abss[i]!).toBeGreaterThan(abss[i - 1]!)
+
+    // 缺失总量如实:23 × (STEP - 1000)
+    expect(f1.gaps.reduce((n, g) => n + g.byteCount, 0)).toBe(23 * (STEP - 1000))
+  })
+
+  it('外来 ISN(相距 ≥2^31)被拒收:不产生巨型幻影 Gap,且 unorderableInput 如实上报', () => {
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 5, time: 0.04, tcpFlags: PSHACK, tcpSeq: 2_500_000_000, tcpAck: 1, tcpLen: 100 }),
+    ]
+    const f = analyzeStream(packets)
+    // 出现无法定序的输入必须浮出水面,由上层降级并附限制说明,而不是默默吞掉
+    expect(f.unorderableInput).toBe(true)
+    // 任何位置都不得出现十亿字节级幻影空洞;本例中该段整体被拒收,连普通空洞也没有
+    expect(f.gaps.every((g) => g.byteCount <= 0x4000_0000)).toBe(true)
+    expect(f.gaps).toHaveLength(0)
+  })
+
+  it('部分填补去重回归:宽空洞被缩小而非残留重复记录,缺失量如实为 700B', () => {
+    const packets = [
+      c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 1000, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 2, time: 0.01, tcpFlags: PSHACK, tcpSeq: 1500, tcpAck: 1, tcpLen: 100 }), // 暴露 [1100,1500)
+      c2s({ number: 3, time: 0.05, tcpFlags: PSHACK, tcpSeq: 1200, tcpAck: 1, tcpLen: 100 }), // 填中段 → [1100,1200)+[1300,1500)
+      c2s({ number: 4, time: 0.06, tcpFlags: PSHACK, tcpSeq: 2000, tcpAck: 1, tcpLen: 100 }), // 再暴露 [1600,2000)
+    ]
+    const f = analyzeStream(packets)
+    // 恰 3 条记录,同一段字节绝不重复计入缺失
+    expect(f.gaps.map((g) => [g.start, g.end])).toEqual([
+      [1100, 1200],
+      [1300, 1500],
+      [1600, 2000],
+    ])
+    expect(f.gaps.reduce((n, g) => n + g.byteCount, 0)).toBe(700)
+    // 缩小后的记录继承原宽空洞的首次观察信息([1100,1500) 由 #2 首次暴露;缩小 ≠ 重新发现)
+    expect(f.gaps.map((g) => g.firstObservedPacket)).toEqual([2, 2, 4])
+    // 事件引擎消费同一份事实:3 条记录 → 恰 3 个事件,不再重复报告
+    expect(detectTcpEvents(f, packets)).toHaveLength(3)
   })
 })

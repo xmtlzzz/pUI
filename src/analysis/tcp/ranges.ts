@@ -1,7 +1,29 @@
 import { SEQ_SPACE, seqDiff } from './seq'
 
+/** 可信带向前余量:新段领先已见前沿(maxEnd)的最大可信距离(字节)。 */
+const FWD_MARGIN = 0x6000_0000 // 1.5GiB
+
+/** 可信带向后余量:迟到/重传段允许落后已见数据起点(minStart)多远。
+ *
+ *  下界由两个互斥的既有事实要求夹出,取中值:
+ *  - 必须接纳:真实长传输跨回绕后的补填段,近侧读数会呈现为落后约 1.29e9
+ *    (既有用例:add(1,101) 后 add(3e9,...)),小于该值会丢真实数据;
+ *  - 必须拒绝:外来 ISN(相距 2.5e9)的近侧读数呈现为落后约 1.79e9,
+ *    放宽到带内会把拼接抓包误判成"迟到补填",造出十亿字节级幻影空洞。
+ *  向前余量取同值保持对称:两个方向各自留出 <2^31 的物理不可能区,
+ *  相邻候选间隔恰为 2^32,故带内最多容纳两个候选,歧义可按"距跨度最近"裁决。 */
+const BACK_MARGIN = 0x6000_0000 // 1.5GiB
+
 /** 半开区间 [start, end),坐标为"展开后"的单调序列空间(见下方说明) */
 type Range = [number, number]
+
+/** 空洞及其绝对坐标:绝对坐标是跨回绕流排序的唯一可靠键 */
+export interface GapWithAbs {
+  start: number
+  end: number
+  startAbs: number
+  endAbs: number
+}
 
 /**
  * 序列空间区间集合:记录某个方向上"哪些字节已经见过"。
@@ -28,24 +50,109 @@ export class SeqRanges {
   private lastRaw = 0
   /** 上一次展开得到的绝对坐标 */
   private lastAbs = 0
+  /** 是否遇到过无法定序的输入(相距 ≥2^31),需由分析层降级为限制说明 */
+  private unorderableInput = false
 
   /**
-   * 把 32 位序列号展开为单调绝对坐标。
-   * 依赖"相邻观察值之间的跨度远小于 2^31"这一 TCP 事实:据有符号差值决定前进/后退,
-   * 因此回绕(小值跟在大值之后)会被正确识别为前进而非后退 2^32。
+   * 候选带放置:把 32 位序列号唯一地映射到单调绝对坐标。
+   *
+   *  环上近侧读数 c = lastAbs + seqDiff(s, lastRaw) 只是一个**假设**,不是事实:
+   *  参考点被后续报文推进后,用旧序列号查询会落到环的错误一侧(实测:推进 3GB 后
+   *  covers(0,100)=false、newBytes(0,100)=100)。因此读数连同 ±2^32 的两个候选
+   *  一起参与判定,只有落入可信带的候选才被采信:
+   *
+   *      [ minStart - BACK_MARGIN , maxEnd + FWD_MARGIN ]
+   *
+   *  已见数据必然落带内(不会"丢出带外");远超物理可能的偏移(外来 ISN)
+   *  则三个候选全部落空而被拒绝。
+   *
+   *  多候选入带在跨度超过 2^32-余量之和(约 2.79GB)的长流上真实出现(跨回绕处
+   *  必然如此),裁决分两步,只对 add 生效(len>0 且 advance):
+   *  1) 纯重复剔除:与已见字节完全重合(零新字节)的候选是"同一份数据"而非新事实,
+   *     若存在非重复候选则剔除之 —— 否则跨回绕后的延续段会被误并回环上旧位置,
+     *     整条流的后续全部塌缩(实测 24 段跨回绕流只余 15 个空洞);
+   *  2) 类内择近:跨度内部 > 前沿之外(前进延续先验)> 起点之前;
+   *     同类取距跨度最近者,同距取更大(更靠前)候选 —— 结果确定且偏向前进。
+   *
+   *  - add 路径:无候选入带 → 拒绝并置不可定序标记;
+   *  - 查询路径:无副作用(不推进参考点、不改标记),带外时退回近侧读数兜底,
+   *    多候选时直接按类内择近(查询的"完全重合"候选恰恰是正确答案,不剔除)。
    */
-  private unwrap(seq: number): number {
+  private place(seq: number, len: number, advance: boolean): number | null {
     const s = seq >>> 0
     if (this.origin === null) {
+      if (!advance) return null
       this.origin = s
       this.lastRaw = s
       this.lastAbs = 0
       return 0
     }
-    const abs = this.lastAbs + seqDiff(s, this.lastRaw)
+    const near = this.lastAbs + seqDiff(s, this.lastRaw)
+    // 已见数据的绝对跨度;可信带锚定在它的两端
+    const rs = this.ranges
+    const minStart = rs.length ? rs[0][0] : this.lastAbs
+    const maxEnd = rs.length ? rs[rs.length - 1][1] : this.lastAbs
+    const bandLo = minStart - BACK_MARGIN
+    const bandHi = maxEnd + FWD_MARGIN
+    const cands: number[] = []
+    for (const c of [near - SEQ_SPACE, near, near + SEQ_SPACE]) {
+      if (c >= bandLo && c <= bandHi) cands.push(c)
+    }
+    if (cands.length === 0) {
+      if (advance) {
+        this.unorderableInput = true
+        return null // add 路径:无可信落点 → 拒绝(null 由 add 转为 false)
+      }
+      return near // 查询路径兜底:带外输入保持旧语义的近侧读数
+    }
+    let pool = cands
+    if (advance && cands.length > 1) {
+      const useful = cands.filter((c) => !this.fullySeen(c, c + len))
+      if (useful.length > 0) pool = useful
+    }
+    // 类内择近(见上方说明)
+    const clsOf = (c: number): number => (c >= minStart && c <= maxEnd ? 0 : c > maxEnd ? 1 : 2)
+    const distTo = (c: number): number => (c < minStart ? minStart - c : c > maxEnd ? c - maxEnd : 0)
+    let best = pool[0]
+    for (const c of pool) {
+      const kc = clsOf(c)
+      const kb = clsOf(best)
+      if (kc !== kb) {
+        if (kc < kb) best = c
+        continue
+      }
+      const dc = distTo(c)
+      const db = distTo(best)
+      if (dc < db || (dc === db && c > best)) best = c
+    }
+    if (!advance) return best // 查询路径到此为止:不推进参考点
+    this.lastAbs = best
     this.lastRaw = s
-    this.lastAbs = abs
-    return abs
+    return best
+  }
+
+  /** [a,b) 是否已被已见区间完整覆盖(用于识别纯重复候选) */
+  private fullySeen(a: number, b: number): boolean {
+    const rs = this.ranges
+    let lo = 0
+    let hi = rs.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (rs[mid][1] < a) lo = mid + 1
+      else hi = mid
+    }
+    let cursor = a
+    for (let i = lo; i < rs.length && rs[i][0] < b; i++) {
+      if (rs[i][0] > cursor) return false
+      if (rs[i][1] > cursor) cursor = rs[i][1]
+      if (cursor >= b) return true
+    }
+    return cursor >= b
+  }
+
+  /** 把 32 位序列号展开为单调绝对坐标(add 路径,允许推进参考点并拒绝脏输入) */
+  private unwrap(seq: number, len: number): number | null {
+    return this.place(seq, len, true)
   }
 
   /** 把绝对坐标折回 32 位序列号,供对外输出 */
@@ -56,13 +163,23 @@ export class SeqRanges {
     return m
   }
 
-  /** 加入一段已见字节 [start, end)。零长度(纯 ACK/keep-alive)不占序列空间,忽略。 */
-  add(start: number, end: number): void {
-    const a = this.unwrap(start)
-    // end 用与 start 相同的参考展开,避免 end 单独展开时把长度算成负数
+  /** 加入一段已见字节 [start, end)。零长度(纯 ACK/keep-alive)不占序列空间,忽略。
+   *
+   *  返回是否被接纳。候选带放置(place)找不到可信落点时拒绝并置不可定序标记:
+   *  这种偏移在真实 TCP 中不可能出现,强行接纳会造出十亿字节级的幻影空洞。
+   *  对一个"不许过度推断"的分析工具,拒绝并如实标注远比猜一侧正确。 */
+  add(start: number, end: number): boolean {
     const len = seqDiff(end >>> 0, start >>> 0)
-    if (len <= 0) return // 零长度或异常(end 在 start 之前)
+    if (len <= 0) return false // 零长度或异常(end 在 start 之前)
+    const a = this.unwrap(start, len)
+    if (a === null) return false
     this.insert(a, a + len)
+    return true
+  }
+
+  /** 是否出现过无法定序的输入(供分析层降级为 limitation,而不是当作事实) */
+  hasUnorderableInput(): boolean {
+    return this.unorderableInput
   }
 
   private insert(a: number, b: number): void {
@@ -96,7 +213,7 @@ export class SeqRanges {
   covers(start: number, end: number): boolean {
     const len = seqDiff(end >>> 0, start >>> 0)
     if (len <= 0) return false
-    const a = this.absOf(start)
+    const a = this.absOf(start, len)
     if (a === null) return false
     const b = a + len
     for (const [s, e] of this.ranges) {
@@ -110,7 +227,7 @@ export class SeqRanges {
   newBytes(start: number, end: number): number {
     const len = seqDiff(end >>> 0, start >>> 0)
     if (len <= 0) return 0
-    const a = this.absOf(start)
+    const a = this.absOf(start, len)
     if (a === null) return len // 尚无任何数据 → 全新
     const b = a + len
     let seen = 0
@@ -124,18 +241,31 @@ export class SeqRanges {
 
   /**
    * 把 32 位序列号映射到绝对坐标,但不推进展开参考点(查询不应有副作用)。
-   * 以当前参考点为基准做有符号差值。
+   * 与 add 共用同一套候选带判定(但不做纯重复剔除 —— 查询语义是"按已存数据
+   * 最一致地解释",与 add 的"优先解释为前进"刻意不同);带外时退回近侧读数兜底。
    */
-  private absOf(seq: number): number | null {
-    if (this.origin === null) return null
-    return this.lastAbs + seqDiff(seq >>> 0, this.lastRaw)
+  private absOf(seq: number, len: number): number | null {
+    return this.place(seq, len, false)
   }
 
   /** 当前存在的空洞(已见区间之间的缺口),按序列顺序返回 32 位边界 */
   gaps(): Array<[number, number]> {
-    const out: Array<[number, number]> = []
+    return this.gapsWithAbs().map((g) => [g.start, g.end])
+  }
+
+  /** 空洞及其绝对坐标:绝对坐标是跨回绕流排序的唯一可靠键。
+   *  32 位边界在回绕后不保序(0 < 4294967200 但环上在前),跨回绕的多个空洞
+   *  若按 32 位值排序会把"回绕之后"的洞排到最前 —— 上层据此会颠倒故障因果。
+   *  ranges 本身按绝对坐标升序维护,故 startAbs 沿数组严格递增,与插入顺序无关。 */
+  gapsWithAbs(): GapWithAbs[] {
+    const out: GapWithAbs[] = []
     for (let i = 1; i < this.ranges.length; i++) {
-      out.push([this.wrap(this.ranges[i - 1][1]), this.wrap(this.ranges[i][0])])
+      out.push({
+        start: this.wrap(this.ranges[i - 1][1]),
+        end: this.wrap(this.ranges[i][0]),
+        startAbs: this.ranges[i - 1][1],
+        endAbs: this.ranges[i][0],
+      })
     }
     return out
   }

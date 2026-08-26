@@ -26,14 +26,19 @@ function norm(x: number): number {
 /**
  * 序列号比较:返回负/零/正,语义同 Array#sort 的 comparator。
  *
- * 距离恰为 2^31 时无法定序,此处固定返回负值(视 a 在前),
- * 保证同一输入永远得到同一结果,分析输出可复现。
+ * 距离恰为 2^31 时 RFC 1982 无法定序,而有符号 32 位差在两个方向上都得到 -2^31 ——
+ * 直接返回该差值会让 seqCmp(a,b) 与 seqCmp(b,a) 同为负,构成**反对称性被破坏的比较器**,
+ * Array#sort 在这种比较器下会给出依赖初始顺序的乱序结果(实测
+ * [0,2^31,100] 与 [2^31,0,100] 排出两种不同顺序)。
+ * 因此该边界改为按归一化后的原始数值兜底定序:仍然是任意的,但**一致且可复现**。
  */
 export function seqCmp(a: number, b: number): number {
-  const d = (norm(a) - norm(b)) | 0 // 有符号 32 位环绕差
-  if (d === 0) return 0
-  // d 已是有符号 32 位:正表示 a 在 b 之后,负表示之前;
-  // 恰好 -2^31(不可定序)自然落入负分支,行为确定
+  const na = norm(a)
+  const nb = norm(b)
+  if (na === nb) return 0
+  const d = (na - nb) | 0 // 有符号 32 位环绕差
+  // |d| === 2^31 时两向同号,无法据此定序 —— 退化为数值比较以维持反对称性
+  if (d === -0x8000_0000) return na < nb ? -1 : 1
   return d
 }
 

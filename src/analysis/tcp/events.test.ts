@@ -231,3 +231,134 @@ describe('detectTcpEvents — 三类 MVP 事件', () => {
     expect(text).toMatch(/retransmission/)
   })
 })
+
+describe('detectTcpEvents — 填补分类器(classifyFill):启发信号必须落在事件上', () => {
+  it('相邻交换:5ms 后由全新字节补齐、0 个重复 ACK → reordering/high,并记录分类信号', () => {
+    const evs = run([
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({
+        number: 6, time: 0.055, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100,
+        tcpAnalysis: ['retransmission'], tcpCompleteness: 15,
+      }),
+      s2c({ number: 7, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ])
+    expect(evs).toHaveLength(1)
+    const e = evs[0]
+    expect(e.kind).toBe('reordering')
+    expect(e.inference.confidence).toBe('high')
+    // Why 面板数据契约:分类所依赖的信号必须可渲染,而不是藏在代码里的魔法数字
+    expect(e.classificationSignals).toBeDefined()
+    expect(e.classificationSignals!.fillerCarriesOnlyNewBytes).toBe(true)
+    expect(e.classificationSignals!.duplicateAckCount).toBe(0)
+    expect(e.classificationSignals!.durationSeconds).toBeCloseTo(0.005, 6)
+    expect(e.rationale).toBeTruthy()
+  })
+
+  it('LAN 快重传形态:3 个重复 ACK、50ms 恢复 → possible-loss-or-delay/medium', () => {
+    const evs = run([
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 6, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.07, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      s2c({ number: 8, time: 0.08, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 9, time: 0.1, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 10, time: 0.11, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ])
+    expect(evs).toHaveLength(1)
+    expect(evs[0].kind).toBe('possible-loss-or-delay')
+    expect(evs[0].inference.confidence).toBe('medium')
+    expect(evs[0].duplicateAckCount).toBe(3)
+    expect(evs[0].classificationSignals?.duplicateAckCount).toBe(3)
+  })
+
+  it('RTO 形态:0-1 个重复 ACK、300ms 后补齐 → possible-loss-or-delay/medium', () => {
+    const evs = run([
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 6, time: 0.35, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.36, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ])
+    expect(evs).toHaveLength(1)
+    expect(evs[0].kind).toBe('possible-loss-or-delay')
+    expect(evs[0].inference.confidence).toBe('medium')
+    expect(evs[0].duplicateAckCount).toBe(0)
+    expect(evs[0].classificationSignals?.durationSeconds).toBeCloseTo(0.3, 6)
+  })
+
+  it('模糊区:1 个重复 ACK、150ms 补齐 → reordering/low,并附加不确定性限制说明', () => {
+    const evs = run([
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 6, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 7, time: 0.2, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 8, time: 0.21, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ])
+    expect(evs).toHaveLength(1)
+    const e = evs[0]
+    expect(e.kind).toBe('reordering')
+    expect(e.inference.confidence).toBe('low')
+    expect(e.limitations.some((l) => l.includes('乱序与丢包可能表现相同'))).toBe(true)
+    // 低置信度时措辞必须保守:不断言,只说"更可能"
+    expect(e.inference.statement).toMatch(/更可能|无法排除/)
+  })
+
+  it('重叠填补(与已见字节重叠)→ possible-loss-or-delay/high', () => {
+    const evs = run([
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      // 51–211:覆盖整个缺口 101–201,且与前段 51–101 重叠 → 同一段字节被发了两次
+      c2s({ number: 6, time: 0.08, tcpFlags: PSHACK, tcpSeq: 51, tcpAck: 1, tcpLen: 160, tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.09, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ])
+    // 该报文既填补缺口又重发已见字节:缺口事件之外还会有一条伪重传类事件(既有行为)
+    const loss = evs.find((e) => e.kind === 'possible-loss-or-delay')
+    expect(loss).toBeDefined()
+    expect(loss!.inference.confidence).toBe('high')
+    expect(loss!.recovered).toBe(true)
+    expect(loss!.classificationSignals?.fillerCarriesOnlyNewBytes).toBe(false)
+  })
+
+  it('rationale 一律非空,且不含确定性丢包断言', () => {
+    const scenarios = [
+      lossChain(),
+      // 相邻交换(高置信乱序)
+      [
+        ...handshake(),
+        c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+        c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+        c2s({ number: 6, time: 0.055, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      ],
+      // 模糊区(低置信乱序)
+      [
+        ...handshake(),
+        c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+        c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+        s2c({ number: 6, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+        c2s({ number: 7, time: 0.2, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      ],
+      // 无 Gap 的伪重传(M3 验收线)
+      [
+        ...handshake(),
+        c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+        s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+        c2s({ number: 6, time: 0.3, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      ],
+    ]
+    for (const packets of scenarios) {
+      for (const e of run(packets)) {
+        expect(e.rationale).toBeTruthy()
+        expect(e.rationale!).not.toMatch(/确定丢包|一定是丢包/)
+        // 已填补的缺口事件必须携带分类信号(Why 面板数据契约)
+        if (e.recovered && e.gap != null) {
+          expect(e.classificationSignals).toBeDefined()
+        }
+      }
+    }
+  })
+})

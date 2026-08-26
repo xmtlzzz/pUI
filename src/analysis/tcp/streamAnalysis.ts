@@ -47,6 +47,9 @@ export interface SequenceGapFact {
   firstObservedTime: number
   /** 是否有 SACK 报告空洞之后的数据已到达接收端 */
   sackCovered: boolean
+  /** 空洞起点在展开坐标下的绝对位置(自本方向首个观察序号起算,跨回绕仍单调递增)。
+   *  仅用于排序/展示的内部事实;32 位 start/end 的 JSON 形状保持向后兼容。 */
+  startAbs?: number
   filled: boolean
   filledByPacket?: number
   filledTime?: number
@@ -65,6 +68,9 @@ export interface StreamAnalysisFacts {
   gaps: SequenceGapFact[]
   /** 各方向在序列空间中确实观察到的字节数(去重后:重传/重叠只算一次) */
   seenBytes: Record<StreamDirection, number>
+  /** 是否出现过无法定序的输入(外来 ISN / 拼接抓包)。为真时序列空间结论不完整,
+   *  上层应降级并附加限制说明 —— 绝不把残缺的序列图当作完整事实呈现。 */
+  unorderableInput: boolean
 }
 
 const F_FIN = 0x01
@@ -170,8 +176,15 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     const start = p.tcpSeq
     const end = (start + sl) >>> 0
     const prevHighest = ranges.highest()
-    const newBytes = ranges.newBytes(start, end)
     const gapsBefore = ranges.gaps().length
+
+    // 先落位、后计量:newBytes 取 add() 前后 totalBytes() 的差值。
+    // 不能用落位前的 newBytes():其查询路径面对多候选带时可能解析到与 add 实际
+    // 落位不同的候选 —— 跨回绕长流的续传段会被误判为纯重传(newBytes=0),
+    // 从而跳过下方的空洞对账、漏报 Gap。差值口径永远以 add 的权威落位为准。
+    const bytesBefore = ranges.totalBytes()
+    ranges.add(start, end)
+    const newBytes = ranges.totalBytes() - bytesBefore
 
     // 分类:先判重复/重叠,再判是否越洞或补洞
     let classification: SegmentClassification
@@ -188,44 +201,43 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
       classification = 'new-in-order'
     }
 
-    ranges.add(start, end)
-
-    // 新暴露的空洞:比较加入前后的空洞集合
-    if (classification === 'new-ahead-of-gap' && prevHighest != null) {
-      const gs = ranges.gaps()
-      for (const [gs0, ge0] of gs) {
-        const already =
-          openGaps[dir].some((g) => g.start === gs0 && g.end === ge0) ||
-          closedGaps.some((g) => g.direction === dir && g.start === gs0 && g.end === ge0)
-        if (already) continue
-        openGaps[dir].push({
+    // 空洞对账:以 tracker 的当前空洞集合为唯一事实来源,与已登记的开放空洞做一次对齐。
+    //
+    // 必须"对账"而不能只做"新增登记":部分填补(常见于无 SACK 时发送端每 RTT 只补一个 MSS)
+    // 会把一个宽空洞切成若干窄空洞。若只按 (start,end) 精确匹配判重,旧的宽记录既不会消失、
+    // 新的窄记录又被当作新空洞加入,于是同一段字节被重复计入缺失量 ——
+    // 实测 700 字节的真实缺失会被报成 1100 字节、1 个事件会变成 4 个,属于典型过度报告。
+    if (classification === 'new-ahead-of-gap' || classification === 'out-of-order-fill' || classification === 'overlapping-retransmit') {
+      const current = ranges.gapsWithAbs()
+      const survivors: SequenceGapFact[] = []
+      for (const { start: gs0, end: ge0, startAbs } of current) {
+        // 找一个与该空洞重叠的既有记录,继承它的"首次观察"信息(空洞被缩小不等于重新发现)
+        const prior = openGaps[dir].find((g) => seqDiff(g.end, gs0) > 0 && seqDiff(ge0, g.start) > 0)
+        survivors.push({
           direction: dir,
           start: gs0,
           end: ge0,
           byteCount: seqDiff(ge0, gs0),
-          firstObservedPacket: p.number,
-          firstObservedTime: p.time,
-          sackCovered: false,
+          firstObservedPacket: prior?.firstObservedPacket ?? p.number,
+          firstObservedTime: prior?.firstObservedTime ?? p.time,
+          sackCovered: prior?.sackCovered ?? false,
+          startAbs,
           filled: false,
         })
       }
-    }
-
-    // 空洞填补检查:仍开放的空洞若已被完整覆盖,则由本报文填平
-    if (openGaps[dir].length) {
-      const stillOpen: SequenceGapFact[] = []
+      // 不再出现于 tracker 的开放空洞 = 已被本报文填平
       for (const g of openGaps[dir]) {
-        if (ranges.covers(g.start, g.end)) {
+        const stillThere = current.some(({ start: gs0, end: ge0 }) => g.start === gs0 && g.end === ge0)
+        const shrunk = current.some(({ start: gs0, end: ge0 }) => seqDiff(g.end, gs0) > 0 && seqDiff(ge0, g.start) > 0)
+        if (!stillThere && !shrunk) {
           g.filled = true
           g.filledByPacket = p.number
           g.filledTime = p.time
           g.durationSeconds = p.time - g.firstObservedTime
           closedGaps.push(g)
-        } else {
-          stillOpen.push(g)
         }
       }
-      openGaps[dir] = stillOpen
+      openGaps[dir] = survivors
     }
 
     segments.push({
@@ -246,11 +258,15 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     // 空洞之后的数据是否已由对端 SACK 报告收到 —— 支撑"数据未及时到达"而非"数据丢失"
     g.sackCovered = !sacked[g.direction].isEmpty() && sacked[g.direction].newBytes(g.end, (g.end + 1) >>> 0) === 0
   }
-  // 确定性排序:方向 → 起始序列号 → 首次观察报文号
+  // 确定性排序:方向 → 绝对坐标起点 → 首次观察报文号。
+  //
+  // 不能用 seqDiff(start) 排序:seqDiff 是"环上有符号差值",环绕 2^31 处不满足传递性
+  // (环上均布三点可构成 A<B<C<A 的循环),排序结果随输入排列漂移;且流一旦回绕,
+  // 环上序恰好与传输顺序相反。startAbs 是展开后的单调坐标,才是语义正确的传输顺序。
   all.sort(
     (a, b) =>
       a.direction.localeCompare(b.direction) ||
-      seqDiff(a.start, b.start) ||
+      (a.startAbs ?? a.start) - (b.startAbs ?? b.start) ||
       a.firstObservedPacket - b.firstObservedPacket,
   )
 
@@ -261,5 +277,7 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     segments,
     gaps: all,
     seenBytes: { c2s: seen.c2s.totalBytes(), s2c: seen.s2c.totalBytes() },
+    // 任一方向出现过不可定序输入,整条流的序列结论都视为不完整(保守降级)
+    unorderableInput: seen.c2s.hasUnorderableInput() || seen.s2c.hasUnorderableInput(),
   }
 }

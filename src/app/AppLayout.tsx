@@ -1,15 +1,20 @@
-import { useEffect, useRef, useState, type DragEvent, type PointerEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { Toolbar } from './Toolbar'
 import { FilterPanel } from './FilterPanel'
 import { ListPane } from './ListPane'
 import { ErrorBoundary } from './ErrorBoundary'
 import { SequenceDiagram } from '../render/SequenceDiagram'
 import { PacketDetail } from '../detail/PacketDetail'
+import { FaultCompare } from './FaultCompare'
 import { useApp, selectSelected } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
 import { exportTranscript } from '../export/exportTranscript'
 import { saveText } from '../bridge/tauri'
+import { analyzeStream } from '../analysis/tcp/streamAnalysis'
+import { detectTcpEvents } from '../analysis/tcp/events'
+import { deriveStages } from '../analysis/tcp/stages'
+import { buildCompareViewModel } from '../m4/viewModel'
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
@@ -23,9 +28,24 @@ export function AppLayout() {
   const timeMode = useApp((s) => s.timeMode)
   const highlight = useApp((s) => s.highlight)
   const selectPacket = useApp((s) => s.selectPacket)
+  const compareFor = useApp((s) => s.compareFor)
+  const openCompare = useApp((s) => s.openCompare)
+  const closeCompare = useApp((s) => s.closeCompare)
   const [drag, setDrag] = useState(false)
   const [zoom, setZoom] = useState(1)
   const svgRef = useRef<SVGSVGElement | null>(null)
+
+  // M4 对照页数据:按需从当前选中会话派生(引擎是纯函数,重算成本低,不入 store)。
+  // 无事件时 vm 为 null,FaultCompare 自行渲染空态。
+  const compareVm = useMemo(() => {
+    if (!compareFor || !selected || selected.id !== compareFor) return null
+    const facts = analyzeStream(selected.packets)
+    const events = detectTcpEvents(facts, selected.packets)
+    const event = events[0]
+    if (!event) return null
+    const stages = deriveStages(event, facts, selected.packets)
+    return buildCompareViewModel(selected.packets, facts, event, stages)
+  }, [compareFor, selected])
 
   // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下);持久化,拖一次即记住
   const LS_LIST = 'pui:listWidth'
@@ -162,6 +182,18 @@ export function AppLayout() {
     >
       <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
       {error && <div className="err">{error}</div>}
+      {/* M4 入口:当前会话可进入故障对照分析;在对照页时按钮变为「返回时序」 */}
+      {selected && (
+        <div style={{ padding: '4px 12px 0' }}>
+          <button
+            type="button"
+            onClick={() => (compareFor ? closeCompare() : openCompare(selected.id))}
+            data-testid="fault-analyze-entry"
+          >
+            {compareFor ? '← 返回时序视图' : '⚠ 故障分析(对照正常参考)'}
+          </button>
+        </div>
+      )}
       <div className="body">
         <div className="pane filter">
           <FilterPanel />
@@ -173,15 +205,31 @@ export function AppLayout() {
         </div>
         <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
         <div className="pane view">
-          <ErrorBoundary name="时序图">
-            <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
-          </ErrorBoundary>
-          <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
-          <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
-            <ErrorBoundary name="报文详情">
-              <PacketDetail />
+          {compareFor ? (
+            <ErrorBoundary name="故障分析">
+              <FaultCompare
+                vm={compareVm}
+                onSelectPacket={(n) => {
+                  // 跳回原报文:关闭对照页并定位报文详情(返回经会话头部的「故障分析」按钮)
+                  closeCompare()
+                  selectPacket(n)
+                }}
+                onBack={closeCompare}
+              />
             </ErrorBoundary>
-          </div>
+          ) : (
+            <>
+              <ErrorBoundary name="时序图">
+                <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+              </ErrorBoundary>
+              <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
+              <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
+                <ErrorBoundary name="报文详情">
+                  <PacketDetail />
+                </ErrorBoundary>
+              </div>
+            </>
+          )}
         </div>
       </div>
       {drag && <div className="drop-zone">松开以打开抓包文件</div>}

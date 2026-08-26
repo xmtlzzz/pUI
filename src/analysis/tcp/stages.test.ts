@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Packet } from '../../model/types'
 import { analyzeStream } from './streamAnalysis'
-import { detectTcpEvents, type TcpEvent } from './events'
+import { detectTcpEvents } from './events'
 import { deriveStages } from './stages'
 
 function pkt(o: Partial<Packet> & { number: number; time: number }): Packet {

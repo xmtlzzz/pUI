@@ -88,6 +88,10 @@ export interface AppState {
   loadTsharkVersion: () => Promise<void>
   fetchHexFor: (n: number) => Promise<string>
   getHex: (n: number) => string | null
+  /** M4 故障对照页:进入时记录会话 id;派生数据(事件/阶段)在渲染时按需重算,不入 store */
+  compareFor: string | null
+  openCompare: (conversationId: string) => void
+  closeCompare: () => void
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -113,6 +117,10 @@ export const useApp = create<AppState>((set, get) => ({
   loading: false,
   error: null,
   hexCache: {},
+  compareFor: null,
+
+  openCompare: (conversationId) => set({ compareFor: conversationId }),
+  closeCompare: () => set({ compareFor: null }),
 
   async openFile(path) {
     const seq = get().loadSeq + 1

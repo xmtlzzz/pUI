@@ -1,0 +1,303 @@
+/* M4 故障/正常对照页样式。
+   布局约束(计划 M4):桌面 1fr 1fr 对半;窄窗(<900px)双标签切换;
+   动画只操作 transform/opacity,本页所有尺寸固定,零布局回流。 */
+
+.fc-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+  height: 100%;
+}
+
+.fc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fc-headline {
+  font-weight: 600;
+}
+
+.fc-phase {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.fc-controls {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* 阶段信息面板:当前阶段的完整要点,固定可见 —— 审批要求不允许只藏在 hover 里 */
+.fc-stage-panel {
+  border: 1px solid #dbe3ec;
+  background: #f0f6ff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 58px;
+}
+
+.fc-stage-panel strong {
+  color: #1d4ed8;
+}
+
+.fc-degraded {
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.fc-degraded p {
+  margin: 2px 0;
+}
+
+.fc-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 桌面对半 —— 计划硬性要求 */
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  /* 窄窗口不压缩两栏,改为标签切换由组件逻辑处理;此处仅保证纵向堆叠可读 */
+  .fc-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fc-left,
+.fc-right {
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 0;
+}
+
+.fc-left h3,
+.fc-right h3 {
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 右栏示意徽标:永久、醒目、不可关闭(数据保真红线) */
+.fc-ref-badge {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+/* 左栏报文交互过程:逐行展示,角色标注醒目 */
+.fc-messages {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fc-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.fc-msg.in-stage {
+  background: #eff6ff;
+  outline: 1px solid #bfdbfe;
+}
+
+.fc-msg button {
+  border: none;
+  background: #1d4ed8;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.fc-msg-dir {
+  color: #94a3b8;
+  width: 26px;
+}
+
+.fc-msg-label {
+  font-family: ui-monospace, monospace;
+}
+
+.fc-msg-sack {
+  color: #059669;
+  font-size: 11px;
+}
+
+/* 角色标注:故障阶段信息直接可见的核心元素 */
+.fc-badge {
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.fc-role-stage {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.fc-role-plain {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+/* 阶段带:横向轨道,每阶段一个块,宽度按时间占比 */
+.fc-stageband {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.fc-stage {
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+  padding: 4px 6px;
+  min-width: 0;
+  opacity: 0.72;
+  transition: opacity 120ms ease;
+}
+
+.fc-stage.active {
+  opacity: 1;
+  outline: 2px solid #1d4ed8;
+  background: #eff6ff;
+}
+
+.fc-stage-head {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.fc-stage-idx {
+  background: #1d4ed8;
+  color: #fff;
+  border-radius: 50%;
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  flex: none;
+}
+
+.fc-stage-name {
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.fc-stage-pkt {
+  color: #64748b;
+  font-size: 10px;
+}
+
+.fc-stage-summary {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: #334155;
+  overflow-wrap: anywhere;
+}
+
+.fc-limitations h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+}
+
+.fc-limitations ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  color: #7c2d12;
+}
+
+/* 右栏示意步骤 */
+.fc-ref-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-ref-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+.fc-ref-data {
+  background: #f0fdf4;
+}
+
+.fc-ref-ack {
+  background: #f8fafc;
+}
+
+.fc-ref-stepno {
+  background: #16a34a;
+  color: #fff;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  flex: none;
+}
+
+.fc-ref-ack .fc-ref-stepno {
+  background: #64748b;
+}
+
+.fc-ref-steps small {
+  color: #94a3b8;
+}
+
+.fc-ref-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #92400e;
+}
+
+.fc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px;
+  color: #64748b;
+}

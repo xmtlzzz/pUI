@@ -77,3 +77,48 @@ describe('SummaryPanel TCP 异常统计', () => {
     expect(hint).toContain('20.0%')
   })
 })
+
+describe('SummaryPanel M5 会话测量(RTT 近似 + 采集质量)', () => {
+  it('样本充足时显示 RTT 分位数;样本不足显示 unavailable(不编造数字)', () => {
+    // 8 个确认事件 → 样本充足
+    const rich: Packet[] = []
+    for (let i = 0; i < 8; i++) {
+      rich.push({ ...pkt(i * 2 + 1), time: i, tcpFlags: '0x0018', tcpSeq: 1 + i * 100, tcpLen: 100, srcPort: 5000, dstPort: 80 })
+      rich.push({ ...pkt(i * 2 + 2), time: i + 0.02, tcpFlags: '0x0010', tcpAck: 1 + (i + 1) * 100, srcPort: 80, dstPort: 5000 })
+    }
+    useApp.setState({ conversations: [conv('1', rich)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const m5 = container.querySelector('[data-testid="summary-m5"]')!
+    expect(m5.textContent).toContain('RTT p50 20ms') // 0.02s ≈ 20ms
+    expect(m5.textContent).toContain('样本 8')
+    expect(m5.textContent).not.toContain('RTT p90 unavailable') // RTT 可用;截断占比因无 capLen 而 unavailable 与本用例无关
+
+    // 1 个确认事件 → 不足
+    const poor: Packet[] = [
+      { ...pkt(1), time: 0, tcpFlags: '0x0018', tcpSeq: 1, tcpLen: 100, srcPort: 5000, dstPort: 80 },
+      { ...pkt(2), time: 0.02, tcpFlags: '0x0010', tcpAck: 101, srcPort: 80, dstPort: 5000 },
+    ]
+    const view2 = render(<SummaryPanel />)
+    view2.unmount()
+    useApp.setState({ conversations: [conv('1', poor)], selectedId: '1' })
+    const v = render(<SummaryPanel />)
+    const m5b = v.container.querySelector('[data-testid="summary-m5"]')!
+    expect(m5b.textContent).toContain('unavailable')
+  })
+
+  it('有截断帧时显示计数/占比与采集侧警示;capLen 缺失显示 unavailable', () => {
+    const packets: Packet[] = [
+      { ...pkt(1), capLen: 54 }, // 100B?len=60 → 54<60 截断
+      { ...pkt(2), capLen: 60 },
+    ]
+    useApp.setState({ conversations: [conv('1', packets)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const m5 = container.querySelector('[data-testid="summary-m5"]')!
+    expect(m5.textContent).toContain('截断帧')
+    expect(container.textContent).toContain('采集侧信号')
+    // capLen 全缺失
+    useApp.setState({ conversations: [conv('1', [pkt(3), pkt(4)])], selectedId: '1' })
+    const v2 = render(<SummaryPanel />)
+    expect(v2.container.querySelector('[data-testid="summary-m5"]')!.textContent).toContain('unavailable')
+  })
+})

@@ -4,6 +4,8 @@ import { deriveSummary } from '../stats/summaryStats'
 import { buildHistogram } from '../stats/histogram'
 import { deriveTcpStats } from '../stats/tcpStats'
 import { tcpStatRows } from '../stats/tcpStatHints'
+import { computeRttStats, MIN_RTT_SAMPLES } from '../stats/rttStats'
+import { computeCaptureQuality } from '../stats/captureQuality'
 import { protocolColor } from '../model/protocolColors'
 import { displayHost } from '../model/types'
 
@@ -26,6 +28,9 @@ export function SummaryPanel() {
     () => (conv ? tcpStatRows(deriveTcpStats(conv.packets), conv.packets.length) : []),
     [conv],
   )
+  // M5:选中会话的 RTT 近似与采集质量(样本不足/字段缺失时显式 unavailable)
+  const rtt = useMemo(() => (conv ? computeRttStats(conv.packets) : null), [conv])
+  const cq = useMemo(() => (conv ? computeCaptureQuality(conv.packets) : null), [conv])
 
   if (!summary.conversationCount) {
     return <div className="empty">打开文件后显示分析摘要</div>
@@ -82,6 +87,33 @@ export function SummaryPanel() {
         </>
       ) : (
         conv && <div className="sub-title">TCP 异常统计:当前会话无重传/乱序等标记</div>
+      )}
+      {/* M5:RTT 近似与采集质量(样本不足/字段缺失显式 unavailable,不编造数字) */}
+      {conv && rtt && cq && (
+        <>
+          <div className="sub-title">会话测量(选中会话 · 单观察点近似)</div>
+          <div className="summary-grid" data-testid="summary-m5">
+            <span title="数据段与其后首个反向 ACK 的间隔,含对端处理时延,非纯网络往返;重传按首次发送归属(Karn 近似)">
+              RTT p50 <b>{rtt.available ? `${rtt.p50Ms}ms` : 'unavailable'}</b>
+            </span>
+            <span title={rtt.available ? undefined : `确认事件样本 ${rtt.samples} < ${MIN_RTT_SAMPLES},不足以给出分位数`}>
+              RTT p90 <b>{rtt.available ? `${rtt.p90Ms}ms` : 'unavailable'}</b>
+            </span>
+            <span>RTT max <b>{rtt.available ? `${rtt.maxMs}ms` : '—'}</b></span>
+            <span>样本 <b>{rtt.samples}</b></span>
+            <span title="frame.cap_len < frame.len 的帧:抓包工具没抓全(采集侧信号),不是网络丢包证据">
+              截断帧 <b>{cq.available ? cq.truncatedCount : '—'}</b>
+            </span>
+            <span>
+              截断占比 <b>{cq.available ? `${(cq.truncatedRatio! * 100).toFixed(1)}%` : 'unavailable'}</b>
+            </span>
+          </div>
+          {cq.available && cq.truncatedCount > 0 && (
+            <div className="issue-line" title={`截断帧:#${cq.truncatedPackets.join(', #')}`}>
+              ⚠ 存在截断帧(snaplen/采集口限制):这些报文的载荷分析受限;截断是采集侧信号,不指示网络丢包
+            </div>
+          )}
+        </>
       )}
       <div className="sub-title">Top 主机</div>
       <div className="issue-line">{summary.topHosts.map((h) => `${h.host} ${fmtBytes(h.bytes)}`).join(' · ')}</div>

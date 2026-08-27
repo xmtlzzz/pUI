@@ -258,6 +258,14 @@ export function detectSynRetransmissionEvents(packets: Packet[]): M5Event[] {
     return undefined
   }
 
+  /** seq 缺失时的退化匹配:同流最近一次未收 SYN-ACK 的尝试 */
+  const lastPending = (key: string): Attempt | undefined => {
+    const arr = attemptsByFlow.get(key)
+    if (!arr || arr.length === 0) return undefined
+    const a = arr[arr.length - 1]
+    return a.synAck ? undefined : a
+  }
+
   for (const p of ordered) {
     const f = flagsOf(p)
     const isSynOnly = (f & F_SYN) !== 0 && (f & F_ACK) === 0 && (p.tcpLen ?? 0) === 0
@@ -265,7 +273,9 @@ export function detectSynRetransmissionEvents(packets: Packet[]): M5Event[] {
     const key = `${p.srcIp}:${p.srcPort}>${p.dstIp}:${p.dstPort}`
 
     if (isSynOnly) {
-      const cur = p.tcpSeq != null ? pending(key, p.tcpSeq) : undefined
+      // seq 可用:严格按 seq 分组(新 seq = 新尝试);seq 缺失(残缺解析/极旧抓包):
+      // 退化为"同流最近未决尝试"——同端点对重复 SYN 本身就是重传或再次尝试
+      const cur = p.tcpSeq != null ? pending(key, p.tcpSeq) : lastPending(key)
       if (cur) {
         cur.retx.push(p.number)
       } else {

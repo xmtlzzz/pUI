@@ -324,3 +324,40 @@ describe('M5 零窗口事件接入会话标注', () => {
     expect(filtered2).toHaveLength(0)
   })
 })
+
+describe('M5 SYN 重传接入会话标注', () => {
+  it('重传后建立的会话:报 syn-retransmission(已恢复文案),与既有重传标签并存', () => {
+    const packets: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 1.0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(3, 1.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0012' }),
+    ]
+    const convs = aggregateConversations(packets)
+    const sr = convs[0].issues.find((i) => i.type === 'syn-retransmission')
+    expect(sr).toBeTruthy()
+    expect(sr!.message).toContain('后连接建立')
+    expect(sr!.packetNumber).toBe(1)
+  })
+
+  it('无 SYN-ACK 的重传:未恢复文案,不与 syn-no-reply 冲突(两者并存)', () => {
+    const packets: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 1.0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(3, 3.0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+    ]
+    const convs = aggregateConversations(packets)
+    const types = convs[0].issues.map((i) => i.type)
+    expect(types).toContain('syn-retransmission')
+    expect(types).toContain('syn-no-reply') // 两个结论各自成立:未建立 + 建立过程重传
+    const sr = convs[0].issues.find((i) => i.type === 'syn-retransmission')!
+    expect(sr.message).toContain('未见 SYN-ACK')
+  })
+
+  it('单次 SYN(无重传)不产出', () => {
+    const packets: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0002' }),
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0012' }),
+    ]
+    expect(aggregateConversations(packets)[0].issues.some((i) => i.type === 'syn-retransmission')).toBe(false)
+  })
+})

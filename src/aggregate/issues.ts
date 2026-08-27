@@ -1,5 +1,5 @@
 import type { Conversation, ConversationIssue, Packet } from '../model/types'
-import { detectZeroWindowEvents } from '../analysis/tcp/m5Events'
+import { detectZeroWindowEvents, detectSynRetransmissionEvents } from '../analysis/tcp/m5Events'
 
 /** http.time 超过该阈值(秒)视为慢响应;可通过 opts.slowResponseThreshold 覆盖(不同网络环境误报率不同) */
 const SLOW_RESPONSE_THRESHOLD = 1.0
@@ -87,6 +87,18 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
           ? `零窗口 #${zw.startPacket}(通告方 ${zw.direction === 'c2s' ? 'c2s' : 's2c'}),${zw.durationSeconds?.toFixed(2)}s 后重开(#${zw.reopenPacket})`
           : `零窗口 #${zw.startPacket}(通告方 ${zw.direction === 'c2s' ? 'c2s' : 's2c'}),至抓包结束未重开`,
         packetNumber: zw.startPacket,
+      })
+    }
+
+    // M5 SYN 重传:同一连接尝试的 SYN 重发 ≥1 次。与 syn-no-reply 互补 ——
+    // syn-no-reply 说"最终未建立",这里说"建立过程不顺利"(即使最终成功了也标注)。
+    for (const sr of detectSynRetransmissionEvents(packets)) {
+      issues.push({
+        type: 'syn-retransmission',
+        message: sr.synAckPacket
+          ? `SYN 重传 ${sr.retransPackets!.length} 次后连接建立(首次 SYN #${sr.startPacket},SYN-ACK #${sr.synAckPacket}):首次尝试疑似未按时到达`
+          : `SYN 重传 ${sr.retransPackets!.length} 次(#${sr.startPacket} 起),抓包范围内未见 SYN-ACK:服务无响应/丢包/被静默丢弃均可能`,
+        packetNumber: sr.startPacket,
       })
     }
   }

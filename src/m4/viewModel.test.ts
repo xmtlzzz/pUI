@@ -103,16 +103,50 @@ describe('buildCompareViewModel', () => {
     expect(vm.stages[vm.stages.length - 1].t1).toBeCloseTo(1, 5)
   })
 
-  it('关键报文携带角色标注且 stageIndex 正确(阶段联动)', () => {
-    const role = (n: number) => vm.leftMessages.find((m) => m.packetNumber === n)
+  it('关键报文链只含证据链报文,携带角色标注(不做全量报文列表 —— VDI 数千报文不可用)', () => {
+    const role = (n: number) => vm.keyPackets.find((m) => m.packetNumber === n)
     expect(role(6)?.roleBadge).toMatch(/缺口/)
     expect(role(7)?.roleBadge).toMatch(/重复确认|DupACK/)
     expect(role(11)?.roleBadge).toMatch(/重传/)
     expect(role(12)?.roleBadge).toMatch(/恢复/)
-    // 握手报文不在事件时间带内,不进入左栏(左栏聚焦故障过程本身)
-    expect(role(3)).toBeUndefined()
+    // 关键报文链 = 事件证据链报文(原始段/三个 dupACK/重传/恢复)
+    const nums = vm.keyPackets.map((m) => m.packetNumber).sort((a, b) => a - b)
+    expect(nums).toEqual([6, 7, 9, 10, 11, 12])
     const gapStageIdx = vm.stages.findIndex((s) => s.label === '缺口显露')
     expect(role(6)?.stageIndex).toBe(gapStageIdx)
+  })
+
+  it('序列空间图形数据:Gap hatch 在轴范围内,SACK 块合并去重,已见条如实反映抓包所见', () => {
+    const sq = vm.seqSpace
+    expect(sq.gaps).toHaveLength(1)
+    expect(Math.round(sq.gaps[0][0])).toBe(101)
+    expect(Math.round(sq.gaps[0][1])).toBe(201)
+    // 已见条如实反映"抓包中见过 0–401 的全部字节":SYN 占 [0,1),数据段
+    // 1-101/101-201重传/201-301/301-401 首尾相接连成一段;SACK 报告的 401–501
+    // 是对端已收而本抓包未见的字节 —— 不画进已见条,这正是单观察点的体现
+    expect(sq.seenRuns).toEqual([[0, 401]])
+    // SACK 三块(201-301/201-401/201-501)合并后为一整块 [201,501]
+    expect(sq.sackBlocks).toEqual([[201, 501]])
+    // ACK 轨迹按时间升序且终点越过缺口
+    expect(sq.ackTrack.length).toBeGreaterThan(0)
+    expect(sq.retxArrow?.seq).toBe(101) // 重传回补箭头指向重传 seq
+    // 刻度落在轴范围内且递增
+    for (const t of sq.ticks) {
+      expect(t).toBeGreaterThanOrEqual(sq.axisMin)
+      expect(t).toBeLessThanOrEqual(sq.axisMax)
+    }
+  })
+
+  it('事件卡三层完整:观察带包号、推断带置信度、限制非空', () => {
+    expect(vm.card.kindLabel).toMatch(/疑似丢包|延迟/)
+    expect(vm.card.gapText).toContain('101')
+    expect(vm.card.observations.length).toBeGreaterThan(0)
+    for (const o of vm.card.observations) {
+      expect(o.packetNumber).toBeGreaterThan(0)
+      expect(o.statement.length).toBeGreaterThan(0)
+    }
+    expect(vm.card.inference.confidence).toBeTruthy()
+    expect(vm.card.limitations.length).toBeGreaterThan(0)
   })
 
   it('右栏示意基线不含任何真实包号(数据保真红线)', () => {
@@ -137,8 +171,10 @@ describe('buildCompareViewModel', () => {
       '冗余重传',
       '确认无变化·已恢复',
     ])
-    const retx = vm2!.leftMessages.find((m) => m.packetNumber === 8)
+    const retx = vm2!.keyPackets.find((m) => m.packetNumber === 8)
     expect(retx?.roleBadge).toMatch(/冗余重传/)
+    // 伪重传场景无缺口:seqSpace.gaps 为空
+    expect(vm2!.seqSpace.gaps).toEqual([])
   })
 
   it('降级信号从 facts 直通', () => {

@@ -1,20 +1,22 @@
-/* M4 故障/正常对照页样式。
-   布局约束(计划 M4):桌面 1fr 1fr 对半;窄窗(<900px)双标签切换;
-   动画只操作 transform/opacity,本页所有尺寸固定,零布局回流。 */
+/* M4 故障/正常对照页(整页板块)。
+   用户反馈(2026-08-26 第二轮):整页切换;左栏以序列空间图形化为核心,
+   不做逐报文列表;阶段带为 DSH duration 式时间进度条。 */
 
-.fc-wrap {
+.fc-page {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px;
-  overflow: auto;
+  padding: 10px 14px;
   height: 100%;
+  overflow: auto;
+  outline: none;
 }
 
 .fc-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  flex: none;
 }
 
 .fc-headline {
@@ -31,20 +33,16 @@
   gap: 6px;
 }
 
-/* 阶段信息面板:当前阶段的完整要点,固定可见 —— 审批要求不允许只藏在 hover 里 */
-.fc-stage-panel {
-  border: 1px solid #dbe3ec;
-  background: #f0f6ff;
-  border-radius: 8px;
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-height: 58px;
-}
-
-.fc-stage-panel strong {
-  color: #1d4ed8;
+.fc-static-note {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .fc-degraded {
@@ -54,6 +52,7 @@
   border-radius: 8px;
   padding: 6px 12px;
   font-size: 12px;
+  flex: none;
 }
 
 .fc-degraded p {
@@ -62,13 +61,14 @@
 
 .fc-body {
   display: grid;
-  grid-template-columns: 1fr 1fr; /* 桌面对半 —— 计划硬性要求 */
+  grid-template-columns: 1fr 1fr;
   gap: 12px;
   align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
-  /* 窄窗口不压缩两栏,改为标签切换由组件逻辑处理;此处仅保证纵向堆叠可读 */
   .fc-body {
     grid-template-columns: 1fr;
   }
@@ -77,20 +77,28 @@
 .fc-left,
 .fc-right {
   border: 1px solid #eef2f7;
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 12px;
   min-width: 0;
+  background: #fff;
 }
 
 .fc-left h3,
 .fc-right h3 {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-/* 右栏示意徽标:永久、醒目、不可关闭(数据保真红线) */
+.fc-real-badge {
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
 .fc-ref-badge {
   background: #fef3c7;
   color: #92400e;
@@ -101,104 +109,101 @@
   white-space: nowrap;
 }
 
-/* 左栏报文交互过程:逐行展示,角色标注醒目 */
-.fc-messages {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.fc-msg {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 2px 6px;
-  border-radius: 6px;
-}
-
-.fc-msg.in-stage {
-  background: #eff6ff;
-  outline: 1px solid #bfdbfe;
-}
-
-.fc-msg button {
-  border: none;
-  background: #1d4ed8;
-  color: #fff;
-  border-radius: 4px;
-  font-size: 11px;
-  padding: 1px 6px;
-  cursor: pointer;
-}
-
-.fc-msg-dir {
-  color: #94a3b8;
-  width: 26px;
-}
-
-.fc-msg-label {
-  font-family: ui-monospace, monospace;
-}
-
-.fc-msg-sack {
-  color: #059669;
-  font-size: 11px;
-}
-
-/* 角色标注:故障阶段信息直接可见的核心元素 */
-.fc-badge {
-  font-size: 11px;
-  border-radius: 4px;
-  padding: 1px 6px;
-  white-space: nowrap;
-}
-
-.fc-role-stage {
-  background: #fee2e2;
-  color: #b91c1c;
-  font-weight: 600;
-}
-
-.fc-role-plain {
-  background: #e2e8f0;
-  color: #334155;
-}
-
-/* 阶段带:横向轨道,每阶段一个块,宽度按时间占比 */
-.fc-stageband {
-  display: flex;
-  gap: 4px;
+/* 序列空间图形 */
+.fc-seqsvg {
+  width: 100%;
+  height: auto;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  background: #fcfdff;
   margin-bottom: 10px;
 }
 
-.fc-stage {
+/* 阶段信息面板 */
+.fc-stage-panel {
   border: 1px solid #dbe3ec;
-  border-radius: 6px;
-  padding: 4px 6px;
-  min-width: 0;
-  opacity: 0.72;
+  background: #f0f6ff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 58px;
+  margin-bottom: 10px;
+}
+
+.fc-stage-panel p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #334155;
+}
+
+/* 阶段带:DSH duration 式时间进度条 */
+.fc-timeband {
+  margin-bottom: 12px;
+}
+
+.fc-timeband-track {
+  position: relative;
+  height: 18px;
+  background: #f1f5f9;
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.fc-timeband-seg {
+  position: absolute;
+  top: 2px;
+  height: 14px;
+  border-radius: 4px;
+  opacity: 0.45;
+  cursor: pointer;
   transition: opacity 120ms ease;
 }
 
-.fc-stage.active {
+.fc-timeband-seg.active {
   opacity: 1;
+  outline: 2px solid #0f172a;
+  outline-offset: 1px;
+}
+
+.fc-timeband-cursor {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: #0f172a;
+  box-shadow: 0 0 4px rgba(15, 23, 42, 0.6);
+}
+
+/* 阶段卡片:每阶段的名称/起止包号/时刻/要点常驻可见(审批强化要求) */
+.fc-stage-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.fc-stage-card {
+  text-align: left;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  padding: 4px 8px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 2px 8px;
+  align-items: baseline;
+  font: inherit;
+}
+
+.fc-stage-card.active {
   outline: 2px solid #1d4ed8;
   background: #eff6ff;
 }
 
-.fc-stage-head {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  white-space: nowrap;
-}
-
 .fc-stage-idx {
-  background: #1d4ed8;
   color: #fff;
   border-radius: 50%;
   width: 15px;
@@ -208,35 +213,111 @@
   justify-content: center;
   font-size: 10px;
   flex: none;
+  align-self: center;
 }
 
 .fc-stage-name {
   font-weight: 600;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .fc-stage-pkt {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
 }
 
-.fc-stage-summary {
-  margin: 3px 0 0;
+.fc-stage-card p {
+  grid-column: 1 / -1;
+  margin: 0;
   font-size: 11px;
   color: #334155;
-  overflow-wrap: anywhere;
 }
 
-.fc-limitations h4 {
-  margin: 8px 0 4px;
+/* 事件卡:观察/推断/限制 */
+.fc-card {
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.fc-card-sec {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.fc-card-sec:last-child {
+  border-bottom: none;
+}
+
+.fc-card-sec h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.fc-card-sec ul {
+  margin: 0;
+  padding-left: 4px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: 12px;
 }
 
-.fc-limitations ul {
+.fc-card-sec p {
   margin: 0;
-  padding-left: 18px;
+  font-size: 12px;
+}
+
+.fc-pkt-chip {
+  border: none;
+  background: #1d4ed8;
+  color: #fff;
+  border-radius: 4px;
   font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+.fc-limitations ul {
   color: #7c2d12;
+}
+
+/* 关键报文链 */
+.fc-keypkts h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.fc-keypkt-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fc-keypkt {
+  border: 1px solid #dbe3ec;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fc-keypkt:hover {
+  border-color: #1d4ed8;
+  color: #1d4ed8;
+}
+
+.fc-keypkt-role {
+  color: #b91c1c;
+  font-weight: 600;
 }
 
 /* 右栏示意步骤 */
@@ -298,6 +379,6 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  padding: 40px;
+  padding: 60px;
   color: #64748b;
 }

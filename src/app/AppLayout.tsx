@@ -180,45 +180,46 @@ export function AppLayout() {
       onDragLeave={() => setDrag(false)}
       onDrop={onDrop}
     >
-      <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
-      {error && <div className="err">{error}</div>}
-      {/* M4 入口:当前会话可进入故障对照分析;在对照页时按钮变为「返回时序」 */}
-      {selected && (
-        <div style={{ padding: '4px 12px 0' }}>
-          <button
-            type="button"
-            onClick={() => (compareFor ? closeCompare() : openCompare(selected.id))}
-            data-testid="fault-analyze-entry"
-          >
-            {compareFor ? '← 返回时序视图' : '⚠ 故障分析(对照正常参考)'}
-          </button>
-        </div>
-      )}
-      <div className="body">
-        <div className="pane filter">
-          <FilterPanel />
-        </div>
-        <div className="pane list" style={{ width: listWidth }}>
-          <ErrorBoundary name="会话列表">
-            <ListPane />
+      {/* M4 整页板块:进入故障分析时整个工作区切换(用户要求,替代右侧面板局部替换)。
+          顶部工具条保留(打开文件/导出仍可用),筛选/列表/时序/详情全部让位。 */}
+      {compareFor ? (
+        <>
+          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
+          {error && <div className="err">{error}</div>}
+          <ErrorBoundary name="故障分析">
+            <FaultCompare
+              vm={compareVm}
+              onSelectPacket={(n) => {
+                // 跳回原报文:退出对照板块回到主视图并定位报文详情
+                closeCompare()
+                selectPacket(n)
+              }}
+              onBack={closeCompare}
+            />
           </ErrorBoundary>
-        </div>
-        <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
-        <div className="pane view">
-          {compareFor ? (
-            <ErrorBoundary name="故障分析">
-              <FaultCompare
-                vm={compareVm}
-                onSelectPacket={(n) => {
-                  // 跳回原报文:关闭对照页并定位报文详情(返回经会话头部的「故障分析」按钮)
-                  closeCompare()
-                  selectPacket(n)
-                }}
-                onBack={closeCompare}
-              />
-            </ErrorBoundary>
-          ) : (
-            <>
+        </>
+      ) : (
+        <>
+          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
+          {error && <div className="err">{error}</div>}
+          {selected && (
+            <div style={{ padding: '4px 12px 0' }}>
+              <button type="button" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">
+                ⚠ 故障分析(对照正常参考)
+              </button>
+            </div>
+          )}
+          <div className="body">
+            <div className="pane filter">
+              <FilterPanel />
+            </div>
+            <div className="pane list" style={{ width: listWidth }}>
+              <ErrorBoundary name="会话列表">
+                <ListPane />
+              </ErrorBoundary>
+            </div>
+            <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
+            <div className="pane view">
               <ErrorBoundary name="时序图">
                 <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
               </ErrorBoundary>
@@ -228,10 +229,10 @@ export function AppLayout() {
                   <PacketDetail />
                 </ErrorBoundary>
               </div>
-            </>
-          )}
-        </div>
-      </div>
+            </div>
+          </div>
+        </>
+      )}
       {drag && <div className="drop-zone">松开以打开抓包文件</div>}
     </div>
   )

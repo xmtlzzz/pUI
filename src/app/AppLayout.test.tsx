@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
-import { render, fireEvent, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi, afterEach } from 'vitest'
+import { render, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { AppLayout } from './AppLayout'
@@ -8,6 +8,8 @@ import { useApp, selectSelected } from '../state/appStore'
 import { parsePackets } from '../parse/parsePackets'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { collectFilterOptions } from '../filter/filterConversations'
+
+afterEach(cleanup)
 
 function loadHttpFixture() {
   const raw = readFileSync(resolve(process.cwd(), 'public/fixtures/examples/parsed/http.json'), 'utf-8')
@@ -76,6 +78,40 @@ describe('AppLayout smoke (real http fixture)', () => {
     await waitFor(() => expect(container.querySelectorAll('.msg').length).toBeGreaterThan(0))
     expect(container.querySelector('.boundary-err')).toBeNull()
 
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部替换)', () => {
+  it('进入故障分析时筛选/列表/时序/详情全部让位;返回后恢复', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const { packets, conversations, conv } = loadHttpFixture()
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      selectedId: conv.id,
+      compareFor: null,
+    })
+
+    const { container } = render(<AppLayout />)
+    // 常规视图:四面板齐全
+    expect(container.querySelector('.pane.filter')).toBeTruthy()
+    expect(container.querySelector('.pane.list')).toBeTruthy()
+
+    // 进入故障分析 → 整页板块(筛选/列表让位);http 会话无 TCP 事件 → 空态
+    act(() => {
+      useApp.getState().openCompare(conv.id)
+    })
+    expect(container.querySelector('.pane.filter')).toBeNull()
+    expect(container.querySelector('.pane.list')).toBeNull()
+    expect(container.querySelector('[data-testid="fault-compare-empty"]')).toBeTruthy()
+
+    // 返回 → 面板恢复
+    fireEvent.click(container.querySelector('[data-testid="fc-back"]')!)
+    expect(container.querySelector('.pane.filter')).toBeTruthy()
+    expect(useApp.getState().compareFor).toBeNull()
     vi.unstubAllGlobals()
   })
 })

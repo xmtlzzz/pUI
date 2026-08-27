@@ -42,6 +42,33 @@ export interface ReferenceStep {
   detail: string
 }
 
+/** 序列空间图形(案例文档承诺的核心可视化)所需的纯数据 */
+export interface SeqSpaceView {
+  axisMin: number
+  axisMax: number
+  ticks: number[]
+  /** 已见字节连续段(合并后,裁剪到坐标轴范围) */
+  seenRuns: Array<[number, number]>
+  /** 缺口区间(hatch 渲染) */
+  gaps: Array<[number, number]>
+  /** SACK 块(合并去重后,裁剪到坐标轴范围,上限 100 块) */
+  sackBlocks: Array<[number, number]>
+  /** ACK 轨迹(按时间升序):ACK 游标随播放时刻推进 */
+  ackTrack: Array<{ time: number; ack: number }>
+  retxArrow?: { seq: number }
+}
+
+/** 事件卡:观察/推断/限制分层(案例文档要求三层固定可见) */
+export interface EventCard {
+  kindLabel: string
+  severity: string
+  recovered: boolean
+  gapText?: string
+  observations: Array<{ packetNumber: number; statement: string }>
+  inference: { statement: string; confidence: string }
+  limitations: string[]
+}
+
 /** 阶段带轨道条目:EventStage + 归一化时间坐标 */
 export interface StageBandEntry extends EventStage {
   /** 相对事件时间线的归一化起点/终点 [0,1],供阶段带布局 */
@@ -50,7 +77,12 @@ export interface StageBandEntry extends EventStage {
 }
 
 export interface CompareViewModel {
-  leftMessages: CompareMessage[]
+  /** 事件卡(观察/推断/限制分层) */
+  card: EventCard
+  /** 序列空间图形化(左栏核心可视化,替代逐报文列表) */
+  seqSpace: SeqSpaceView
+  /** 关键报文链(chips):只放事件证据链上的报文,不是全量报文 */
+  keyPackets: CompareMessage[]
   stages: StageBandEntry[]
   referenceSteps: ReferenceStep[]
   degraded: {
@@ -150,35 +182,53 @@ export function buildCompareViewModel(
     t1: span > 0 ? (s.endTime - timelineStart) / span : 1,
   }))
 
-  // 事件相关报文号集合:阶段区间内的所有报文都进入左栏(事件上下文),
-  // 其余(握手等)不进 —— 左栏聚焦故障过程本身
-  const inBand = (t: number): boolean => t >= timelineStart && t <= timelineEnd
-  const relevant = packets
-    .filter((p) => inBand(p.time))
+  // ---- 关键报文链:只取事件证据链上的报文(不是全量报文 —— VDI 抓包逐报文列表不可用) ----
+  const keyNumbers = new Set<number>()
+  if (event.originalSegmentPacket != null) keyNumbers.add(event.originalSegmentPacket)
+  if (event.retransmissionPacket != null) keyNumbers.add(event.retransmissionPacket)
+  if (event.recoveryAckPacket != null) keyNumbers.add(event.recoveryAckPacket)
+  for (const n of event.duplicateAckPackets) keyNumbers.add(n)
+  const keyPackets: CompareMessage[] = packets
+    .filter((p) => keyNumbers.has(p.number))
     .sort((a, b) => a.time - b.time || a.number - b.number)
+    .map((p) => {
+      const stageIdx = stages.findIndex((s) => p.time >= s.startTime && p.time <= s.endTime)
+      const fl = flagsLabel(p.tcpFlags)
+      const labelParts = [fl, p.tcpSeq != null ? `seq=${p.tcpSeq}` : null, p.tcpLen ? `len=${p.tcpLen}` : null].filter(Boolean)
+      return {
+        packetNumber: p.number,
+        time: p.time,
+        dir: directionOf(p, c2sKey),
+        label: labelParts.join(' ') || 'TCP',
+        flags: p.tcpFlags,
+        seq: p.tcpSeq,
+        ack: p.tcpAck,
+        len: p.tcpLen,
+        sackBlocks: p.tcpSackBlocks,
+        tags: p.tcpAnalysis,
+        stageIndex: stageIdx,
+        roleBadge: roleBadgeOf(p.number, event),
+      }
+    })
 
-  const leftMessages: CompareMessage[] = relevant.map((p) => {
-    const stageIdx = stages.findIndex((s) => p.time >= s.startTime && p.time <= s.endTime)
-    const fl = flagsLabel(p.tcpFlags)
-    const labelParts = [fl, p.tcpSeq != null ? `seq=${p.tcpSeq}` : null, p.tcpLen ? `len=${p.tcpLen}` : null].filter(Boolean)
-    return {
-      packetNumber: p.number,
-      time: p.time,
-      dir: directionOf(p, c2sKey),
-      label: labelParts.join(' ') || 'TCP',
-      flags: p.tcpFlags,
-      seq: p.tcpSeq,
-      ack: p.tcpAck,
-      len: p.tcpLen,
-      sackBlocks: p.tcpSackBlocks,
-      tags: p.tcpAnalysis,
-      stageIndex: stageIdx,
-      roleBadge: roleBadgeOf(p.number, event),
-    }
-  })
+  // ---- 序列空间图形化(案例文档核心承诺):已见字节条 + Gap hatch + SACK 块 + ACK 轨迹 ----
+  const retxPkt = event.retransmissionPacket != null ? packets.find((p) => p.number === event.retransmissionPacket) : undefined
+  const seqSpace = buildSeqSpaceView(facts, packets, event, retxPkt?.tcpSeq)
+
+  const card: EventCard = {
+    kindLabel: KIND_LABEL[event.kind],
+    severity: event.severity,
+    recovered: event.recovered,
+    gapText: event.gap ? `${event.gap.start}–${event.gap.end}(${event.gap.byteCount}B)` : undefined,
+    observations: event.observations.map((o) => ({ packetNumber: o.packetNumber, statement: o.statement })),
+    inference: { statement: event.inference.statement, confidence: event.inference.confidence },
+    limitations: event.limitations,
+  }
 
   return {
-    leftMessages,
+    card,
+    seqSpace,
+    keyPackets,
     stages: bandStages,
     referenceSteps: buildReferenceSteps(),
     degraded: {
@@ -188,6 +238,96 @@ export function buildCompareViewModel(
       noEvents: false,
     },
     headline: `${KIND_LABEL[event.kind]} · 缺口 ${event.gap ? `${event.gap.start}–${event.gap.end}(${event.gap.byteCount}B)` : '无'} · ${event.severity}`,
+  }
+}
+
+/** SACK 块合并:重叠/相邻合并,控制渲染块数 */
+function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
+  if (ranges.length === 0) return []
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  const out: Array<[number, number]> = [sorted[0]]
+  for (let i = 1; i < sorted.length; i++) {
+    const last = out[out.length - 1]
+    if (sorted[i][0] <= last[1]) last[1] = Math.max(last[1], sorted[i][1])
+    else out.push(sorted[i])
+  }
+  return out
+}
+
+const SEQ_VIEW_MAX_SACK = 100 // 渲染护栏:超过则截断(极端抓包的 SACK 风暴不拖垮 DOM)
+
+/** 构建序列空间图形数据:坐标轴聚焦缺口邻域 */
+function buildSeqSpaceView(
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  event: TcpEvent,
+  retxSeq: number | undefined,
+): SeqSpaceView {
+  // 轴范围:以缺口为中心,前后各留缺口宽度的 3 倍(最小 100B)——缺口约占轴的 1/6,
+  // 既醒目又能把邻域已见数据与 SACK 块(缺口后已到达的数据)一起画进来;
+  // 伪重传场景无缺口,以重传 seq 为中心取固定窗口
+  let a0: number
+  let a1: number
+  let pad: number
+  if (event.gap) {
+    a0 = event.gap.start
+    a1 = event.gap.end
+    pad = Math.max(event.gap.byteCount, 100) * 3
+  } else {
+    a0 = retxSeq ?? 0
+    a1 = a0 + 100
+    pad = 300
+  }
+  const axisMin = Math.max(0, a0 - pad)
+  const axisMax = a1 + pad
+
+  const clip = ([s, e]: [number, number]): [number, number] | null =>
+    e <= axisMin || s >= axisMax ? null : [Math.max(s, axisMin), Math.min(e, axisMax)]
+
+  // 已见字节:从 facts 的段分类重建(有载荷的段按 seq+len 并入;用简单合并,数量有限)
+  const seenRaw: Array<[number, number]> = []
+  for (const seg of facts.segments) {
+    if (seg.seqLen <= 0) continue
+    seenRaw.push([seg.seq, (seg.seq + seg.seqLen) >>> 0])
+  }
+  const seenRuns = mergeRanges(seenRaw)
+    .map(clip)
+    .filter((r): r is [number, number] => r != null)
+
+  const gaps = facts.gaps
+    .map((g) => clip([g.start, g.end]))
+    .filter((r): r is [number, number] => r != null)
+
+  const sackRaw: Array<[number, number]> = []
+  for (const p of packets) for (const b of p.tcpSackBlocks ?? []) sackRaw.push(b)
+  const sackBlocks = mergeRanges(sackRaw)
+    .map(clip)
+    .filter((r): r is [number, number] => r != null)
+    .slice(0, SEQ_VIEW_MAX_SACK)
+
+  // ACK 轨迹:反向报文的 (time, ack) 序列,裁剪到轴范围附近
+  const ackTrack = packets
+    .filter((p) => p.tcpAck != null)
+    .sort((x, y) => x.time - y.time)
+    .map((p) => ({ time: p.time, ack: p.tcpAck! }))
+
+  // 刻度:1/2/5 整步长(与案例文档 1…501 风格一致)
+  const rawStep = (axisMax - axisMin) / 5
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const norm = rawStep / mag
+  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag
+  const ticks: number[] = []
+  for (let t = Math.ceil(axisMin / step) * step; t <= axisMax; t += step) ticks.push(t)
+
+  return {
+    axisMin,
+    axisMax,
+    ticks,
+    seenRuns,
+    gaps,
+    sackBlocks,
+    ackTrack,
+    retxArrow: retxSeq != null ? { seq: retxSeq } : undefined,
   }
 }
 

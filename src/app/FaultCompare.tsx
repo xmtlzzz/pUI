@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { popIn, windowProgress } from '../m4/viewModel'
 import type { CompareEventSummary, CompareViewModel } from '../m4/viewModel'
 import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
@@ -48,32 +49,56 @@ function phaseLabel(p: PlaybackPhase): string {
 
 const STAGE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981', '#ec4899', '#14b8a6', '#f97316']
 
-/** 序列空间图形:SVG 渲染已见字节条/Gap/SACK/ACK 游标 */
-function SeqSpaceGraphic({ vm, playhead }: { vm: CompareViewModel; playhead: number }) {
-  const { seqSpace: sq } = vm
+/** 恢复脉冲的持续时长(归一化时间轴占比) */
+const PING_DUR = 0.07
+
+/**
+ * 序列空间图形:SVG 渲染已见字节条/Gap/SACK/重传回补箭头/ACK 游标。
+ *
+ * 元素级分镜动画(plan M4「过程感」):GSAP 只补间播放时刻这一个数字(usePlayback),
+ * 每个元素的登场由 `marks` 的登场时刻 + 当前时刻**声明式**推导 —— transform/opacity,
+ * 零布局回流。`progressive=false`(静态模式/reduced-motion/未开始播放)直接渲染全部元素,
+ * 信息与终态完全等价,满足审批约束 #4。导出以便对动画参数做元素级测试。
+ */
+export function SeqSpaceGraphic({ vm, playhead, progressive }: { vm: CompareViewModel; playhead: number; progressive: boolean }) {
+  const { seqSpace: sq, marks } = vm
   const W = 720
   const H = 150
   const x = (v: number): number => ((v - sq.axisMin) / (sq.axisMax - sq.axisMin)) * (W - 16) + 8
-  // ACK 游标位置:播放时刻之前最后一个 ACK 轨迹点
-  const ackPos = useMemo(() => {
-    if (sq.ackTrack.length === 0) return null
-    // 播放时刻映射回真实时间:用阶段带的时间轴(首阶段起点 + playhead * 总时长)
+
+  // 时间轴映射:归一化 playhead -> 真实秒,再查 ACK 轨迹
+  const timeline = useMemo(() => {
     const st = vm.stages
     if (st.length === 0) return null
     const t0 = st[0].startTime
-    const t1 = st[st.length - 1].endTime
-    const t = t0 + playhead * (t1 - t0)
-    let last = sq.ackTrack[0]
-    for (const pt of sq.ackTrack) {
-      if (pt.time <= t) last = pt
-      else break
-    }
-    return last.ack
-  }, [playhead, sq.ackTrack, vm.stages])
+    const span = st[st.length - 1].endTime - t0
+    return { t0, span }
+  }, [vm.stages])
+  const ackAt = useCallback(
+    (absT: number): number | null => {
+      let last: number | null = null
+      for (const pt of sq.ackTrack) {
+        if (pt.time <= absT) last = pt.ack
+        else break
+      }
+      return last
+    },
+    [sq.ackTrack],
+  )
+
+  // 某元素的登场进度:无标记 / 非 progressive 时恒为完整可见
+  // ---- 各元素动画参数 ----
+  const gapPop = progressive && marks.gapRevealAt != null ? popIn(playhead, marks.gapRevealAt) : null
+  const win = progressive ? marks.dupAckWindow : undefined
+  const retxAt = progressive ? marks.retxDrawAt : undefined
+  const retxP = retxAt != null ? windowProgress(playhead, retxAt, retxAt + 0.06) : 1
+  const pingD = progressive && marks.recoverAt != null ? playhead - marks.recoverAt : Infinity
+
+  const nSack = sq.sackBlocks.length
 
   return (
     <svg className="fc-seqsvg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="序列空间图形化" data-testid="fc-seqspace">
-      {/* 刻度轴 */}
+      {/* 刻度轴(全量事实层,始终完整可见) */}
       <line x1={8} y1={H - 22} x2={W - 8} y2={H - 22} stroke="#cbd5e1" />
       {sq.ticks.map((t) => (
         <g key={t}>
@@ -83,43 +108,113 @@ function SeqSpaceGraphic({ vm, playhead }: { vm: CompareViewModel; playhead: num
           </text>
         </g>
       ))}
-      {/* 已见字节条 */}
+      {/* 已见字节条(事实层:整个抓包看见过的字节,不做过程隐藏) */}
       {sq.seenRuns.map(([s, e], i) => (
         <rect key={`seen${i}`} x={x(s)} y={30} width={Math.max(x(e) - x(s), 1)} height={14} fill="#10b981" rx={2}>
           <title>{`已见字节 ${Math.round(s)}–${Math.round(e)}`}</title>
         </rect>
       ))}
-      {/* Gap hatch */}
-      {sq.gaps.map(([s, e], i) => (
-        <rect key={`gap${i}`} x={x(s)} y={30} width={Math.max(x(e) - x(s), 2)} height={14} fill="url(#fc-hatch)" stroke="#ef4444" strokeDasharray="3 2">
-          <title>{`缺口 ${Math.round(s)}–${Math.round(e)}`}</title>
-        </rect>
-      ))}
-      {/* SACK 块(绿色叠加) */}
-      {sq.sackBlocks.map(([s, e], i) => (
-        <rect key={`sack${i}`} x={x(s)} y={48} width={Math.max(x(e) - x(s), 2)} height={10} fill="#22c55e" opacity={0.75} rx={2}>
-          <title>{`SACK ${Math.round(s)}–${Math.round(e)}`}</title>
-        </rect>
-      ))}
-      {/* 重传回补箭头 */}
+      {/* Gap hatch:在缺口显露时刻弹跳登场(缩放过冲),此前不可见 */}
+      {sq.gaps.map(([s, e], i) => {
+        const gx = x(s)
+        const gw = Math.max(x(e) - x(s), 2)
+        const style = gapPop
+          ? ({ transform: `scale(${gapPop.scale})`, transformBox: 'fill-box', transformOrigin: 'center' } as React.CSSProperties)
+          : undefined
+        return (
+          <rect
+            key={`gap${i}`}
+            data-testid={`fc-gap-${i}`}
+            x={gx}
+            y={30}
+            width={gw}
+            height={14}
+            fill="url(#fc-hatch)"
+            stroke="#ef4444"
+            strokeDasharray="3 2"
+            opacity={gapPop ? gapPop.opacity : 1}
+            style={style}
+          >
+            <title>{`缺口 ${Math.round(s)}–${Math.round(e)}`}</title>
+          </rect>
+        )
+      })}
+      {/* SACK 块:在 Dup ACK 窗口内按块序逐块向右长出;无窗口标记时保守完整显示 */}
+      {sq.sackBlocks.map(([s, e], i) => {
+        const target = Math.max(x(e) - x(s), 2)
+        let wFrac = 1
+        let op = 1
+        if (win && nSack > 0) {
+          const slice = (win[1] - win[0]) / nSack
+          wFrac = windowProgress(playhead, win[0] + slice * i, win[0] + slice * i + slice * 0.7)
+          op = 0.5 + 0.5 * wFrac
+        }
+        return (
+          <rect
+            key={`sack${i}`}
+            x={x(s)}
+            y={48}
+            width={Math.max(target * wFrac, wFrac > 0 ? 1 : 0)}
+            height={10}
+            fill="#22c55e"
+            opacity={op}
+            rx={2}
+          >
+            <title>{`SACK ${Math.round(s)}–${Math.round(e)}`}</title>
+          </rect>
+        )
+      })}
+      {/* 重传回补箭头:自缺口末端向上画出(随播放推进),配标签淡入 */}
       {sq.retxArrow && (
         <g>
-          <line x1={x(sq.retxArrow.seq)} y1={70} x2={x(sq.retxArrow.seq)} y2={46} stroke="#ef4444" strokeWidth={2} markerEnd="url(#fc-arr)" />
-          <text x={x(sq.retxArrow.seq) + 4} y={70} fontSize={10} fill="#ef4444">
+          <line
+            x1={x(sq.retxArrow.seq)}
+            y1={70}
+            x2={x(sq.retxArrow.seq)}
+            y2={70 - 24 * retxP}
+            stroke="#ef4444"
+            strokeWidth={2}
+            markerEnd="url(#fc-arr)"
+          />
+          <text x={x(sq.retxArrow.seq) + 4} y={70} fontSize={10} fill="#ef4444" opacity={retxP}>
             重传回补
           </text>
         </g>
       )}
-      {/* ACK 游标 */}
-      {ackPos != null && (
-        <g>
-          <line x1={x(ackPos)} y1={92} x2={x(ackPos)} y2={H - 22} stroke="#1d4ed8" strokeWidth={1.5} strokeDasharray="4 3" />
-          <circle cx={x(ackPos)} cy={92} r={5} fill="#1d4ed8" />
-          <text x={x(ackPos)} y={88} textAnchor="middle" fontSize={10} fill="#1d4ed8">
-            ACK {ackPos}
-          </text>
-        </g>
-      )}
+      {/* ACK 游标(播放持续推进)与恢复脉冲 */}
+      {(() => {
+        if (!timeline || timeline.span <= 0 || sq.ackTrack.length === 0) return null
+        const absT = timeline.t0 + playhead * timeline.span
+        const ackPos = ackAt(absT)
+        if (ackPos == null) return null
+        const cx = x(ackPos)
+        const showPing = Number.isFinite(pingD) && pingD >= 0 && pingD <= PING_DUR
+        return (
+          <g>
+            <line x1={cx} y1={92} x2={cx} y2={H - 22} stroke="#1d4ed8" strokeWidth={1.5} strokeDasharray="4 3" />
+            <circle cx={cx} cy={92} r={5} fill="#1d4ed8" />
+            {showPing && (
+              <>
+                <circle
+                  cx={cx}
+                  cy={92}
+                  r={6 + 26 * (pingD / PING_DUR)}
+                  fill="none"
+                  stroke="#059669"
+                  strokeWidth={2}
+                  opacity={(1 - pingD / PING_DUR) * 0.8}
+                />
+                <text x={cx} y={84} textAnchor="middle" fontSize={10} fill="#059669" opacity={1 - pingD / PING_DUR}>
+                  缺口闭合
+                </text>
+              </>
+            )}
+            <text x={cx} y={showPing ? 76 : 88} textAnchor="middle" fontSize={10} fill="#1d4ed8">
+              ACK {ackPos}
+            </text>
+          </g>
+        )
+      })()}
       <defs>
         <pattern id="fc-hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
           <rect width="6" height="6" fill="#fee2e2" />
@@ -279,8 +374,12 @@ function CompareContent({
             </div>
           )}
 
-          {/* 序列空间图形化:核心可视化 */}
-          <SeqSpaceGraphic vm={vm} playhead={pb.time} />
+          {/* 序列空间图形化:核心可视化(动画态跟随播放;静态模式信息等价) */}
+          <SeqSpaceGraphic
+            vm={vm}
+            playhead={pb.time}
+            progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
+          />
 
           {/* 阶段信息面板(固定,不依赖 hover) */}
           <div className="fc-stage-panel" data-testid="fc-stage-panel" role="region" aria-label="当前阶段信息">
@@ -380,7 +479,13 @@ function CompareContent({
             <h4>关键报文链</h4>
             <div className="fc-keypkt-row">
               {vm.keyPackets.map((m) => (
-                <button key={m.packetNumber} type="button" className="fc-keypkt" onClick={() => onSelectPacket(m.packetNumber)} title={m.label}>
+                <button
+                  key={m.packetNumber}
+                  type="button"
+                  className={`fc-keypkt ${m.stageIndex === activeIdx && (pb.phase !== 'idle' || selectedStage != null) ? 'now' : ''}`}
+                  onClick={() => onSelectPacket(m.packetNumber)}
+                  title={m.label}
+                >
                   {m.roleBadge && <span className="fc-keypkt-role">{m.roleBadge}</span>}#{m.packetNumber}
                 </button>
               ))}

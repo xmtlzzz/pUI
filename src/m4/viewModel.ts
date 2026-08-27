@@ -85,6 +85,8 @@ export interface CompareViewModel {
   keyPackets: CompareMessage[]
   stages: StageBandEntry[]
   referenceSteps: ReferenceStep[]
+  /** 分镜标记:序列空间图形各元素的登场时刻(见 StoryboardMarks) */
+  marks: StoryboardMarks
   degraded: {
     unorderableInput: boolean
     midStream: boolean
@@ -126,6 +128,46 @@ export function buildEventSummaries(events: TcpEvent[]): CompareEventSummary[] {
     startTime: e.startTime,
     endTime: e.endTime,
   }))
+}
+
+/**
+ * 分镜标记:证据链关键报文的登场时刻(归一化到阶段带时间轴 [0,1],与 StageBandEntry.t0/t1 同坐标系)。
+ * 组件据此按播放时刻声明式推进各元素 appearance —— 动画不承载唯一信息,
+ * 静态模式直接渲染全部元素(信息等价,审批约束 #4)。
+ */
+export interface StoryboardMarks {
+  /** Gap hatch 显露时刻(越过缺口的报文到达) */
+  gapRevealAt?: number
+  /** Dup ACK / SACK 窗口:SACK 块在 [start,end] 内逐块长出 */
+  dupAckWindow?: [number, number]
+  /** 重传回补箭头画出时刻 */
+  retxDrawAt?: number
+  /** 恢复确认落点(ACK 游标闪现脉冲的时刻) */
+  recoverAt?: number
+}
+
+/** [start,end] 区间的线性进度,t 早于 start 为 0、晚于 end 为 1;区间退化时视为阶跃 */
+export function windowProgress(t: number, start: number, end: number): number {
+  const d = end - start
+  if (d <= 1e-9) return t >= end ? 1 : 0
+  return Math.min(1, Math.max(0, (t - start) / d))
+}
+
+/**
+ * 登场弹跳:[at, at+dur] 内不透明度线性升起,幅度带一次衰减过冲(sin 弹性),
+ * 结束后停在 1。确定性纯函数 —— 同一时刻永远得到同一形状。
+ */
+export function popIn(
+  t: number,
+  at: number,
+  dur = 0.05,
+): { opacity: number; scale: number } {
+  if (t < at) return { opacity: 0, scale: 0.85 }
+  const p = windowProgress(t, at, at + dur)
+  if (p >= 1) return { opacity: 1, scale: 1 }
+  // opacity 随进度升起;scale 在中段冲到 ~1.12 再回落(过冲幅度随 p² 衰减)
+  const overshoot = Math.sin(p * Math.PI) * 0.12 * (1 - p * 0.35)
+  return { opacity: 0.25 + 0.75 * p, scale: 0.85 + 0.15 * p + overshoot }
 }
 
 const KIND_LABEL: Record<TcpEvent['kind'], string> = {
@@ -259,6 +301,31 @@ export function buildCompareViewModel(
     limitations: event.limitations,
   }
 
+  // ---- 分镜标记:证据链报文时刻 -> 阶段带归一化时刻(与 bandStages 同一坐标系) ----
+  const norm = (t: number): number | undefined =>
+    span > 0 ? Math.min(1, Math.max(0, (t - timelineStart) / span)) : undefined
+  const timeOfPacket = (n: number | undefined): number | undefined => {
+    if (n == null) return undefined
+    const p = packets.find((q) => q.number === n)
+    return p ? norm(p.time) : undefined
+  }
+  const marks: StoryboardMarks = {
+    gapRevealAt: timeOfPacket(event.originalSegmentPacket),
+    retxDrawAt: timeOfPacket(event.retransmissionPacket),
+    recoverAt: timeOfPacket(event.recoveryAckPacket),
+  }
+  if (event.duplicateAckPackets.length > 0) {
+    // SACK 增长窗口:首个 Dup ACK -> 缺口被回补/恢复之前的时间段。
+    // 窗口终点取证据链上可用时刻的最大值(重传或恢复),不臆造引擎之外的端点
+    const w0 = timeOfPacket(event.duplicateAckPackets[0])
+    const candTimes = [event.retransmissionPacket, event.recoveryAckPacket]
+      .map((n) => (n != null ? packets.find((q) => q.number === n)?.time : undefined))
+      .filter((t): t is number => t != null)
+    const w1Raw = candTimes.length > 0 ? Math.max(...candTimes) : stages[stages.length - 1]?.endTime
+    const w1 = w1Raw != null ? norm(w1Raw) : undefined
+    if (w0 != null && w1 != null && w1 >= w0) marks.dupAckWindow = [w0, w1]
+  }
+
   const gap = gapTextOf(event) ?? '无'
   return {
     card,
@@ -266,6 +333,7 @@ export function buildCompareViewModel(
     keyPackets,
     stages: bandStages,
     referenceSteps: buildReferenceSteps(),
+    marks,
     degraded: {
       unorderableInput: facts.unorderableInput,
       midStream: facts.midStream,

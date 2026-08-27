@@ -2,7 +2,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, cleanup } from '@testing-library/react'
 import type { CompareEventSummary, CompareViewModel } from '../m4/viewModel'
-import { FaultCompare } from './FaultCompare'
+import { FaultCompare, SeqSpaceGraphic } from './FaultCompare'
 
 afterEach(cleanup) // 无 globals 钩子,组件残留会让 getByTestId 跨用例重复命中
 
@@ -56,6 +56,7 @@ function makeVm(overrides: Partial<CompareViewModel> = {}): CompareViewModel {
       { index: 2, label: '数据段 2 · 100B', kind: 'data', detail: '按序列顺序连续发送' },
       { index: 2, label: 'ACK 前进到 201', kind: 'ack', detail: '累计 ACK 单调前进' },
     ],
+    marks: { gapRevealAt: 0.12, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.55, recoverAt: 0.9 },
     degraded: { unorderableInput: false, midStream: false, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
     ...overrides,
@@ -168,6 +169,52 @@ describe('FaultCompare 对照页(整页板块)', () => {
     expect(screen.getByTestId('fault-compare-empty').textContent).toContain('未检出可解释的 TCP 事件')
     fireEvent.click(screen.getByText('← 返回时序视图'))
     expect(onBack).toHaveBeenCalledOnce()
+  })
+
+  it('静态模式(reduced-motion):分镜元素不经动画直接完整呈现,信息与终态等价', () => {
+    // jsdom 无 matchMedia → usePlayback 恒为 static → progressive=false
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const svg = screen.getByTestId('fc-seqspace')
+    const gap = svg.querySelector('[data-testid="fc-gap-0"]')!
+    expect(gap.getAttribute('opacity')).toBe('1') // Gap 无淡入直接可见
+    expect(gap.getAttribute('width')).not.toBe('0')
+    // SACK 完整宽度(无增长裁剪)
+    const sack = svg.querySelector('rect[fill="#22c55e"]') as SVGRectElement | null
+    expect(sack).toBeTruthy()
+    expect(Number(sack!.getAttribute('opacity'))).toBe(1)
+    // 重传箭头完整画出(y2 顶到 46)
+    const retxLine = [...svg.querySelectorAll('line')].find((l) => l.getAttribute('stroke') === '#ef4444')!
+    expect(retxLine.getAttribute('y2')).toBe('46')
+    // ACK 游标存在
+    expect(svg.textContent).toMatch(/ACK \d/)
+  })
+
+  it('progressive 播放态下元素按登场时刻显隐(GSAP 只补间时间,元素状态声明式)', () => {
+    // progressive=true 时,时刻 0 尚未到 gapRevealAt:Gap 应不可见(opacity=0)
+    const vm = makeVm({ marks: { gapRevealAt: 0.12, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.55, recoverAt: 0.9 } })
+    const view = render(<SeqSpaceGraphic vm={vm} playhead={0} progressive />)
+    let gap = view.container.querySelector('[data-testid="fc-gap-0"]')!
+    expect(gap.getAttribute('opacity')).toBe('0')
+    // 越过登场时刻后完全可见
+    const mid = render(<SeqSpaceGraphic vm={vm} playhead={0.5} progressive />)
+    gap = mid.container.querySelector('[data-testid="fc-gap-0"]')!
+    expect(Number(gap.getAttribute('opacity'))).toBeCloseTo(1, 1)
+    // SACK 在窗口中点应有部分进度、窗口后满宽
+    const sackAtMid = Number(
+      render(<SeqSpaceGraphic vm={vm} playhead={0.35} progressive />).container.querySelector('rect[fill="#22c55e"]')?.getAttribute('width'),
+    )
+    const sackAtEnd = Number(mid.container.querySelector('rect[fill="#22c55e"]')?.getAttribute('width'))
+    expect(sackAtMid).toBeGreaterThan(0)
+    expect(sackAtMid).toBeLessThan(sackAtEnd)
+    // 恢复脉冲在 recoverAt 后出现(「缺口闭合」提示),脉冲窗与终态都消失
+    expect(mid.container.textContent).not.toContain('缺口闭合') // t=0.5 早于 recoverAt=0.9
+    cleanup()
+    const duringPing = render(<SeqSpaceGraphic vm={vm} playhead={0.93} progressive />)
+    expect(duringPing.container.textContent).toContain('缺口闭合')
+    const after = render(<SeqSpaceGraphic vm={vm} playhead={0.99} progressive />)
+    expect(after.container.textContent).not.toContain('缺口闭合')
+    // 但 ACK 游标在终态仍然驻留(信息不随动画消失)
+    expect(after.container.textContent).toMatch(/ACK \d/)
   })
 
   it('降级横幅按需显示', () => {

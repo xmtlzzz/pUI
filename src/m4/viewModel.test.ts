@@ -3,7 +3,13 @@ import type { Packet } from '../model/types'
 import { analyzeStream } from '../analysis/tcp/streamAnalysis'
 import { detectTcpEvents } from '../analysis/tcp/events'
 import { deriveStages } from '../analysis/tcp/stages'
-import { buildCompareViewModel, buildEventSummaries, stageAtTime } from './viewModel'
+import {
+  buildCompareViewModel,
+  buildEventSummaries,
+  popIn,
+  stageAtTime,
+  windowProgress,
+} from './viewModel'
 
 /**
  * M4 对照页视图模型:引擎输出 -> 组件可渲染纯数据。
@@ -233,6 +239,62 @@ describe('buildEventSummaries — 多事件切换器摘要', () => {
 
   it('空数组返回空数组', () => {
     expect(buildEventSummaries([])).toEqual([])
+  })
+})
+
+describe('StoryboardMarks — 分镜登场时刻与动画纯函数', () => {
+  const packets = lossChain()
+  const facts = analyzeStream(packets)
+  const event = detectTcpEvents(facts, packets)[0]
+  const vm = buildCompareViewModel(packets, facts, event, deriveStages(event, facts, packets))!
+
+  it('缺口链:四个标记齐全、单调有序且归一化在 [0,1]', () => {
+    const m = vm.marks
+    expect(m.gapRevealAt).toBeDefined()
+    expect(m.dupAckWindow).toBeDefined()
+    expect(m.retxDrawAt).toBeDefined()
+    expect(m.recoverAt).toBeDefined()
+    for (const v of [m.gapRevealAt!, m.retxDrawAt!, m.recoverAt!, ...m.dupAckWindow!]) {
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThanOrEqual(1)
+    }
+    // 分镜顺序:缺口先显露 → Dup ACK/SACK 窗口 → 重传回补 → 恢复
+    expect(m.gapRevealAt!).toBeLessThan(m.dupAckWindow![0])
+    expect(m.dupAckWindow![1]).toBeGreaterThanOrEqual(m.retxDrawAt!)
+    expect(m.recoverAt!).toBeGreaterThanOrEqual(m.retxDrawAt!)
+  })
+
+  it('伪重传链:无缺口标记,重传/恢复标记照常', () => {
+    const packets2 = spuriousChain()
+    const facts2 = analyzeStream(packets2)
+    const ev2 = detectTcpEvents(facts2, packets2)[0]
+    const vm2 = buildCompareViewModel(packets2, facts2, ev2, deriveStages(ev2, facts2, packets2))!
+    expect(vm2.marks.gapRevealAt).toBeUndefined()
+    expect(vm2.marks.dupAckWindow).toBeUndefined()
+    expect(vm2.marks.retxDrawAt).toBeDefined()
+    expect(vm2.marks.recoverAt).toBeDefined()
+  })
+
+  it('windowProgress:线性区间进度,退化区间为阶跃', () => {
+    expect(windowProgress(0.1, 0.2, 0.5)).toBe(0)
+    expect(windowProgress(0.35, 0.2, 0.5)).toBeCloseTo(0.5)
+    expect(windowProgress(0.9, 0.2, 0.5)).toBe(1)
+    // 区间退化(起点=终点):早于为 0、到达即为 1
+    expect(windowProgress(0.19, 0.2, 0.2)).toBe(0)
+    expect(windowProgress(0.21, 0.2, 0.2)).toBe(1)
+  })
+
+  it('popIn:淡入 + 单次过冲回落,终态恰为单位缩放', () => {
+    const before = popIn(0.1, 0.3)
+    expect(before.opacity).toBe(0)
+    expect(before.scale).toBeLessThan(1)
+    // 中段带过冲(scale > 目标内插值)
+    const mid = popIn(0.32, 0.3, 0.05)
+    expect(mid.opacity).toBeGreaterThan(0.25)
+    expect(mid.scale).toBeGreaterThan(1)
+    // 终态稳定
+    const end = popIn(0.9, 0.3, 0.05)
+    expect(end).toEqual({ opacity: 1, scale: 1 })
   })
 })
 

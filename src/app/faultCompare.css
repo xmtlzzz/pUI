@@ -460,3 +460,10 @@
   color: #64748b;
   font-size: 11px;
 }
+
+/* 关键报文 chip 的「当前阶段」联动高亮(播放推进时跟随,信息冗余自阶段面板,不承载唯一信息) */
+.fc-keypkt.now {
+  border-color: #1d4ed8;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.15);
+}

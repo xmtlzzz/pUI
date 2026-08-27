@@ -291,6 +291,31 @@ describe('StoryboardMarks — 分镜登场时刻与动画纯函数', () => {
     expect(m.recoverAt!).toBeGreaterThanOrEqual(m.retxDrawAt!)
   })
 
+  it('阶段带等分布局:阶段按 startTime 排序、等分铺满 [0,1] 无空白(用户反馈:阶段反了/中间空白)', () => {
+    const { stages } = vm
+    // 顺序:时间单调
+    for (let i = 1; i < stages.length; i++) {
+      expect(stages[i].startTime).toBeGreaterThanOrEqual(stages[i - 1].startTime)
+    }
+    // 等分:第 i 阶段占 [i/N, (i+1)/N],首尾相接铺满 [0,1],无重叠无空隙
+    stages.forEach((s, i) => {
+      expect(s.t0).toBeCloseTo(i / stages.length, 6)
+      expect(s.t1).toBeCloseTo((i + 1) / stages.length, 6)
+    })
+    expect(stages[0].t0).toBe(0)
+    expect(stages[stages.length - 1].t1).toBe(1)
+    for (let i = 1; i < stages.length; i++) {
+      expect(stages[i].t0).toBeCloseTo(stages[i - 1].t1, 8) // 相邻无缝
+    }
+  })
+
+  it('marks 与阶段带同一等分坐标系:gapRevealAt 落在「缺口显露」阶段区间内', () => {
+    const m = vm.marks
+    const gapStage = vm.stages.find((s) => s.label === '缺口显露')!
+    expect(m.gapRevealAt!).toBeGreaterThanOrEqual(gapStage.t0 - 1e-9)
+    expect(m.gapRevealAt!).toBeLessThanOrEqual(gapStage.t1 + 1e-8)
+  })
+
   it('伪重传链:无缺口标记,重传/恢复标记照常', () => {
     const packets2 = spuriousChain()
     const facts2 = analyzeStream(packets2)

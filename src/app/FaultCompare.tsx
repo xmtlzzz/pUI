@@ -110,14 +110,21 @@ export function SeqSpaceGraphic({
   const H = 150
   const x = (v: number): number => ((v - sq.axisMin) / (sq.axisMax - sq.axisMin)) * (W - 16) + 8
 
-  // 时间轴映射:归一化 playhead -> 真实秒,再查 ACK 轨迹
+// 时间轴映射:等分坐标 playhead -> 真实秒(命中所属阶段区间,阶段内按比例反解),
+  // 再查 ACK 轨迹。与 viewModel 的 timeToBand 互为逆映射。
   const timeline = useMemo(() => {
     const st = vm.stages
     if (st.length === 0) return null
-    const t0 = st[0].startTime
-    const span = st[st.length - 1].endTime - t0
-    return { t0, span }
-  }, [vm.stages])
+    return {
+      toAbs: (): number => {
+        const idx = Math.min(st.length - 1, Math.max(0, Math.floor(playhead * st.length)))
+        const seg = st[Math.min(idx, st.length - 1)]
+        const segSpan = seg.t1 - seg.t0
+        const frac = segSpan > 0 ? (playhead - seg.t0) / segSpan : 0
+        return seg.startTime + Math.min(1, Math.max(0, frac)) * (seg.endTime - seg.startTime)
+      },
+    }
+  }, [playhead, vm.stages])
   const ackAt = useCallback(
     (absT: number): number | null => {
       let last: number | null = null
@@ -227,8 +234,8 @@ export function SeqSpaceGraphic({
       )}
       {/* ACK 游标(播放持续推进)与恢复脉冲 */}
       {(() => {
-        if (!timeline || timeline.span <= 0 || sq.ackTrack.length === 0) return null
-        const absT = timeline.t0 + playhead * timeline.span
+        if (!timeline || sq.ackTrack.length === 0) return null
+        const absT = timeline.toAbs()
         const ackPos = ackAt(absT)
         if (ackPos == null) return null
         const cx = x(ackPos)

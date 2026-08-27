@@ -251,15 +251,16 @@ export function buildCompareViewModel(
   const firstPkt = firstSeg ? packets.find((p) => p.number === firstSeg.packetNumber) : undefined
   const c2sKey = firstPkt ? `${firstPkt.srcIp ?? '?'}:${firstPkt.srcPort ?? 0}` : null
 
-  // 时间线归一化基准:事件起点到最后一个阶段终点(阶段带只覆盖事件过程,不含握手前)
-  const timelineStart = Math.min(...stages.map((s) => s.startTime))
-  const timelineEnd = Math.max(...stages.map((s) => s.endTime))
-  const span = timelineEnd - timelineStart
-
-  const bandStages: StageBandEntry[] = stages.map((s) => ({
+  // 阶段带布局:按 startTime 稳定排序(防御 derive 顺序与时间倒挂,用户反馈"阶段反了"),
+  // 并**均匀等分**每个阶段占 1/N —— 阶段是离散事件点(真实时间跨度常为零),按真实时间
+  // 归一化会让多数阶段挤在两端、中间大片空白(用户反馈)。DSH 式进度条按分镜顺序连续铺满
+  // 更符合"过程感";真实时间仍由 startTime/endTime 与播放游标承载。
+  const sorted = [...stages].sort((a, b) => a.startTime - b.startTime || a.fromPacket - b.fromPacket)
+  const N = Math.max(sorted.length, 1)
+  const bandStages: StageBandEntry[] = sorted.map((s, i) => ({
     ...s,
-    t0: span > 0 ? (s.startTime - timelineStart) / span : 0,
-    t1: span > 0 ? (s.endTime - timelineStart) / span : 1,
+    t0: i / N,
+    t1: (i + 1) / N,
   }))
 
   // ---- 关键报文链:只取事件证据链上的报文(不是全量报文 —— VDI 抓包逐报文列表不可用) ----
@@ -272,7 +273,7 @@ export function buildCompareViewModel(
     .filter((p) => keyNumbers.has(p.number))
     .sort((a, b) => a.time - b.time || a.number - b.number)
     .map((p) => {
-      const stageIdx = stages.findIndex((s) => p.time >= s.startTime && p.time <= s.endTime)
+      const stageIdx = bandStages.findIndex((s) => p.time >= s.startTime && p.time <= s.endTime)
       const fl = flagsLabel(p.tcpFlags)
       const labelParts = [fl, p.tcpSeq != null ? `seq=${p.tcpSeq}` : null, p.tcpLen ? `len=${p.tcpLen}` : null].filter(Boolean)
       return {
@@ -307,13 +308,21 @@ export function buildCompareViewModel(
     limitations: event.limitations,
   }
 
-  // ---- 分镜标记:证据链报文时刻 -> 阶段带归一化时刻(与 bandStages 同一坐标系) ----
-  const norm = (t: number): number | undefined =>
-    span > 0 ? Math.min(1, Math.max(0, (t - timelineStart) / span)) : undefined
+  // ---- 分镜标记:证据链报文时刻 -> 阶段带等分坐标(与 bandStages 同一坐标系) ----
+  // 阶段是离散点,按真实时间全局归一化会错位;改为把时刻映射到"它所属阶段"的
+  // 等分区间内(阶段内按真实时间比例),使动画与阶段带、播放游标对齐。
+  const timeToBand = (t: number): number | undefined => {
+    const idx = bandStages.findIndex((s) => t >= s.startTime && t <= s.endTime)
+    if (idx < 0) return undefined
+    const seg = bandStages[idx]
+    const segSpan = seg.endTime - seg.startTime
+    const frac = segSpan > 0 ? (t - seg.startTime) / segSpan : 0
+    return seg.t0 + frac * (seg.t1 - seg.t0)
+  }
   const timeOfPacket = (n: number | undefined): number | undefined => {
     if (n == null) return undefined
     const p = packets.find((q) => q.number === n)
-    return p ? norm(p.time) : undefined
+    return p ? timeToBand(p.time) : undefined
   }
   const marks: StoryboardMarks = {
     gapRevealAt: timeOfPacket(event.originalSegmentPacket),
@@ -328,7 +337,7 @@ export function buildCompareViewModel(
       .map((n) => (n != null ? packets.find((q) => q.number === n)?.time : undefined))
       .filter((t): t is number => t != null)
     const w1Raw = candTimes.length > 0 ? Math.max(...candTimes) : stages[stages.length - 1]?.endTime
-    const w1 = w1Raw != null ? norm(w1Raw) : undefined
+    const w1 = w1Raw != null ? timeToBand(w1Raw) : undefined
     if (w0 != null && w1 != null && w1 >= w0) marks.dupAckWindow = [w0, w1]
   }
 

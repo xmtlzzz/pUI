@@ -200,6 +200,33 @@ describe('buildCompareViewModel', () => {
     expect(buildVM(normalPackets)).toBeNull()
   })
 
+  it('对向序列空间:双向流给出对向静态视图,单向流为 null', () => {
+    // lossChain 只有 c2s 数据 → 无对向视图
+    expect(vm.opposite).toBeNull()
+
+    // 双向链:服务端也回推数据(s2c ISN=0,SYN 占 1 字节,数据从 seq=1 连续)
+    const bi = [
+      ...lossChain(),
+      s2c({ number: 20, time: 0.27, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 501, tcpLen: 200, tcpCompleteness: 15 }),
+      c2s({ number: 21, time: 0.28, tcpFlags: ACK, tcpSeq: 501, tcpAck: 201, tcpLen: 0, tcpCompleteness: 15 }),
+    ]
+    const vmBi = buildVM(bi)!
+    expect(vmBi.opposite).not.toBeNull()
+    expect(vmBi.opposite!.dir).toBe('s2c')
+    const ov = vmBi.opposite!.view
+    expect(ov.seenRuns).toEqual([[1, 201]])
+    // 对向无事件聚焦:无重传箭头;刻度/轴自洽
+    expect(ov.retxArrow).toBeUndefined()
+    for (const t of ov.ticks) {
+      expect(t).toBeGreaterThanOrEqual(ov.axisMin)
+      expect(t).toBeLessThanOrEqual(ov.axisMax)
+    }
+    // 对向数据的确认由 c2s 报文携带:ackTrack 含 #21 的 ack=201
+    expect(ov.ackTrack.some((a) => a.ack === 201)).toBe(true)
+    // 确定性
+    expect(JSON.stringify(buildVM(bi)!.opposite)).toBe(JSON.stringify(vmBi.opposite))
+  })
+
   it('确定性:同一输入两次构建完全一致', () => {
     expect(JSON.stringify(buildVM(lossChain()))).toBe(JSON.stringify(buildVM(lossChain())))
   })

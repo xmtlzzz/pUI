@@ -1,5 +1,5 @@
 import type { Packet } from '../model/types'
-import type { StreamAnalysisFacts } from '../analysis/tcp/streamAnalysis'
+import type { StreamAnalysisFacts, StreamDirection } from '../analysis/tcp/streamAnalysis'
 import type { TcpEvent } from '../analysis/tcp/events'
 import type { EventStage } from '../analysis/tcp/stages'
 
@@ -87,6 +87,10 @@ export interface CompareViewModel {
   referenceSteps: ReferenceStep[]
   /** 分镜标记:序列空间图形各元素的登场时刻(见 StoryboardMarks) */
   marks: StoryboardMarks
+  /** 当前事件的数据方向(c2s/s2c),供对向切换器展示 */
+  direction: StreamDirection
+  /** 对向序列空间:双向流中事件方向之外那一侧的字节空间;对向无数据时为 null */
+  opposite: { dir: StreamDirection; view: SeqSpaceView } | null
   degraded: {
     unorderableInput: boolean
     midStream: boolean
@@ -290,6 +294,8 @@ export function buildCompareViewModel(
   // ---- 序列空间图形化(案例文档核心承诺):已见字节条 + Gap hatch + SACK 块 + ACK 轨迹 ----
   const retxPkt = event.retransmissionPacket != null ? packets.find((p) => p.number === event.retransmissionPacket) : undefined
   const seqSpace = buildSeqSpaceView(facts, packets, event, retxPkt?.tcpSeq)
+  // 对向视图(双向流):事件方向之外那一侧的静态字节空间
+  const opposite = buildOppositeSeqSpaceView(facts, packets, event)
 
   const card: EventCard = {
     kindLabel: KIND_LABEL[event.kind],
@@ -334,6 +340,8 @@ export function buildCompareViewModel(
     stages: bandStages,
     referenceSteps: buildReferenceSteps(),
     marks,
+    direction: event.direction,
+    opposite,
     degraded: {
       unorderableInput: facts.unorderableInput,
       midStream: facts.midStream,
@@ -358,6 +366,17 @@ function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
 }
 
 const SEQ_VIEW_MAX_SACK = 100 // 渲染护栏:超过则截断(极端抓包的 SACK 风暴不拖垮 DOM)
+
+/** 刻度:1/2/5 整步长(与案例文档 1…501 风格一致) */
+function ticksFor(axisMin: number, axisMax: number): number[] {
+  const rawStep = (axisMax - axisMin) / 5
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
+  const norm = rawStep / mag
+  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag
+  const ticks: number[] = []
+  for (let t = Math.ceil(axisMin / step) * step; t <= axisMax; t += step) ticks.push(t)
+  return ticks
+}
 
 /** 构建序列空间图形数据:坐标轴聚焦缺口邻域 */
 function buildSeqSpaceView(
@@ -415,12 +434,7 @@ function buildSeqSpaceView(
     .map((p) => ({ time: p.time, ack: p.tcpAck! }))
 
   // 刻度:1/2/5 整步长(与案例文档 1…501 风格一致)
-  const rawStep = (axisMax - axisMin) / 5
-  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
-  const norm = rawStep / mag
-  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag
-  const ticks: number[] = []
-  for (let t = Math.ceil(axisMin / step) * step; t <= axisMax; t += step) ticks.push(t)
+  const ticks = ticksFor(axisMin, axisMax)
 
   return {
     axisMin,
@@ -431,6 +445,89 @@ function buildSeqSpaceView(
     sackBlocks,
     ackTrack,
     retxArrow: retxSeq != null ? { seq: retxSeq } : undefined,
+  }
+}
+
+/**
+ * 对向序列空间(M4 收尾项):双向流中,事件方向之外那一侧的数据字节空间。
+ * 静态事实视图 —— 无事件聚焦、无分镜动画(对向没有可解释事件的证据链)。
+ * 轴覆盖对向全部数据范围;SACK/ACK 轨迹按承载报文方向过滤(对向数据的确认
+ * 由反方向报文携带),避免两个 ISN 空间混在一个轴上。
+ * 对向没有数据段也没有缺口时返回 null(单向数据流无需对向视图)。
+ */
+export function buildOppositeSeqSpaceView(
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  event: TcpEvent,
+): { dir: StreamDirection; view: SeqSpaceView } | null {
+  const opp: StreamDirection = event.direction === 'c2s' ? 's2c' : 'c2s'
+  // SYN/FIN 各消耗 1 字节,不算数据 —— 只认纯载荷,避免仅有握手的对向产出 1 字节伪视图
+  const oppSegs = facts.segments.filter((s) => s.direction === opp && s.payloadLen > 0)
+  const oppGaps = facts.gaps.filter((g) => g.direction === opp)
+  if (oppSegs.length === 0 && oppGaps.length === 0) return null
+
+  // 轴范围:对向数据的最小 seq 到最大 seq+len(缺口边界并入)。回绕流不做对向视图
+  // (展开绝对坐标在无事件锚点时无意义)。
+  let a0 = Infinity
+  let a1 = -Infinity
+  for (const s of oppSegs) {
+    a0 = Math.min(a0, s.seq)
+    a1 = Math.max(a1, (s.seq + s.seqLen) >>> 0)
+  }
+  for (const g of oppGaps) {
+    a0 = Math.min(a0, g.start)
+    a1 = Math.max(a1, g.end)
+  }
+  if (!Number.isFinite(a0) || !Number.isFinite(a1) || a1 <= a0) return null
+
+  const clip = ([s, e]: [number, number]): [number, number] | null =>
+    e <= a0 || s >= a1 ? null : [Math.max(s, a0), Math.min(e, a1)]
+
+  const seenRuns = mergeRanges(oppSegs.map((s) => [s.seq, (s.seq + s.seqLen) >>> 0] as [number, number]))
+    .map(clip)
+    .filter((r): r is [number, number] => r != null)
+  const gaps = oppGaps.map((g) => [g.start, g.end] as [number, number]).filter((r) => clip(r) != null)
+
+  // 方向锚点:facts 中任一有方向归属的段的源端点(与 buildCompareViewModel 同法)
+  let c2sKey: string | null = null
+  for (const s of facts.segments) {
+    const p = packets.find((q) => q.number === s.packetNumber)
+    if (!p) continue
+    if (s.direction === 'c2s') {
+      c2sKey = `${p.srcIp ?? '?'}:${p.srcPort ?? 0}`
+      break
+    }
+  }
+  const dirOf = (p: Packet): 'c2s' | 's2c' => {
+    if (!c2sKey) return p.srcPort != null && p.dstPort != null && p.srcPort < p.dstPort ? 'c2s' : 's2c'
+    return `${p.srcIp ?? '?'}:${p.srcPort ?? 0}` === c2sKey ? 'c2s' : 's2c'
+  }
+
+  // 对向数据的确认/SACK 由方向 !== opp 的报文携带
+  const sackRaw: Array<[number, number]> = []
+  const ackTrack: Array<{ time: number; ack: number }> = []
+  for (const p of packets) {
+    if (dirOf(p) === opp) continue
+    for (const b of p.tcpSackBlocks ?? []) sackRaw.push(b)
+    if (p.tcpAck != null) ackTrack.push({ time: p.time, ack: p.tcpAck })
+  }
+  ackTrack.sort((x, y) => x.time - y.time)
+
+  return {
+    dir: opp,
+    view: {
+      axisMin: a0,
+      axisMax: a1,
+      ticks: ticksFor(a0, a1),
+      seenRuns,
+      gaps,
+      sackBlocks: mergeRanges(sackRaw)
+        .map(clip)
+        .filter((r): r is [number, number] => r != null)
+        .slice(0, SEQ_VIEW_MAX_SACK),
+      ackTrack,
+      retxArrow: undefined, // 对向无事件聚焦,无重传箭头
+    },
   }
 }
 

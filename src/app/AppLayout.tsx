@@ -295,14 +295,14 @@ export function AppLayout() {
           {error && <div className="err">{error}</div>}
           {selected && (
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>
-              <button type="button" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">
+              <button type="button" className="btn" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">
                 ⚠ 故障分析(对照正常参考)
               </button>
               {/* 跳包后的返回入口:恢复离开时的事件与阶段(分镜粒度) */}
               {compareResume && compareResume.conversationId === selected.id && (
                 <button
                   type="button"
-                  className="resume-btn"
+                  className="btn sm resume-btn"
                   data-testid="fault-analyze-resume"
                   onClick={resumeFaultAnalysis}
                   title="回到离开时的故障事件与分析阶段"

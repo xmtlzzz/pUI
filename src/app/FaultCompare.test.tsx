@@ -57,6 +57,8 @@ function makeVm(overrides: Partial<CompareViewModel> = {}): CompareViewModel {
       { index: 2, label: 'ACK 前进到 201', kind: 'ack', detail: '累计 ACK 单调前进' },
     ],
     marks: { gapRevealAt: 0.12, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.55, recoverAt: 0.9 },
+    direction: 'c2s',
+    opposite: null,
     degraded: { unorderableInput: false, midStream: false, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
     ...overrides,
@@ -203,6 +205,64 @@ describe('FaultCompare 对照页(整页板块)', () => {
     // 轴说明:这是字节序列号空间
     const svg = screen.getByTestId('fc-seqspace')
     expect(svg.textContent).toContain('序列号空间(字节)')
+  })
+
+  it('对向序列空间:双向流出现方向切换(.seg),切换后渲染对向静态视图', () => {
+    const vm = makeVm({
+      direction: 'c2s',
+      opposite: {
+        dir: 's2c',
+        view: {
+          axisMin: 0,
+          axisMax: 201,
+          ticks: [50, 100, 150, 200],
+          seenRuns: [[1, 201]],
+          gaps: [],
+          sackBlocks: [],
+          ackTrack: [{ time: 0.28, ack: 201 }],
+          retxArrow: undefined,
+        },
+      },
+    })
+    const view = render(<FaultCompare vm={vm} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    // 切换器出现(主界面 .seg 风格)
+    const toggle = screen.getByTestId('fc-dir-toggle')
+    expect(toggle.textContent).toContain('事件方向(c2s)')
+    expect(toggle.textContent).toContain('对向(s2c)')
+    // 默认事件方向视图
+    expect(screen.getByLabelText('序列空间图形化')).toBeTruthy()
+    // 切到对向 → 对向静态视图(独立 aria-label,轴覆盖对向数据)
+    fireEvent.click(toggle.querySelectorAll('button')[1])
+    const opp = screen.getByLabelText('对向序列空间')
+    expect(opp.textContent).toContain('对向全景') // 轴说明切换为对向全景
+    expect(opp.textContent).toMatch(/150/) // 对向刻度
+    // 切回事件方向
+    fireEvent.click(toggle.querySelectorAll('button')[0])
+    expect(screen.getByLabelText('序列空间图形化')).toBeTruthy()
+    void view
+  })
+
+  it('窄窗口(<900px):双标签切换实际故障/正常参考,单栏渲染', () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    }))
+    const view = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    // 双标签出现,默认实际故障;正常参考栏不渲染
+    const tabs = screen.getByTestId('fc-tabs')
+    expect(tabs.textContent).toContain('实际故障')
+    expect(tabs.textContent).toContain('正常参考')
+    expect(screen.queryByLabelText('正常参考示意')).toBeNull()
+    expect(screen.getByLabelText('实际故障')).toBeTruthy()
+    // 切到正常参考 → 实际故障让位
+    fireEvent.click(tabs.querySelectorAll('button')[1])
+    expect(screen.queryByLabelText('实际故障')).toBeNull()
+    expect(screen.getByLabelText('正常参考示意')).toBeTruthy()
+    vi.unstubAllGlobals()
+    view.unmount()
   })
 
   it('vm=null 时渲染空态并提供返回入口', () => {

@@ -38,7 +38,7 @@ export function PacketDetail({ onViewTcpEvents }: { onViewTcpEvents?: () => void
         {onViewTcpEvents && packet.transport === 'tcp' && (
           <button
             type="button"
-            className="detail-evbtn"
+            className="btn sm detail-evbtn"
             data-testid="pd-view-events"
             onClick={(e: MouseEvent) => {
               e.stopPropagation()

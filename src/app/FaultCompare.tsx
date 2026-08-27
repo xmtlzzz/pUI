@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { popIn, windowProgress } from '../m4/viewModel'
-import type { CompareEventSummary, CompareViewModel } from '../m4/viewModel'
+import type { CompareEventSummary, CompareViewModel, SeqSpaceView } from '../m4/viewModel'
 import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
 
@@ -55,6 +55,23 @@ function phaseLabel(p: PlaybackPhase): string {
   }
 }
 
+/** 窄窗口检测(案例要求 <900px 双标签);无 matchMedia 环境(测试/SSR)视为宽屏 */
+function useNarrowViewport(breakpoint = 900): boolean {
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(`(max-width: ${breakpoint}px)`).matches
+      : false,
+  )
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`)
+    const on = (): void => setNarrow(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [breakpoint])
+  return narrow
+}
+
 const STAGE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981', '#ec4899', '#14b8a6', '#f97316']
 
 /** 恢复脉冲的持续时长(归一化时间轴占比) */
@@ -68,8 +85,25 @@ const PING_DUR = 0.07
  * 零布局回流。`progressive=false`(静态模式/reduced-motion/未开始播放)直接渲染全部元素,
  * 信息与终态完全等价,满足审批约束 #4。导出以便对动画参数做元素级测试。
  */
-export function SeqSpaceGraphic({ vm, playhead, progressive }: { vm: CompareViewModel; playhead: number; progressive: boolean }) {
-  const { seqSpace: sq, marks } = vm
+export function SeqSpaceGraphic({
+  vm,
+  playhead,
+  progressive,
+  seqSpaceOverride,
+  label = '序列空间图形化',
+  caption = '视图聚焦缺口邻域',
+}: {
+  vm: CompareViewModel
+  playhead: number
+  progressive: boolean
+  /** 对向视图:用另一份序列空间数据渲染(无 marks/无动画,progressive=false) */
+  seqSpaceOverride?: SeqSpaceView
+  label?: string
+  /** 轴说明后缀:事件方向=聚焦缺口邻域;对向=全景 */
+  caption?: string
+}) {
+  const sq = seqSpaceOverride ?? vm.seqSpace
+  const marks = vm.marks
   const W = 720
   const H = 150
   const x = (v: number): number => ((v - sq.axisMin) / (sq.axisMax - sq.axisMin)) * (W - 16) + 8
@@ -105,7 +139,7 @@ export function SeqSpaceGraphic({ vm, playhead, progressive }: { vm: CompareView
   const nSack = sq.sackBlocks.length
 
   return (
-    <svg className="fc-seqsvg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="序列空间图形化" data-testid="fc-seqspace">
+    <svg className="fc-seqsvg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} data-testid="fc-seqspace">
       {/* 刻度轴(全量事实层,始终完整可见) */}
       <line x1={8} y1={H - 22} x2={W - 8} y2={H - 22} stroke="#cbd5e1" />
       {sq.ticks.map((t) => (
@@ -225,7 +259,7 @@ export function SeqSpaceGraphic({ vm, playhead, progressive }: { vm: CompareView
       })()}
       {/* 轴说明:这是字节序列号空间,不是时间轴(用户反馈易误读为进度条) */}
       <text x={8} y={16} fontSize={10} fill="#94a3b8">
-        序列号空间(字节) · 视图聚焦缺口邻域
+        序列号空间(字节) · {caption}
       </text>
       <defs>
         <pattern id="fc-hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
@@ -247,13 +281,13 @@ export function FaultCompare(props: FaultCompareProps) {
     return (
       <div className="fc-page" data-testid="fault-compare-empty">
         <div className="fc-toolbar">
-          <button type="button" onClick={props.onBack} data-testid="fc-back">
-            ← 返回时序视图
-          </button>
-        </div>
-        <div className="fc-empty">
-          <p>该会话未检出可解释的 TCP 事件,没有可对照的故障过程。</p>
-        </div>
+        <button type="button" className="btn" onClick={props.onBack} data-testid="fc-back">
+          ← 返回时序视图
+        </button>
+      </div>
+      <div className="fc-empty">
+        <p>该会话未检出可解释的 TCP 事件,没有可对照的故障过程。</p>
+      </div>
       </div>
     )
   }
@@ -283,6 +317,10 @@ function CompareContent({
   const initialTime = initialStageIndex != null ? (vm.stages[initialStageIndex]?.t0 ?? 0) : 0
   const pb = usePlayback(vm.stages, stageAt, initialTime)
   const [selectedStage, setSelectedStage] = useState<number | null>(null)
+  // 窄窗双标签与序列空间方向切换(事件切换单键重挂载,状态随之复位)
+  const narrow = useNarrowViewport()
+  const [faultTab, setFaultTab] = useState<'fault' | 'ref'>('fault')
+  const [viewSide, setViewSide] = useState<'event' | 'opp'>('event')
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     switch (e.key) {
@@ -318,7 +356,7 @@ function CompareContent({
   return (
     <div className="fc-page" data-testid="fault-compare" tabIndex={0} onKeyDown={onKeyDown}>
       <div className="fc-toolbar">
-        <button type="button" onClick={onBack} data-testid="fc-back">
+        <button type="button" className="btn" onClick={onBack} data-testid="fc-back">
           ← 返回时序视图
         </button>
         <span className="fc-headline">{vm.headline}</span>
@@ -327,13 +365,13 @@ function CompareContent({
         </span>
         {pb.phase !== 'static' && (
           <span className="fc-controls">
-            <button type="button" onClick={pb.phase === 'playing' ? pb.pause : pb.play} data-testid="fc-playpause">
+            <button type="button" className="btn primary" onClick={pb.phase === 'playing' ? pb.pause : pb.play} data-testid="fc-playpause">
               {pb.phase === 'playing' ? '⏸ 暂停' : '▶ 播放'}
             </button>
-            <button type="button" onClick={pb.stepBack} aria-label="上一阶段">
+            <button type="button" className="btn icon" onClick={pb.stepBack} aria-label="上一阶段">
               |◀
             </button>
-            <button type="button" onClick={pb.stepForward} aria-label="下一阶段">
+            <button type="button" className="btn icon" onClick={pb.stepForward} aria-label="下一阶段">
               ▶|
             </button>
           </span>
@@ -341,7 +379,7 @@ function CompareContent({
         {pb.phase === 'static' && (
           <span className="fc-static-note" role="status">
             系统已开启「减少动效」,动画停用;可点选阶段或用单步遍历。
-            <button type="button" data-testid="fc-enable-animation" onClick={pb.overrideOnce}>
+            <button type="button" className="btn" data-testid="fc-enable-animation" onClick={pb.overrideOnce}>
               仍要播放一次
             </button>
           </span>
@@ -356,8 +394,21 @@ function CompareContent({
         </div>
       )}
 
-      <div className="fc-body">
+      <div className={narrow ? 'fc-body fc-body-narrow' : 'fc-body'}>
+        {/* 窄窗口(<900px,案例要求):双标签切换,替代纵向长堆叠 */}
+        {narrow && (
+          <div className="seg fc-tabs" role="tablist" aria-label="对照视图切换" data-testid="fc-tabs">
+            <button type="button" className={faultTab === 'fault' ? 'on' : ''} onClick={() => setFaultTab('fault')}>
+              实际故障
+            </button>
+            <button type="button" className={faultTab === 'ref' ? 'on' : ''} onClick={() => setFaultTab('ref')}>
+              正常参考
+            </button>
+          </div>
+        )}
+
         {/* 左栏:实际故障 */}
+        {(!narrow || faultTab === 'fault') && (
         <section className="fc-left" aria-label="实际故障">
           <h3>
             实际故障 <span className="fc-real-badge">真实抓包</span>
@@ -391,6 +442,23 @@ function CompareContent({
             </div>
           )}
 
+          {/* 序列空间方向切换(M4 收尾:双向流对向视图);用主界面 .seg 分段控件 */}
+          {vm.opposite && (
+            <div className="fc-dir-row">
+              <div className="seg" role="tablist" aria-label="序列空间方向" data-testid="fc-dir-toggle">
+                <button type="button" className={viewSide === 'event' ? 'on' : ''} onClick={() => setViewSide('event')}>
+                  事件方向({vm.direction})
+                </button>
+                <button type="button" className={viewSide === 'opp' ? 'on' : ''} onClick={() => setViewSide('opp')}>
+                  对向({vm.opposite.dir})
+                </button>
+              </div>
+              {viewSide === 'opp' && (
+                <span className="fc-dir-note">对向为静态事实视图:无事件证据链,不做分镜动画</span>
+              )}
+            </div>
+          )}
+
           {/* 序列空间图例:图形中各颜色/纹理的含义(用户反馈:红绿块含义要显式说明) */}
           <div className="fc-seq-legend" data-testid="fc-seq-legend">
             <span>
@@ -409,12 +477,23 @@ function CompareContent({
             )}
           </div>
 
-          {/* 序列空间图形化:核心可视化(动画态跟随播放;静态模式信息等价) */}
-          <SeqSpaceGraphic
-            vm={vm}
-            playhead={pb.time}
-            progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
-          />
+          {/* 序列空间图形化:核心可视化(事件方向=分镜动画;对向=静态事实;静态模式信息等价) */}
+          {viewSide === 'event' || !vm.opposite ? (
+            <SeqSpaceGraphic
+              vm={vm}
+              playhead={pb.time}
+              progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
+            />
+          ) : (
+            <SeqSpaceGraphic
+              vm={vm}
+              seqSpaceOverride={vm.opposite.view}
+              label="对向序列空间"
+              caption="对向全景"
+              playhead={0}
+              progressive={false}
+            />
+          )}
 
           {/* 阶段信息面板(固定,不依赖 hover) */}
           <div className="fc-stage-panel" data-testid="fc-stage-panel" role="region" aria-label="当前阶段信息">
@@ -534,8 +613,10 @@ function CompareContent({
             </div>
           </div>
         </section>
+        )}
 
         {/* 右栏:正常参考(示意) */}
+        {(!narrow || faultTab === 'ref') && (
         <section className="fc-right" aria-label="正常参考示意">
           <h3>
             正常参考 <span className="fc-ref-badge">示意 · 非本抓包数据</span>
@@ -554,6 +635,7 @@ function CompareContent({
             不进入任何观察、证据或导出报告。
           </p>
         </section>
+        )}
       </div>
     </div>
   )

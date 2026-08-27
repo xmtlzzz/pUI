@@ -524,3 +524,27 @@
   border-top: 2px solid #ef4444;
   height: 0;
 }
+
+/* 序列空间方向切换(事件方向/对向) */
+.fc-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 4px;
+  flex-wrap: wrap;
+}
+
+.fc-dir-note {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* 窄窗口(<900px)双标签形态 */
+.fc-tabs {
+  margin-bottom: 10px;
+  flex: none;
+}
+
+.fc-body-narrow {
+  flex-direction: column;
+}

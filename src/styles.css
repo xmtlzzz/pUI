@@ -27,6 +27,7 @@ html, body, #root { height: 100%; margin: 0; font-family: system-ui, "Segoe UI",
 .btn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
 .btn.primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
 .btn:disabled { opacity: .5; cursor: default; transform: none; }
+.btn.sm { padding: 2px 8px; font-size: 12px; }
 .btn.icon { width: 26px; padding: 4px 0; text-align: center; line-height: 1; }
 
 /* A/B 风格切换分段控件 */
@@ -227,12 +228,9 @@ table.list .time-col { color: #94a3b8; }
 /* 报文详情标题行 + 「查看事件上下文」入口(M4:详情 ↔ 故障分析双向可达) */
 .detail-bar .detail-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
 .detail-bar .detail-title-row .detail-title { flex: 1; min-width: 0; }
-.detail-evbtn {
-  flex: none; border: 1px solid #fca5a5; color: #b91c1c; background: #fff;
-  border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;
-}
-.detail-evbtn:hover { background: #fef2f2; border-color: #ef4444; }
+.detail-evbtn { flex: none; color: #b91c1c; border-color: #fca5a5; }
+.detail-evbtn:hover { color: #b91c1c; background: #fef2f2; border-color: #ef4444; }
 
 /* 「返回故障分析(事件 N · 阶段 M)」恢复入口 */
-.resume-btn { border-color: #93c5fd; color: #1d4ed8; background: #eff6ff; }
-.resume-btn:hover { background: #dbeafe; }
+.resume-btn { border-color: #93c5fd; color: #1d4ed8; }
+.resume-btn:hover { background: #eff6ff; border-color: #60a5fa; }

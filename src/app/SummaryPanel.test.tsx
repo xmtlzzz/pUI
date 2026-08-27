@@ -141,3 +141,22 @@ describe('SummaryPanel 窗口统计', () => {
     expect(m5.textContent).toContain('零窗口期')
   })
 })
+
+describe('SummaryPanel 健康分(仅筛选用)', () => {
+  it('健康会话显示高分;有扣分时明细逐项可见', () => {
+    useApp.setState({ conversations: [conv('1', [pkt(1)])], selectedId: '1' }) // 单包 TCP:无扣分
+    const { container } = render(<SummaryPanel />)
+    const h = container.querySelector('[data-testid="summary-health"]')!
+    expect(h.textContent).toContain('健康分')
+    expect(h.textContent).toContain('health-v1')
+    expect(h.textContent).toContain('仅筛选用')
+    // 无扣分时不显示明细
+    expect(h.textContent).not.toContain('(-')
+
+    // 带 RST:显示扣分明细
+    const rst: Packet[] = [{ ...pkt(1), tcpFlags: '0x0004' }]
+    useApp.setState({ conversations: [conv('1', rst)], selectedId: '1' })
+    const v2 = render(<SummaryPanel />)
+    expect(v2.container.querySelector('[data-testid="summary-health"]')!.textContent).toContain('(-15)')
+  })
+})

@@ -7,6 +7,7 @@ import { tcpStatRows } from '../stats/tcpStatHints'
 import { computeRttStats, MIN_RTT_SAMPLES } from '../stats/rttStats'
 import { computeCaptureQuality } from '../stats/captureQuality'
 import { computeWindowStats } from '../stats/windowStats'
+import { computeHealthScore } from '../stats/healthScore'
 import { protocolColor } from '../model/protocolColors'
 import { displayHost } from '../model/types'
 
@@ -33,6 +34,7 @@ export function SummaryPanel() {
   const rtt = useMemo(() => (conv ? computeRttStats(conv.packets) : null), [conv])
   const cq = useMemo(() => (conv ? computeCaptureQuality(conv.packets) : null), [conv])
   const ws = useMemo(() => (conv ? computeWindowStats(conv.packets) : null), [conv])
+  const health = useMemo(() => (conv ? computeHealthScore(conv.packets) : null), [conv])
 
   if (!summary.conversationCount) {
     return <div className="empty">打开文件后显示分析摘要</div>
@@ -91,6 +93,15 @@ export function SummaryPanel() {
         conv && <div className="sub-title">TCP 异常统计:当前会话无重传/乱序等标记</div>
       )}
       {/* M5:RTT 近似与采集质量(样本不足/字段缺失显式 unavailable,不编造数字) */}
+      {conv && health && (
+        <div className="issue-line" data-testid="summary-health" title="透明健康分:仅用于筛选排序,不进入证据/导出;悬停查看扣分明细">
+          健康分 <b style={{ color: (health.score ?? 0) >= 80 ? '#059669' : (health.score ?? 0) >= 50 ? '#d97706' : '#dc2626' }}>{health.score ?? '—'}</b>
+          <span className="dim"> ({health.formula} · 仅筛选用)</span>
+          {health.deductions.length > 0 && (
+            <span> — {health.deductions.map((d) => `${d.reason}(-${d.points})`).join('; ')}</span>
+          )}
+        </div>
+      )}
       {conv && rtt && cq && (
         <>
           <div className="sub-title">会话测量(选中会话 · 单观察点近似)</div>

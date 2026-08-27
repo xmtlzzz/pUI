@@ -38,6 +38,8 @@ interface FaultCompareProps {
   eventKey?: string
   /** 从报文详情返回时的初始阶段下标(挂载时转成阶段起点时刻,仅初始化生效) */
   initialStageIndex?: number
+  /** 导出当前事件为 Markdown 证据报告(实际故障侧;正常参考不导出) */
+  onExport?: () => void
 }
 
 function phaseLabel(p: PlaybackPhase): string {
@@ -302,6 +304,7 @@ function CompareContent({
   eventIndex = 0,
   onSelectEvent,
   initialStageIndex,
+  onExport,
 }: FaultCompareProps & { vm: CompareViewModel }) {
   const stageAt = useMemo(
     () => (t: number): number => {
@@ -362,6 +365,13 @@ function CompareContent({
         <span className="fc-headline">{vm.headline}</span>
         <span className="fc-phase">
           {phaseLabel(pb.phase)} {pb.phase === 'playing' || pb.phase === 'paused' ? `(${Math.round(pb.time * 100)}%)` : ''}
+        </span>
+        <span className="fc-controls">
+          {onExport && (
+            <button type="button" className="btn" onClick={onExport} data-testid="fc-export" title="导出当前事件为 Markdown 证据报告(不含正常参考示意)">
+              导出报告
+            </button>
+          )}
         </span>
         {pb.phase !== 'static' && (
           <span className="fc-controls">

@@ -7,10 +7,18 @@ const DIR_CN: Record<string, string> = { request: '→ 请求', response: '← �
  * Markdown 表格单元格转义:报文字段(info/URI/DNS 查询名)是抓包文件里的不可信内容,
  * 裸拼会破坏表格(| 与换行)或在下游 Markdown 渲染器注入 HTML/图片标签。
  * 反引号包裹为代码形式并转义内部反引号,尖括号剥除防 <img onerror> 透传。
+ * 转义串用 BS+BT 显式构造:字符串字面量 '\\`' 实际只是单个反引号(静默失效的转义)。
  */
+const MD_BS = String.fromCharCode(92) // 反斜杠
+const MD_BT = String.fromCharCode(96) // 反引号
+
 function mdCell(s: string): string {
   const noAngle = s.replace(/[<>]/g, '')
-  return '`' + noAngle.replace(/`/g, '\\`').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ') + '`'
+  return (
+    MD_BT +
+    noAngle.split(MD_BT).join(MD_BS + MD_BT).split('|').join(MD_BS + '|').replace(/\r?\n/g, ' ') +
+    MD_BT
+  )
 }
 
 /** 时序叙述导出(Markdown):教学/周报可直接粘贴的文本版会话时间线 */

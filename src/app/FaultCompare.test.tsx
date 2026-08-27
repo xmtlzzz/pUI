@@ -265,6 +265,16 @@ describe('FaultCompare 对照页(整页板块)', () => {
     view.unmount()
   })
 
+  it('导出按钮:传入 onExport 时渲染,点击触发回调;缺省不渲染', () => {
+    const onExport = vi.fn()
+    const noBtn = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(noBtn.container.querySelector('[data-testid="fc-export"]')).toBeNull()
+    noBtn.unmount()
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} onExport={onExport} />)
+    fireEvent.click(screen.getByTestId('fc-export'))
+    expect(onExport).toHaveBeenCalledOnce()
+  })
+
   it('vm=null 时渲染空态并提供返回入口', () => {
     const onBack = vi.fn()
     render(<FaultCompare vm={null} onSelectPacket={vi.fn()} onBack={onBack} />)

@@ -11,6 +11,7 @@ import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
 import { exportTranscript } from '../export/exportTranscript'
+import { exportCompareReport, defaultCompareReportName } from '../export/exportCompareReport'
 import { saveText } from '../bridge/tauri'
 import { analyzeStream } from '../analysis/tcp/streamAnalysis'
 import { detectTcpEvents } from '../analysis/tcp/events'
@@ -25,6 +26,8 @@ function clamp(v: number, min: number, max: number): number {
 export function AppLayout() {
   const openFile = useApp((s) => s.openFile)
   const error = useApp((s) => s.error)
+  const meta = useApp((s) => s.meta)
+  const currentPath = useApp((s) => s.currentPath)
   const selected = useApp((s) => selectSelected(s))
   const diagramStyle = useApp((s) => s.diagramStyle)
   const timeMode = useApp((s) => s.timeMode)
@@ -136,6 +139,24 @@ export function AppLayout() {
     setPendingResume(null)
     openCompare(selected.id)
   }, [openCompare, selected, setCompareEventIndex])
+
+  // 对照页证据导出(口径:实际故障侧=证据;正常参考示意永不进入导出)
+  const onExportCompare = useCallback(async () => {
+    if (!selected || !compare?.vm || compare.eventIndex < 0) return
+    try {
+      const label = `${selected.client} ↔ ${selected.server}`
+      const md = exportCompareReport({
+        fileName: meta?.fileName ?? currentPath.split(/[\\/]/).pop() ?? 'capture.pcapng',
+        conversationLabel: label,
+        eventNo: compare.eventIndex + 1,
+        eventTotal: compare.summaries.length,
+        vm: compare.vm,
+      })
+      await saveText(defaultCompareReportName(label, compare.eventIndex + 1), md)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }, [compare, currentPath, meta, selected])
 
   // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下);持久化,拖一次即记住
   const LS_LIST = 'pui:listWidth'
@@ -284,6 +305,7 @@ export function AppLayout() {
               onSelectEvent={setCompareEventIndex}
               eventKey={compare?.eventIndex != null && compare.eventIndex >= 0 ? compare.summaries[compare.eventIndex]?.id : undefined}
               initialStageIndex={pendingResume && pendingResume.conversationId === compareFor ? pendingResume.stageIndex : undefined}
+              onExport={onExportCompare}
               onSelectPacket={jumpToPacket}
               onBack={exitCompare}
             />

@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Packet } from '../../model/types'
-import { analyzeStream } from './streamAnalysis'
-import {
-  detectZeroWindowEvents,
-  detectFullWindowEvents,
-  detectRstEvents,
-  detectSynRetransmissionEvents,
-} from './m5Events'
+import { detectZeroWindowEvents, detectFullWindowEvents, detectRstEvents, detectSynRetransmissionEvents } from './m5Events'
 
 /**
  * M5 事件扩展(每项可独立关闭):Zero/Full Window、RST、SYN 重传。

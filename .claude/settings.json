@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/run-related-test.cjs",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

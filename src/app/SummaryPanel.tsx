@@ -6,6 +6,7 @@ import { deriveTcpStats } from '../stats/tcpStats'
 import { tcpStatRows } from '../stats/tcpStatHints'
 import { computeRttStats, MIN_RTT_SAMPLES } from '../stats/rttStats'
 import { computeCaptureQuality } from '../stats/captureQuality'
+import { computeWindowStats } from '../stats/windowStats'
 import { protocolColor } from '../model/protocolColors'
 import { displayHost } from '../model/types'
 
@@ -31,6 +32,7 @@ export function SummaryPanel() {
   // M5:选中会话的 RTT 近似与采集质量(样本不足/字段缺失时显式 unavailable)
   const rtt = useMemo(() => (conv ? computeRttStats(conv.packets) : null), [conv])
   const cq = useMemo(() => (conv ? computeCaptureQuality(conv.packets) : null), [conv])
+  const ws = useMemo(() => (conv ? computeWindowStats(conv.packets) : null), [conv])
 
   if (!summary.conversationCount) {
     return <div className="empty">打开文件后显示分析摘要</div>
@@ -104,9 +106,22 @@ export function SummaryPanel() {
             <span title="frame.cap_len < frame.len 的帧:抓包工具没抓全(采集侧信号),不是网络丢包证据">
               截断帧 <b>{cq.available ? cq.truncatedCount : '—'}</b>
             </span>
+            <span title="frame.cap_len < frame.len 的帧:抓包工具没抓全(采集侧信号),不是网络丢包证据">
+              截断帧 <b>{cq.available ? cq.truncatedCount : '—'}</b>
+            </span>
             <span>
               截断占比 <b>{cq.available ? `${(cq.truncatedRatio! * 100).toFixed(1)}%` : 'unavailable'}</b>
             </span>
+            <span title="对端通告的接收窗口:最小值贴近 0 说明对端缓冲吃紧。窗口字节数是通告值,单观察点不见实际缓冲区">
+              窗口 min <b>{ws?.available ? `${(ws.minBytes! / 1024).toFixed(1)}KB` : '—'}</b>
+            </span>
+            <span>窗口 max <b>{ws?.available ? `${(ws.maxBytes! / 1024).toFixed(1)}KB` : '—'}</b></span>
+            <span>窗口变化 <b>{ws?.available ? ws.changes : '—'}</b></span>
+            {ws && ws.zeroCount > 0 && (
+              <span title="通告值连续为 0 的期数(合并计);零窗口本身是流量控制,长期未重开才值得关注">
+                零窗口期 <b>{ws.zeroCount}</b>
+              </span>
+            )}
           </div>
           {cq.available && cq.truncatedCount > 0 && (
             <div className="issue-line" title={`截断帧:#${cq.truncatedPackets.join(', #')}`}>

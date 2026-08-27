@@ -122,3 +122,22 @@ describe('SummaryPanel M5 会话测量(RTT 近似 + 采集质量)', () => {
     expect(v2.container.querySelector('[data-testid="summary-m5"]')!.textContent).toContain('unavailable')
   })
 })
+
+describe('SummaryPanel 窗口统计', () => {
+  it('窗口通告可用时显示 min/max/变化次数;零窗口期单列', () => {
+    const packets: Packet[] = [
+      { ...pkt(1), tcpFlags: '0x0018', tcpLen: 100, srcPort: 5000, dstPort: 80 },
+      { ...pkt(2), tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 65535, srcPort: 80, dstPort: 5000 },
+      { ...pkt(3), tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 0, srcPort: 80, dstPort: 5000 },
+      { ...pkt(4), tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 0, srcPort: 80, dstPort: 5000 },
+      { ...pkt(5), tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 8760, srcPort: 80, dstPort: 5000 },
+    ]
+    useApp.setState({ conversations: [conv('1', packets)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const m5 = container.querySelector('[data-testid="summary-m5"]')!
+    expect(m5.textContent).toContain('窗口 min')
+    expect(m5.textContent).toContain('0.0KB') // 0 → 0.0KB
+    expect(m5.textContent).toContain('窗口变化')
+    expect(m5.textContent).toContain('零窗口期')
+  })
+})

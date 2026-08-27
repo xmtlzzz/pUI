@@ -44,6 +44,17 @@ function resetHexCache(): Record<number, string> {
 /** 同一帧的并发 fetchHex 去重:重复请求复用同一个 in-flight Promise */
 const hexInflight = new Map<number, Promise<string>>()
 
+/**
+ * 跳回报文详情前保存的对照页位置(按分镜/阶段粒度,案例 openQuestion 裁定)。
+ * 仅导航性 UI 状态;事件/阶段的派生数据仍由渲染时纯函数重算。
+ */
+export interface CompareResume {
+  conversationId: string
+  eventIndex: number
+  /** 离开时的活动阶段下标(-1 = 尚无活动阶段) */
+  stageIndex: number
+}
+
 export interface AppState {
   meta: CaptureMeta | null
   packets: Packet[]
@@ -92,9 +103,16 @@ export interface AppState {
   compareFor: string | null
   /** 对照页内当前查看的事件下标(导航性 UI 状态;进入新对照时重置为 0) */
   compareEventIndex: number
+  /** 跳回报文详情前的对照页位置,供报文详情侧「返回故障分析」恢复;新开文件清空 */
+  compareResume: CompareResume | null
   openCompare: (conversationId: string) => void
   closeCompare: () => void
   setCompareEventIndex: (i: number) => void
+  /** 跳包前记录来源(事件+阶段),closeCompare 不清除 —— 恢复入口消费后才消失 */
+  jumpFromCompare: (r: CompareResume) => void
+  /** 取走并清空 resume(读改一体,避免双渲染竞态);无则返回 null */
+  consumeCompareResume: () => CompareResume | null
+  clearCompareResume: () => void
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -122,10 +140,18 @@ export const useApp = create<AppState>((set, get) => ({
   hexCache: {},
   compareFor: null,
   compareEventIndex: 0,
+  compareResume: null,
 
   openCompare: (conversationId) => set({ compareFor: conversationId, compareEventIndex: 0 }),
   closeCompare: () => set({ compareFor: null }),
   setCompareEventIndex: (i) => set({ compareEventIndex: Math.max(0, i) }),
+  jumpFromCompare: (r) => set({ compareResume: r }),
+  consumeCompareResume: () => {
+    const r = get().compareResume
+    if (r) set({ compareResume: null })
+    return r
+  },
+  clearCompareResume: () => set({ compareResume: null }),
 
   async openFile(path) {
     const seq = get().loadSeq + 1
@@ -140,6 +166,8 @@ export const useApp = create<AppState>((set, get) => ({
         meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
         currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
+        // 换文件后旧对照上下文全部失效
+        compareFor: null, compareEventIndex: 0, compareResume: null,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -160,6 +188,7 @@ export const useApp = create<AppState>((set, get) => ({
         meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
         currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
+        compareFor: null, compareEventIndex: 0, compareResume: null,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return

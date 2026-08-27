@@ -159,3 +159,39 @@ describe('appStore 加载一致性', () => {
     expect(useApp.getState().hexCache[1]).toBeUndefined() // 旧结果未写入新文件缓存
   })
 })
+
+describe('M4 对照页导航状态', () => {
+  const R = {
+    conversationId: 'conv-1',
+    eventIndex: 2,
+    stageIndex: 3,
+  }
+
+  it('openCompare 重置事件下标;jumpFromCompare 记录来源且 closeCompare 不清除', () => {
+    useApp.setState({ compareFor: 'old', compareEventIndex: 5, compareResume: null })
+    useApp.getState().openCompare('conv-1')
+    expect(useApp.getState().compareEventIndex).toBe(0)
+    useApp.getState().setCompareEventIndex(4)
+    expect(useApp.getState().compareEventIndex).toBe(4)
+    // 负数钳制到 0
+    useApp.getState().setCompareEventIndex(-3)
+    expect(useApp.getState().compareEventIndex).toBe(0)
+
+    useApp.getState().jumpFromCompare(R)
+    useApp.getState().closeCompare()
+    expect(useApp.getState().compareResume).toEqual(R) // 恢复入口仍可用
+  })
+
+  it('consumeCompareResume 读改一体:取走后为 null,再次取走返回 null', () => {
+    useApp.setState({ compareResume: R })
+    expect(useApp.getState().consumeCompareResume()).toEqual(R)
+    expect(useApp.getState().compareResume).toBeNull()
+    expect(useApp.getState().consumeCompareResume()).toBeNull()
+  })
+
+  it('clearCompareResume 兜底清除', () => {
+    useApp.setState({ compareResume: R })
+    useApp.getState().clearCompareResume()
+    expect(useApp.getState().compareResume).toBeNull()
+  })
+})

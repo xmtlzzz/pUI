@@ -134,18 +134,39 @@ describe('FaultCompare 对照页(整页板块)', () => {
     const chip = [...container.querySelectorAll('.fc-keypkt')].find((b) => b.textContent?.includes('#11'))
     expect(chip).toBeTruthy()
     fireEvent.click(chip!)
-    expect(onSel).toHaveBeenCalledWith(11)
+    expect(onSel).toHaveBeenCalledWith(11, { eventIndex: 0, stageIndex: 0 })
   })
 
-  it('观察/推断/限制三层固定可见,观察项带跳包按钮', () => {
+  it('观察/推断/限制三层固定可见,观察项带跳包按钮(携带事件+阶段上下文)', () => {
     const onSel = vi.fn()
-    render(<FaultCompare vm={makeVm()} onSelectPacket={onSel} onBack={vi.fn()} />)
+    render(<FaultCompare vm={makeVm()} onSelectPacket={onSel} eventIndex={2} onBack={vi.fn()} />)
     expect(screen.getByText('观察 Observed')).toBeTruthy()
     expect(screen.getByText(/推断 Inference · 置信度 medium/)).toBeTruthy()
     expect(screen.getByText('限制 Limitation')).toBeTruthy()
     expect(screen.getByText('单观察点抓包:无法定位丢包发生在哪个网络节点')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '#6' }))
-    expect(onSel).toHaveBeenCalledWith(6)
+    // 上下文按分镜粒度:当前事件下标 + 初始活动阶段(时刻 0 → 阶段 0)
+    expect(onSel).toHaveBeenCalledWith(6, { eventIndex: 2, stageIndex: 0 })
+  })
+
+  it('选中阶段后跳包:ctx.stageIndex 为所选阶段;initialStageIndex 挂载时恢复到该阶段起点', () => {
+    const onSel = vi.fn()
+    const view = render(<FaultCompare vm={makeVm()} onSelectPacket={onSel} onBack={vi.fn()} />)
+    const retxCard = screen.getAllByRole('button').find(
+      (b) => b.className.includes('fc-stage-card') && b.textContent?.includes('重传回补'),
+    )!
+    fireEvent.click(retxCard)
+    const chip = [...view.container.querySelectorAll('.fc-keypkt')].find((b) => b.textContent?.includes('#11'))!
+    fireEvent.click(chip)
+    expect(onSel).toHaveBeenCalledWith(11, { eventIndex: 0, stageIndex: 3 })
+
+    // 恢复挂载:initialStageIndex=3 → 播放游标位于该阶段起点(t0>0),面板直接显示阶段 4
+    view.unmount()
+    const restored = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} initialStageIndex={3} onBack={vi.fn()} />)
+    expect(screen.getByTestId('fc-stage-panel').textContent).toContain('阶段 4/5')
+    const cursor = restored.container.querySelector('.fc-timeband-cursor') as HTMLElement | null
+    expect(cursor).toBeTruthy()
+    expect(Number.parseFloat(cursor!.style.left)).toBeGreaterThan(0) // 不再是起点 0
   })
 
   it('键盘/静态模式:jsdom 无 matchMedia 时进入静态模式并给出解释;阶段卡照常可点(遍历无动画)', () => {

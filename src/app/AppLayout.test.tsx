@@ -172,4 +172,79 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(container.querySelectorAll('.fc-evbtn')[1].className).toContain('active')
     vi.unstubAllGlobals()
   })
+
+  it('跳包→详情→返回恢复:事件与阶段按分镜粒度还原,报文详情提供「查看事件上下文」入口', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const c2s = (o: Record<string, unknown>) => ({ transport: 'tcp', proto: 'tcp', len: 54 + Number(o.tcpLen ?? 0), direction: 'other', tcpStream: 0, srcIp: '10.0.0.1', dstIp: '10.0.0.2', srcPort: 1234, dstPort: 80, ...o }) as never
+    const s2c = (o: Record<string, unknown>) => ({ transport: 'tcp', proto: 'tcp', len: 54 + Number(o.tcpLen ?? 0), direction: 'other', tcpStream: 0, srcIp: '10.0.0.2', dstIp: '10.0.0.1', srcPort: 80, dstPort: 1234, ...o }) as never
+    const PSHACK = '0x0018'
+    const packets = [
+      c2s({ number: 1, time: 0, tcpFlags: '0x0002', tcpSeq: 0, tcpLen: 0 }),
+      s2c({ number: 2, time: 0.01, tcpFlags: '0x0012', tcpSeq: 0, tcpAck: 1, tcpLen: 0 }),
+      c2s({ number: 3, time: 0.02, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 1, tcpLen: 0 }),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0 }),
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100 }),
+      s2c({ number: 7, time: 0.06, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[201, 301]], tcpDupAckNum: 1 }),
+      c2s({ number: 8, time: 0.07, tcpFlags: PSHACK, tcpSeq: 301, tcpAck: 1, tcpLen: 100 }),
+      s2c({ number: 9, time: 0.08, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[201, 401]], tcpDupAckNum: 2 }),
+    ]
+    const conversations = aggregateConversations(packets)
+    const conv = conversations[0]
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      selectedId: conv.id,
+      compareFor: null,
+      compareEventIndex: 0,
+      compareResume: null,
+    })
+
+    const { container } = render(<AppLayout />)
+
+    // 报文详情「查看事件上下文」入口:选中证据链报文 #7 后点击 → 直达对照页
+    act(() => {
+      useApp.getState().selectPacket(7)
+    })
+    const entryBtn = container.querySelector('[data-testid="pd-view-events"]')!
+    expect(entryBtn).toBeTruthy()
+    act(() => {
+      fireEvent.click(entryBtn)
+    })
+    expect(container.querySelector('[data-testid="fault-compare"]')).toBeTruthy()
+    expect(container.querySelector('.fc-headline')!.textContent).toMatch(/疑似丢包 \/ 延迟到达/)
+
+    // 对照页内选中「重复确认」阶段(下标 2)再跳包 #9 → 回主视图,resume 已记录
+    // (两个独立 act:确保第一次点击的状态先落盘,第二次点击携带的是刷新后的上下文)
+    act(() => {
+      const dupCard = [...container.querySelectorAll('.fc-stage-card')].find((b) =>
+        b.textContent?.includes('重复确认'),
+      ) as HTMLButtonElement
+      fireEvent.click(dupCard)
+    })
+    act(() => {
+      const chip = [...container.querySelectorAll('.fc-keypkt')].find((b) => b.textContent?.includes('#9')) as HTMLButtonElement
+      fireEvent.click(chip)
+    })
+    expect(useApp.getState().compareFor).toBeNull()
+    const resumeState = useApp.getState().compareResume!
+    expect(resumeState.conversationId).toBe(conv.id)
+    expect(resumeState.stageIndex).toBe(2)
+
+    // 主视图出现「返回故障分析(事件 1 · 阶段 3)」按钮;点击后事件、阶段、播放位置全部还原
+    const resumeBtn = container.querySelector('[data-testid="fault-analyze-resume"]') as HTMLButtonElement
+    expect(resumeBtn.textContent).toContain('事件 1 · 阶段 3')
+    act(() => {
+      fireEvent.click(resumeBtn)
+    })
+    expect(container.querySelector('[data-testid="fault-compare"]')).toBeTruthy()
+    expect((container.querySelector('[data-testid="fc-stage-panel"]') as HTMLElement).textContent).toContain('阶段 3/')
+    // resume 消费即清除;播放游标停在所恢复阶段起点(t0>0)
+    expect(useApp.getState().compareResume).toBeNull()
+    const cursor = container.querySelector('.fc-timeband-cursor') as HTMLElement
+    expect(Number.parseFloat(cursor.style.left)).toBeGreaterThan(0)
+    vi.unstubAllGlobals()
+  })
 })

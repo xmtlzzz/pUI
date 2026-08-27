@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { useApp, selectSelectedPacket } from '../state/appStore'
 import { buildPacketTree, type DetailNode } from './packetTree'
 
-export function PacketDetail() {
+export function PacketDetail({ onViewTcpEvents }: { onViewTcpEvents?: () => void } = {}) {
   const packet = useApp((s) => selectSelectedPacket(s))
   const fetchHexFor = useApp((s) => s.fetchHexFor)
   const getHex = useApp((s) => s.getHex)
@@ -32,7 +32,23 @@ export function PacketDetail() {
 
   return (
     <div className="detail-bar">
-      <div className="detail-title">报文详情 · #{packet.number}</div>
+      {/* TCP 报文附「查看事件上下文」入口(计划 M4):报文详情 ↔ 故障分析双向可达 */}
+      <div className="detail-title-row">
+        <div className="detail-title">报文详情 · #{packet.number}</div>
+        {onViewTcpEvents && packet.transport === 'tcp' && (
+          <button
+            type="button"
+            className="detail-evbtn"
+            data-testid="pd-view-events"
+            onClick={(e: MouseEvent) => {
+              e.stopPropagation()
+              onViewTcpEvents()
+            }}
+          >
+            查看事件上下文 →
+          </button>
+        )}
+      </div>
       <Tree nodes={buildPacketTree(packet)} />
       {busy && <div style={{ color: '#94a3b8' }}>加载 hex…</div>}
       {err && <div style={{ color: '#b91c1c' }}>hex 不可用</div>}

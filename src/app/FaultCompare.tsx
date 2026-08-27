@@ -18,9 +18,15 @@ import './faultCompare.css'
  * - 关键报文链只含证据链报文(点击跳回原报文)。
  */
 
+/** 跳回原报文时随行的对照页位置(事件下标+活动阶段下标),父层据此支持返回恢复 */
+export interface JumpContext {
+  eventIndex: number
+  stageIndex: number
+}
+
 interface FaultCompareProps {
   vm: CompareViewModel | null
-  onSelectPacket: (n: number) => void
+  onSelectPacket: (n: number, ctx?: JumpContext) => void
   onBack: () => void
   /** 事件切换器数据(可选;不传或为空时不渲染切换器) */
   events?: CompareEventSummary[]
@@ -30,6 +36,8 @@ interface FaultCompareProps {
   onSelectEvent?: (i: number) => void
   /** 当前事件的稳定 id,作为内容区 remount key */
   eventKey?: string
+  /** 从报文详情返回时的初始阶段下标(挂载时转成阶段起点时刻,仅初始化生效) */
+  initialStageIndex?: number
 }
 
 function phaseLabel(p: PlaybackPhase): string {
@@ -255,6 +263,7 @@ function CompareContent({
   events,
   eventIndex = 0,
   onSelectEvent,
+  initialStageIndex,
 }: FaultCompareProps & { vm: CompareViewModel }) {
   const stageAt = useMemo(
     () => (t: number): number => {
@@ -266,7 +275,9 @@ function CompareContent({
     },
     [vm],
   )
-  const pb = usePlayback(vm?.stages ?? [], stageAt)
+  // 恢复位置:初始阶段下标 -> 阶段起点时刻(usePlayback 仅在挂载时读取一次)
+  const initialTime = initialStageIndex != null ? (vm.stages[initialStageIndex]?.t0 ?? 0) : 0
+  const pb = usePlayback(vm.stages, stageAt, initialTime)
   const [selectedStage, setSelectedStage] = useState<number | null>(null)
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -297,6 +308,8 @@ function CompareContent({
   const activeIdx = selectedStage ?? pb.activeStageIndex
   const active = activeIdx >= 0 ? vm.stages[activeIdx] : null
   const showSwitcher = !!events && events.length > 0 && !!onSelectEvent
+  // 跳包随行上下文:当前事件 + 活动阶段(阶段粒度恢复,案例 openQuestion 裁定)
+  const jumpCtx = (): JumpContext => ({ eventIndex, stageIndex: activeIdx })
 
   return (
     <div className="fc-page" data-testid="fault-compare" tabIndex={0} onKeyDown={onKeyDown}>
@@ -420,9 +433,8 @@ function CompareContent({
                   }}
                 />
               ))}
-              {(pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done') && (
-                <div className="fc-timeband-cursor" style={{ left: `${pb.time * 100}%` }} />
-              )}
+              {/* 游标=当前位置信息:idle(未开始)之外一律可见,静态模式同样信息等价 */}
+              {pb.phase !== 'idle' && <div className="fc-timeband-cursor" style={{ left: `${pb.time * 100}%` }} />}
             </div>
             <div className="fc-stage-cards" data-testid="fc-stage-cards">
               {vm.stages.map((s, i) => (
@@ -452,7 +464,7 @@ function CompareContent({
               <ul>
                 {vm.card.observations.map((o, i) => (
                   <li key={i}>
-                    <button type="button" className="fc-pkt-chip" onClick={() => onSelectPacket(o.packetNumber)} title="查看报文详情">
+                    <button type="button" className="fc-pkt-chip" onClick={() => onSelectPacket(o.packetNumber, jumpCtx())} title="查看报文详情">
                       #{o.packetNumber}
                     </button>
                     {o.statement}
@@ -483,7 +495,7 @@ function CompareContent({
                   key={m.packetNumber}
                   type="button"
                   className={`fc-keypkt ${m.stageIndex === activeIdx && (pb.phase !== 'idle' || selectedStage != null) ? 'now' : ''}`}
-                  onClick={() => onSelectPacket(m.packetNumber)}
+                  onClick={() => onSelectPacket(m.packetNumber, jumpCtx())}
                   title={m.label}
                 >
                   {m.roleBadge && <span className="fc-keypkt-role">{m.roleBadge}</span>}#{m.packetNumber}

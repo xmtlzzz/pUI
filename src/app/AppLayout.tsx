@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { Toolbar } from './Toolbar'
 import { FilterPanel } from './FilterPanel'
 import { ListPane } from './ListPane'
@@ -7,6 +7,7 @@ import { SequenceDiagram } from '../render/SequenceDiagram'
 import { PacketDetail } from '../detail/PacketDetail'
 import { FaultCompare } from './FaultCompare'
 import { useApp, selectSelected } from '../state/appStore'
+import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
 import { exportTranscript } from '../export/exportTranscript'
@@ -32,6 +33,9 @@ export function AppLayout() {
   const compareFor = useApp((s) => s.compareFor)
   const compareEventIndex = useApp((s) => s.compareEventIndex)
   const setCompareEventIndex = useApp((s) => s.setCompareEventIndex)
+  const compareResume = useApp((s) => s.compareResume)
+  const jumpFromCompare = useApp((s) => s.jumpFromCompare)
+  const consumeCompareResume = useApp((s) => s.consumeCompareResume)
   const openCompare = useApp((s) => s.openCompare)
   const closeCompare = useApp((s) => s.closeCompare)
   const [drag, setDrag] = useState(false)
@@ -53,6 +57,62 @@ export function AppLayout() {
     return { summaries: buildEventSummaries(events), eventIndex: idx, vm }
   }, [compareFor, selected, compareEventIndex])
   const compareVm = compare?.vm ?? null
+
+  // 跳包后返回恢复(case 审批裁定按分镜/阶段粒度):pendingResume 保存一次性初始阶段,
+  // FaultCompare 挂载时读取;退出对照页时清除,避免下次正常进入误恢复。
+  const [pendingResume, setPendingResume] = useState<CompareResume | null>(null)
+  const exitCompare = useCallback(() => {
+    closeCompare()
+    setPendingResume(null)
+  }, [closeCompare])
+
+  // 对照页点跳包:记录(事件+阶段)→ 退回主视图并定位报文详情
+  const jumpToPacket = useCallback(
+    (n: number, ctx?: { eventIndex: number; stageIndex: number }) => {
+      if (ctx && compare && compare.eventIndex >= 0) {
+        jumpFromCompare({ conversationId: selected!.id, eventIndex: ctx.eventIndex, stageIndex: ctx.stageIndex })
+      }
+      setPendingResume(null)
+      closeCompare()
+      selectPacket(n)
+    },
+    [closeCompare, compare, jumpFromCompare, selectPacket, selected],
+  )
+
+  // 报文详情侧「返回故障分析」:消费 resume 恢复事件与阶段
+  const resumeFaultAnalysis = useCallback(() => {
+    const r = consumeCompareResume()
+    if (!r || !selected || selected.id !== r.conversationId) return
+    setCompareEventIndex(r.eventIndex)
+    setPendingResume(r)
+    openCompare(r.conversationId)
+  }, [consumeCompareResume, openCompare, selected, setCompareEventIndex])
+
+  // 报文详情「查看事件上下文」入口:点击时惰性分析当前会话(TCP 事件检测是纯函数,
+  // 单次成本受性能护栏约束),命中证据链报文则直接定位到对应事件。
+  const viewEventContext = useCallback(() => {
+    if (!selected) return
+    const facts = analyzeStream(selected.packets)
+    const events = detectTcpEvents(facts, selected.packets)
+    if (events.length === 0) {
+      window.alert('该会话未检出可解释的 TCP 事件。')
+      return
+    }
+    const pNum = useApp.getState().selectedPacket
+    const found =
+      pNum != null
+        ? events.findIndex(
+            (ev) =>
+              ev.originalSegmentPacket === pNum ||
+              ev.retransmissionPacket === pNum ||
+              ev.recoveryAckPacket === pNum ||
+              ev.duplicateAckPackets.includes(pNum),
+          )
+        : -1
+    if (found > 0) setCompareEventIndex(found) // 下标 0 为默认值,无需设置
+    setPendingResume(null)
+    openCompare(selected.id)
+  }, [openCompare, selected, setCompareEventIndex])
 
   // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下);持久化,拖一次即记住
   const LS_LIST = 'pui:listWidth'
@@ -200,12 +260,9 @@ export function AppLayout() {
               eventIndex={compare?.eventIndex}
               onSelectEvent={setCompareEventIndex}
               eventKey={compare?.eventIndex != null && compare.eventIndex >= 0 ? compare.summaries[compare.eventIndex]?.id : undefined}
-              onSelectPacket={(n) => {
-                // 跳回原报文:退出对照板块回到主视图并定位报文详情
-                closeCompare()
-                selectPacket(n)
-              }}
-              onBack={closeCompare}
+              initialStageIndex={pendingResume && pendingResume.conversationId === compareFor ? pendingResume.stageIndex : undefined}
+              onSelectPacket={jumpToPacket}
+              onBack={exitCompare}
             />
           </ErrorBoundary>
         </>
@@ -214,10 +271,23 @@ export function AppLayout() {
           <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
           {error && <div className="err">{error}</div>}
           {selected && (
-            <div style={{ padding: '4px 12px 0' }}>
+            <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>
               <button type="button" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">
                 ⚠ 故障分析(对照正常参考)
               </button>
+              {/* 跳包后的返回入口:恢复离开时的事件与阶段(分镜粒度) */}
+              {compareResume && compareResume.conversationId === selected.id && (
+                <button
+                  type="button"
+                  className="resume-btn"
+                  data-testid="fault-analyze-resume"
+                  onClick={resumeFaultAnalysis}
+                  title="回到离开时的故障事件与分析阶段"
+                >
+                  ↩ 返回故障分析{compareResume.eventIndex >= 0 ? `(事件 ${compareResume.eventIndex + 1}` : ''}
+                  {compareResume.stageIndex >= 0 ? ` · 阶段 ${compareResume.stageIndex + 1})` : compareResume.eventIndex >= 0 ? ')' : ''}
+                </button>
+              )}
             </div>
           )}
           <div className="body">
@@ -237,7 +307,7 @@ export function AppLayout() {
               <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
               <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>
                 <ErrorBoundary name="报文详情">
-                  <PacketDetail />
+                  <PacketDetail onViewTcpEvents={viewEventContext} />
                 </ErrorBoundary>
               </div>
             </div>

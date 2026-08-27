@@ -44,10 +44,15 @@ function prefersReducedMotion(): boolean {
     : true
 }
 
-export function usePlayback(stages: StageBandEntry[], stageAt: (t: number) => number): Playback {
+export function usePlayback(stages: StageBandEntry[], stageAt: (t: number) => number, initialTime = 0): Playback {
   const [systemReduced] = useState(() => prefersReducedMotion())
-  const [phase, setPhase] = useState<PlaybackPhase>(() => (prefersReducedMotion() ? 'static' : 'idle'))
-  const [time, setTime] = useState(0)
+  // 恢复时刻钳制到 [0,1];从报文详情返回的恢复(落在某阶段起点):进入即「已暂停」在
+  // 恢复位置 —— 时间带游标与控制条立即可见,不允许恢复后看似从未播放过。
+  const initT = Math.min(Math.max(initialTime, 0), 1)
+  const [phase, setPhase] = useState<PlaybackPhase>(() =>
+    prefersReducedMotion() ? 'static' : initT > 0 ? 'paused' : 'idle',
+  )
+  const [time, setTime] = useState(initT)
   const tweenRef = useRef<gsap.core.Tween | null>(null)
 
   const kill = useCallback(() => {

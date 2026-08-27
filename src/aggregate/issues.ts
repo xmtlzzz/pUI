@@ -1,4 +1,5 @@
 import type { Conversation, ConversationIssue, Packet } from '../model/types'
+import { detectZeroWindowEvents } from '../analysis/tcp/m5Events'
 
 /** http.time 超过该阈值(秒)视为慢响应;可通过 opts.slowResponseThreshold 覆盖(不同网络环境误报率不同) */
 const SLOW_RESPONSE_THRESHOLD = 1.0
@@ -75,6 +76,18 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
     }
     if (rst) {
       issues.push({ type: 'rst', message: `TCP 连接被重置(RST #${rst.number})`, packetNumber: rst.number })
+    }
+
+    // M5 零窗口事件:接收方通告 window=0(流量控制,本身不指示故障;未重开才值得关注)。
+    // 复用 m5Events 检测器,保持"同一语义只在一处实现";窗口字段缺失时检测器返回空。
+    for (const zw of detectZeroWindowEvents(packets)) {
+      issues.push({
+        type: 'zero-window',
+        message: zw.reopenPacket
+          ? `零窗口 #${zw.startPacket}(通告方 ${zw.direction === 'c2s' ? 'c2s' : 's2c'}),${zw.durationSeconds?.toFixed(2)}s 后重开(#${zw.reopenPacket})`
+          : `零窗口 #${zw.startPacket}(通告方 ${zw.direction === 'c2s' ? 'c2s' : 's2c'}),至抓包结束未重开`,
+        packetNumber: zw.startPacket,
+      })
     }
   }
 

@@ -15,6 +15,7 @@ const ISSUE_TYPES: Array<{ type: string; label: string }> = [
   { type: 'unanswered', label: '请求无响应' },
   { type: 'syn-no-reply', label: '连接未建立' },
   { type: 'one-way', label: '单向' },
+  { type: 'zero-window', label: '零窗口' },
 ]
 
 export function FilterPanel() {

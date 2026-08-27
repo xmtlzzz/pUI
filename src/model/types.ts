@@ -66,7 +66,7 @@ export interface Conversation {
 
 /** 会话级可疑丢包/异常标注 */
 export interface ConversationIssue {
-  type: 'syn-no-reply' | 'unanswered' | 'one-way' | 'no-close' | 'retransmission' | 'slow-response' | 'rst' | 'lost-segment' | 'out-of-order' | 'dup-ack'
+  type: 'syn-no-reply' | 'unanswered' | 'one-way' | 'no-close' | 'retransmission' | 'slow-response' | 'rst' | 'lost-segment' | 'out-of-order' | 'dup-ack' | 'zero-window'
   message: string
   packetNumber?: number
 }

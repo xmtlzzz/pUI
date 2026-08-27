@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { aggregateConversations } from './aggregateConversations'
 import { analyzeConversationIssues } from './issues'
+import { filterConversations } from '../filter/filterConversations'
 import type { Conversation, Packet } from '../model/types'
 
 function pkt(
@@ -270,5 +271,56 @@ describe('丢包/异常会话检测', () => {
     const types = convs[0].issues.map((i) => i.type)
     expect(types).toContain('out-of-order')
     expect(types).not.toContain('retransmission')
+  })
+})
+
+describe('M5 零窗口事件接入会话标注', () => {
+  it('纯 ACK 通告 window=0 产出 zero-window issue;重开与未重开文案不同', () => {
+    const reopened: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0018', tcpLen: 100 }),
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 0 }),
+      pkt(3, 0.05, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 8760 }),
+    ]
+    const convs = aggregateConversations(reopened)
+    const zw = convs[0].issues.find((i) => i.type === 'zero-window')
+    expect(zw).toBeTruthy()
+    expect(zw!.message).toContain('重开')
+    expect(zw!.packetNumber).toBe(2)
+
+    const unopened: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0018', tcpLen: 100 }),
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 0 }),
+      pkt(3, 0.5, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 0 }),
+    ]
+    const convs2 = aggregateConversations(unopened)
+    const zw2 = convs2[0].issues.find((i) => i.type === 'zero-window')
+    expect(zw2!.message).toContain('未重开')
+  })
+
+  it('窗口字段缺失不产出;窗口正常不产出', () => {
+    const missing: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0018', tcpLen: 100 }),
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0 }),
+    ]
+    expect(aggregateConversations(missing)[0].issues.some((i) => i.type === 'zero-window')).toBe(false)
+
+    const normal: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0018', tcpLen: 100 }),
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 65535 }),
+    ]
+    expect(aggregateConversations(normal)[0].issues.some((i) => i.type === 'zero-window')).toBe(false)
+  })
+
+  it('issueTypes 筛选支持 zero-window', () => {
+    const packets: Packet[] = [
+      pkt(1, 0, 'tcp', 'tcp', '192.168.1.10', 54321, '93.184.216.34', 80, { tcpFlags: '0x0018', tcpLen: 100 }),
+      pkt(2, 0.01, 'tcp', 'tcp', '93.184.216.34', 80, '192.168.1.10', 54321, { tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 0 }),
+    ]
+    const convs = aggregateConversations(packets)
+    const mkCond = (types: string[]) => ({ protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false, issueTypes: types })
+    const filtered = filterConversations(convs, mkCond(['zero-window']))
+    expect(filtered).toHaveLength(1)
+    const filtered2 = filterConversations(convs, mkCond(['rst']))
+    expect(filtered2).toHaveLength(0)
   })
 })

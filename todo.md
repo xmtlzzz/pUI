@@ -1,6 +1,6 @@
 # pUI 项目状态 TODO
 
-> 更新:2026-08-27(第 3 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
+> 更新:2026-08-27(第 4 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
 > 产品目标:把 PCAP 中分散的报文,还原为可验证的网络故障事件和证据链 —— 观察与推断分离,不过度归因。
 
 ---
@@ -9,7 +9,7 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 400 用例全绿(`npx vitest run`,53 文件) |
+| 前端测试 | 415 用例全绿(`npx vitest run`,55 文件) |
 | Rust 测试 | 17 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`) |
 | 构建 | `npm run build` 通过(bundle gzip ≈127KB,含 gsap) |
 | 技术栈 | React 19 + TS 5.8 strict + Zustand 5 + Vite 7 + Vitest 4 + Tauri 2 + tshark 4.6.6 + GSAP |
@@ -36,6 +36,7 @@
 | **UI 统一+对向视图+双标签(第四轮反馈/M4 收尾)** | `20f268a` | 全部按钮接入主界面 .btn/.primary/.seg 设计语言;对向序列空间(静态全景,SACK/ACK 按方向过滤防双 ISN 混轴,单向流隐藏);窄窗 <900px 双标签切换实际故障/正常参考 |
 | **对照页证据导出(M4 最后一项,口径已裁定)** | `e4ec53a` | exportCompareReport:实际故障侧证据导出(观察/推断/限制/阶段/关键报文链/降级说明),正常参考示意永不进入;顺带修复 mdCell 反引号/竖线转义静默失效(字面量 '\`' 实际只是反引号,exportTranscript 一并修复) |
 | **M5 起步:新事件检测器** | `c316163` `2cb4a7d` | m5Events(与 M3 解耦,每项独立开关):零窗口/窗口耗尽/RST/SYN 重传,观察推断分离红线延续;tcp.window_size 字段契约三处同步(41→42 字段)+ fixture 再生成;零窗口接入会话标注与筛选(「零窗口」筛选项) |
+| **M5 第二批:测量与采集质量** | `3a2cbaf` | SYN 重传接入会话标注(与 syn-no-reply 互补);rttStats(p50/p90/max,Karn 首次发送归属,样本<5 显式 unavailable);captureQuality(截断计数/比例,采集侧信号红线);SummaryPanel「会话测量」区;perfGuard 预算并发自适应消抖动 |
 
 ## 三、M4 已全部完成,进入 M5
 
@@ -43,9 +44,10 @@ M4 收尾状态(2026-08-27):
 - [x] 导出口径已裁定并实现:对照页实际故障侧=证据可导出(工具条「导出报告」);正常参考=示意永不导出
 - [ ] **Tauri 桌面冒烟**:真实 VDI 抓包全流程(唯一遗留,需真实桌面环境;建议下次实测时走一遍)
 
-M5 剩余(检测器已有,按优先级):
-- [ ] RST/SYN 重传接入会话标注(RST 已有 'rst' 类型,SYN 重传待接入 syn-retransmission 类型)
-- [ ] RTT 分位数/variation、窗口变化统计、完整 Capture Quality(截断/丢包统计)
+M5 剩余(按优先级):
+- [x] SYN 重传/RST 接入会话标注;零窗口标注与筛选
+- [x] RTT 分位数统计、Capture Quality(截断统计)
+- [ ] 窗口变化统计(variation)
 - [ ] 完整 Sequence Space View(缩放/筛选,当前仅缺口邻域+对向全景)
 - [ ] Health Score(透明版本化公式+扣分明细,仅筛选用,覆盖不足显示 unavailable)
 - [ ] 性能:10 万包 Worker 化解析、tshark 分批/流式、事件虚拟化

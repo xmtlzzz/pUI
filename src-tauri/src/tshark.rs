@@ -95,6 +95,7 @@ pub const CAPTURE_FIELDS: &[&str] = &[
     "tcp.ack_raw",
     "tcp.stream",
     "tcp.len",
+    "tcp.window_size",
     "tcp.completeness",
     "tcp.options.sack_le",
     "tcp.options.sack_re",

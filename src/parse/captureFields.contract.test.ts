@@ -66,10 +66,17 @@ describe('capture field contract', () => {
     }
   })
 
-  it('不含已明确后置到 M5 的字段(避免无谓放大 JSON 体积)', () => {
-    // 窗口/完整 RTT/zero-window 等属 M5 增强,M0 不引入
-    for (const f of ['tcp.window_size', 'tcp.window_size_value', 'tcp.analysis.zero_window', 'tcp.analysis.window_full']) {
-      expect(CAPTURE_FIELDS, `${f} 属 M5,不应在 M0 引入`).not.toContain(f)
+  it('包含 M5 窗口事件所需字段(窗口字段已随 M5 事件引擎引入)', () => {
+    // tcp.window_size 是零窗口/窗口耗尽检测的前提(M5);缺失时不做推测
+    for (const f of ['tcp.window_size']) {
+      expect(CAPTURE_FIELDS, `缺少字段 ${f}`).toContain(f)
+    }
+  })
+
+  it('仍不含明确后置的字段(避免无谓放大 JSON 体积)', () => {
+    // 完整 RTT/窗口分析标签属后续增强;window_size_value 与 window_size 冗余,不双取
+    for (const f of ['tcp.window_size_value', 'tcp.analysis.zero_window', 'tcp.analysis.window_full', 'tcp.analysis.rto']) {
+      expect(CAPTURE_FIELDS, `${f} 后置,不应引入`).not.toContain(f)
     }
   })
 })

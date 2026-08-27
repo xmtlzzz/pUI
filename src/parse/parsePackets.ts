@@ -267,6 +267,7 @@ export function parsePackets(jsonText: string): Packet[] {
       tcpAck: float(F.get('tcp.ack_raw')),
       tcpStream: int(F.get('tcp.stream')),
       tcpLen: int(F.get('tcp.len')),
+      tcpWindow: int(F.get('tcp.window_size')),
       tcpCompleteness: int(F.get('tcp.completeness')),
       tcpSackBlocks: sackBlocks(all(F.get('tcp.options.sack_le')), all(F.get('tcp.options.sack_re'))),
       tcpDupAckNum: int(F.get('tcp.analysis.duplicate_ack_num')) ?? int(F.get('tcp.analysis.duplicate-ack-num')),

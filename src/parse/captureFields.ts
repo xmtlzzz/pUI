@@ -27,6 +27,8 @@ export const CAPTURE_FIELDS: string[] = [
   'tcp.stream',
   // TCP 载荷长度:序列号推进只能用它算,frame.len 是帧长(含各层头部)不能用于序列空间
   'tcp.len',
+  // 接收窗口通告(M5 窗口事件:零窗口/窗口耗尽)。字段缺失不做推测,0 有独立语义
+  'tcp.window_size',
   // 握手完整性位掩码(SYN=1 SYN-ACK=2 ACK=4 DATA=8 FIN=16 RST=32):
   // (值 & 0x03) === 0 即中途抓包,此时"流起始丢段/未正常关闭"结论不可信
   'tcp.completeness',

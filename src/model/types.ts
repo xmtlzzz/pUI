@@ -23,6 +23,9 @@ export interface Packet {
   /** tcp.stream:tshark 的流 id。同一端点对复用端口/并发连接时,只有它能区分不同连接;
    *  缺失(旧抓包/非 TCP)时为 undefined —— 不可用 0 代替,0 是合法流 id */
   tcpStream?: number
+  /** tcp.window_size:接收窗口通告字节数(M5 窗口事件用)。undefined = 字段缺失,
+   *  不做推测;0 = 零窗口(接收缓冲区满),语义完全不同 */
+  tcpWindow?: number
   /** tcp.len:TCP 载荷字节数。序列号推进必须用它,frame.len 含各层头部不可用于序列空间。
    *  0 表示纯 ACK/keep-alive(与 undefined "字段缺失"语义不同) */
   tcpLen?: number

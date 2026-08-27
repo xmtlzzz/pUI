@@ -231,6 +231,9 @@
         "tcp.len": [
           "0"
         ],
+        "tcp.window_size": [
+          "8192"
+        ],
         "tcp.completeness": [
           "0"
         ]
@@ -295,6 +298,9 @@
         ],
         "tcp.len": [
           "0"
+        ],
+        "tcp.window_size": [
+          "8192"
         ],
         "tcp.completeness": [
           "1"
@@ -361,6 +367,9 @@
         "tcp.len": [
           "0"
         ],
+        "tcp.window_size": [
+          "8192"
+        ],
         "tcp.completeness": [
           "3"
         ]
@@ -425,6 +434,9 @@
         ],
         "tcp.len": [
           "59"
+        ],
+        "tcp.window_size": [
+          "8192"
         ],
         "tcp.completeness": [
           "7"
@@ -501,6 +513,9 @@
         "tcp.len": [
           "0"
         ],
+        "tcp.window_size": [
+          "8192"
+        ],
         "tcp.completeness": [
           "15"
         ]
@@ -565,6 +580,9 @@
         ],
         "tcp.len": [
           "72"
+        ],
+        "tcp.window_size": [
+          "8192"
         ],
         "tcp.completeness": [
           "15"
@@ -644,6 +662,9 @@
         "tcp.len": [
           "0"
         ],
+        "tcp.window_size": [
+          "8192"
+        ],
         "tcp.completeness": [
           "15"
         ]
@@ -708,6 +729,9 @@
         ],
         "tcp.len": [
           "0"
+        ],
+        "tcp.window_size": [
+          "8192"
         ],
         "tcp.completeness": [
           "15"
@@ -774,6 +798,9 @@
         "tcp.len": [
           "0"
         ],
+        "tcp.window_size": [
+          "8192"
+        ],
         "tcp.completeness": [
           "31"
         ]
@@ -839,6 +866,9 @@
         "tcp.len": [
           "0"
         ],
+        "tcp.window_size": [
+          "8192"
+        ],
         "tcp.completeness": [
           "31"
         ]
@@ -903,6 +933,9 @@
         ],
         "tcp.len": [
           "0"
+        ],
+        "tcp.window_size": [
+          "8192"
         ],
         "tcp.completeness": [
           "31"

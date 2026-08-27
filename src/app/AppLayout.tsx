@@ -43,18 +43,41 @@ export function AppLayout() {
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   // M4 对照页数据:按需从当前选中会话派生(引擎是纯函数,重算成本低,不入 store)。
-  // detectTcpEvents 一次给出全部事件(引擎序:未恢复优先);左栏切换器在事件间跳转,
-  // 视图模型只为当前选中的那个事件构建(deriveStages 是纯函数,单事件成本可控)。
-  // 无事件时 vm 为 null,FaultCompare 自行渲染空态。
+  // 卡顿修复(用户反馈 2026-08-27):VDI 2.3 万报文上 analyzeStream+detectTcpEvents 约
+  // 数百毫秒,此前每次切换事件都全量重跑。会话级结果(facts/事件表/摘要)缓存于 ref,
+  // 事件级 vm 按 event id 缓存 —— 切换事件只剩 deriveStages+投影(毫秒级)。
+  const compareCacheRef = useRef<{
+    id: string
+    fingerprint: number
+    facts: ReturnType<typeof analyzeStream>
+    events: TcpEvent[]
+    summaries: ReturnType<typeof buildEventSummaries>
+    vmCache: Map<string, CompareViewModel | null>
+  } | null>(null)
   const compare = useMemo(() => {
     if (!compareFor || !selected || selected.id !== compareFor) return null
-    const facts = analyzeStream(selected.packets)
-    const events: TcpEvent[] = detectTcpEvents(facts, selected.packets)
-    if (events.length === 0) return { summaries: [], eventIndex: -1, vm: null as CompareViewModel | null }
-    const idx = Math.min(Math.max(compareEventIndex, 0), events.length - 1)
-    const stages = deriveStages(events[idx], facts, selected.packets)
-    const vm = buildCompareViewModel(selected.packets, facts, events[idx], stages)
-    return { summaries: buildEventSummaries(events), eventIndex: idx, vm }
+    // 指纹防同 id 不同内容(重开同名抓包):首包时刻+包数+末包时刻
+    const fingerprint =
+      selected.packets.length > 0
+        ? selected.packets.length * 1e9 + selected.packets[0].time * 1e3 + selected.packets[selected.packets.length - 1].time
+        : 0
+    let base = compareCacheRef.current
+    if (!base || base.id !== selected.id || base.fingerprint !== fingerprint) {
+      const facts = analyzeStream(selected.packets)
+      const events: TcpEvent[] = detectTcpEvents(facts, selected.packets)
+      base = { id: selected.id, fingerprint, facts, events, summaries: buildEventSummaries(events), vmCache: new Map() }
+      compareCacheRef.current = base
+    }
+    if (base.events.length === 0) return { summaries: base.summaries, eventIndex: -1, vm: null }
+    const idx = Math.min(Math.max(compareEventIndex, 0), base.events.length - 1)
+    const eid = base.events[idx].id
+    if (!base.vmCache.has(eid)) {
+      // 防御 VDI 数百事件场景:vm 缓存有界(超过 64 条整体清空,重算也只是毫秒级投影)
+      if (base.vmCache.size > 64) base.vmCache.clear()
+      const stages = deriveStages(base.events[idx], base.facts, selected.packets)
+      base.vmCache.set(eid, buildCompareViewModel(selected.packets, base.facts, base.events[idx], stages))
+    }
+    return { summaries: base.summaries, eventIndex: idx, vm: base.vmCache.get(eid)! }
   }, [compareFor, selected, compareEventIndex])
   const compareVm = compare?.vm ?? null
 

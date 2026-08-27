@@ -467,3 +467,60 @@
   background: #eff6ff;
   box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.15);
 }
+
+/* 阶段带内嵌标注:阶段名常驻渲染在彩色段内(不依赖 hover;窄段退化为序号) */
+.fc-seg-tag {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  padding: 0 3px;
+  pointer-events: none;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+/* 序列空间图例:图形中各颜色/纹理对应什么报文状态 */
+.fc-seq-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: #475569;
+  margin: 2px 0 4px;
+  align-items: center;
+}
+
+.fc-seq-legend .lg {
+  display: inline-block;
+  width: 14px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.lg-seen {
+  background: #10b981;
+}
+
+.lg-gap {
+  background: repeating-linear-gradient(45deg, #fee2e2, #fee2e2 2px, #ef4444 2px, #ef4444 3.5px);
+  border: 1px solid #ef4444;
+}
+
+.lg-sack {
+  background: #22c55e;
+  opacity: 0.75;
+}
+
+.lg-retx {
+  background: transparent;
+  border-top: 2px solid #ef4444;
+  height: 0;
+}

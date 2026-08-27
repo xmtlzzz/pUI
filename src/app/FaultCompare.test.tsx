@@ -184,6 +184,27 @@ describe('FaultCompare 对照页(整页板块)', () => {
     expect(screen.queryByText(/减少动效/)).toBeNull()
   })
 
+  it('阶段带内嵌阶段名标注(常驻,非 hover):宽段显示「序号. 阶段名」,窄段退化为序号', () => {
+    const { container } = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const tags = [...container.querySelectorAll('.fc-seg-tag')]
+    expect(tags.length).toBe(5) // makeVm 五个阶段宽度均 ≥3%,全部有标注
+    // 宽段(0.34)带阶段名;窄段(0.08)只带序号
+    expect(tags.map((t) => t.textContent)).toContain('3. 重复确认与 SACK 增长')
+    expect(tags.some((t) => t.textContent === '2')).toBe(true)
+  })
+
+  it('序列空间图例与轴说明:红绿块含义显式可读(用户反馈)', () => {
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const legend = screen.getByTestId('fc-seq-legend')
+    expect(legend.textContent).toContain('已见字节')
+    expect(legend.textContent).toContain('缺口')
+    expect(legend.textContent).toContain('SACK')
+    expect(legend.textContent).toContain('重传回补')
+    // 轴说明:这是字节序列号空间
+    const svg = screen.getByTestId('fc-seqspace')
+    expect(svg.textContent).toContain('序列号空间(字节)')
+  })
+
   it('vm=null 时渲染空态并提供返回入口', () => {
     const onBack = vi.fn()
     render(<FaultCompare vm={null} onSelectPacket={vi.fn()} onBack={onBack} />)

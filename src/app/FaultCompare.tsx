@@ -223,6 +223,10 @@ export function SeqSpaceGraphic({ vm, playhead, progressive }: { vm: CompareView
           </g>
         )
       })()}
+      {/* 轴说明:这是字节序列号空间,不是时间轴(用户反馈易误读为进度条) */}
+      <text x={8} y={16} fontSize={10} fill="#94a3b8">
+        序列号空间(字节) · 视图聚焦缺口邻域
+      </text>
       <defs>
         <pattern id="fc-hatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
           <rect width="6" height="6" fill="#fee2e2" />
@@ -387,6 +391,24 @@ function CompareContent({
             </div>
           )}
 
+          {/* 序列空间图例:图形中各颜色/纹理的含义(用户反馈:红绿块含义要显式说明) */}
+          <div className="fc-seq-legend" data-testid="fc-seq-legend">
+            <span>
+              <i className="lg lg-seen" />已见字节
+            </span>
+            <span>
+              <i className="lg lg-gap" />缺口(未到达)
+            </span>
+            <span>
+              <i className="lg lg-sack" />SACK(对端已收)
+            </span>
+            {vm.seqSpace.retxArrow && (
+              <span>
+                <i className="lg lg-retx" />重传回补
+              </span>
+            )}
+          </div>
+
           {/* 序列空间图形化:核心可视化(动画态跟随播放;静态模式信息等价) */}
           <SeqSpaceGraphic
             vm={vm}
@@ -415,24 +437,32 @@ function CompareContent({
               (审批要求:每阶段的名称/起止包号/时刻/信息要点常驻可见,不藏在 hover 里) */}
           <div className="fc-timeband" data-testid="fc-stageband" role="list" aria-label="故障阶段时间带">
             <div className="fc-timeband-track">
-              {vm.stages.map((s, i) => (
-                <div
-                  key={`${s.label}-${s.fromPacket}`}
-                  role="listitem"
-                  tabIndex={0}
-                  title={`阶段 ${i + 1}:${s.label}(#${s.fromPacket}–#${s.toPacket})`}
-                  onClick={() => setSelectedStage(i)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') setSelectedStage(i)
-                  }}
-                  className={`fc-timeband-seg ${i === activeIdx ? 'active' : ''}`}
-                  style={{
-                    left: `${s.t0 * 100}%`,
-                    width: `${Math.max((s.t1 - s.t0) * 100, 1.5)}%`,
-                    background: STAGE_COLORS[i % STAGE_COLORS.length],
-                  }}
-                />
-              ))}
+              {vm.stages.map((s, i) => {
+                const w = s.t1 - s.t0
+                // 带内标注(常驻,不藏 hover):宽段显示「序号. 阶段名」,窄段退化为序号;
+                // 完整信息(起止包号/时刻/要点)仍在下方阶段卡常驻
+                const tag = w >= 0.12 ? `${i + 1}. ${s.label}` : w >= 0.03 ? `${i + 1}` : null
+                return (
+                  <div
+                    key={`${s.label}-${s.fromPacket}`}
+                    role="listitem"
+                    tabIndex={0}
+                    title={`阶段 ${i + 1}:${s.label}(#${s.fromPacket}–#${s.toPacket})`}
+                    onClick={() => setSelectedStage(i)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') setSelectedStage(i)
+                    }}
+                    className={`fc-timeband-seg ${i === activeIdx ? 'active' : ''}`}
+                    style={{
+                      left: `${s.t0 * 100}%`,
+                      width: `${Math.max(w * 100, 1.5)}%`,
+                      background: STAGE_COLORS[i % STAGE_COLORS.length],
+                    }}
+                  >
+                    {tag && <span className="fc-seg-tag">{tag}</span>}
+                  </div>
+                )
+              })}
               {/* 游标=当前位置信息:idle(未开始)之外一律可见,静态模式同样信息等价 */}
               {pb.phase !== 'idle' && <div className="fc-timeband-cursor" style={{ left: `${pb.time * 100}%` }} />}
             </div>

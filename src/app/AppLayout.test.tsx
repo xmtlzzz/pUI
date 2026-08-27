@@ -163,6 +163,7 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(tabs[0].className).toContain('active')
     expect(container.querySelector('.fc-headline')!.textContent).toMatch(/疑似丢包 \/ 延迟到达/)
     expect(container.querySelector('.fc-headline')!.textContent).toContain('101–201')
+    const headline0 = container.querySelector('.fc-headline')!.textContent
 
     // 点击第二条(伪重传)→ headline 更换,视图模型整体重建
     act(() => {
@@ -170,6 +171,13 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     })
     expect(container.querySelector('.fc-headline')!.textContent).toMatch(/疑似 ACK 丢失 \/ 冗余重传/)
     expect(container.querySelectorAll('.fc-evbtn')[1].className).toContain('active')
+
+    // 缓存路径:切回事件 0 时走 vmCache,内容与首次构建一致(确定性),不重跑全量分析
+    act(() => {
+      useApp.getState().setCompareEventIndex(0)
+    })
+    expect(container.querySelector('.fc-headline')!.textContent).toBe(headline0)
+    expect(container.querySelectorAll('.fc-evbtn')[0].className).toContain('active')
     vi.unstubAllGlobals()
   })
 

@@ -94,6 +94,40 @@ export interface CompareViewModel {
   headline: string
 }
 
+/** 左栏顶部事件切换器的条目(轻量摘要;完整卡片在选中后由 buildCompareViewModel 生成) */
+export interface CompareEventSummary {
+  /** 引擎的确定性事件 id,作为切换器的稳定 key */
+  id: string
+  kindLabel: string
+  severity: string
+  recovered: boolean
+  /** 缺口范围文案;伪重传类无缺口为 undefined */
+  gapText?: string
+  startTime: number
+  endTime: number
+}
+
+/** 事件的缺口范围文案(headline 与事件列表共用同一措辞) */
+export function gapTextOf(event: TcpEvent): string | undefined {
+  return event.gap ? `${event.gap.start}–${event.gap.end}(${event.gap.byteCount}B)` : undefined
+}
+
+/**
+ * 把引擎事件数组投影为切换器摘要。顺序保持引擎输出序
+ * (未恢复优先 → 证据完整度 → 时长),不做二次排序 —— 排序语义只在一处定义。
+ */
+export function buildEventSummaries(events: TcpEvent[]): CompareEventSummary[] {
+  return events.map((e) => ({
+    id: e.id,
+    kindLabel: KIND_LABEL[e.kind],
+    severity: e.severity,
+    recovered: e.recovered,
+    gapText: gapTextOf(e),
+    startTime: e.startTime,
+    endTime: e.endTime,
+  }))
+}
+
 const KIND_LABEL: Record<TcpEvent['kind'], string> = {
   'possible-loss-or-delay': '疑似丢包 / 延迟到达',
   reordering: '乱序到达',
@@ -219,12 +253,13 @@ export function buildCompareViewModel(
     kindLabel: KIND_LABEL[event.kind],
     severity: event.severity,
     recovered: event.recovered,
-    gapText: event.gap ? `${event.gap.start}–${event.gap.end}(${event.gap.byteCount}B)` : undefined,
+    gapText: gapTextOf(event),
     observations: event.observations.map((o) => ({ packetNumber: o.packetNumber, statement: o.statement })),
     inference: { statement: event.inference.statement, confidence: event.inference.confidence },
     limitations: event.limitations,
   }
 
+  const gap = gapTextOf(event) ?? '无'
   return {
     card,
     seqSpace,
@@ -237,7 +272,7 @@ export function buildCompareViewModel(
       lengthUnavailable: facts.lengthUnavailable,
       noEvents: false,
     },
-    headline: `${KIND_LABEL[event.kind]} · 缺口 ${event.gap ? `${event.gap.start}–${event.gap.end}(${event.gap.byteCount}B)` : '无'} · ${event.severity}`,
+    headline: `${KIND_LABEL[event.kind]} · 缺口 ${gap} · ${event.severity}`,
   }
 }
 

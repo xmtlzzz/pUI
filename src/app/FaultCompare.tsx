@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { CompareViewModel } from '../m4/viewModel'
+import type { CompareEventSummary, CompareViewModel } from '../m4/viewModel'
 import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
 
@@ -10,6 +10,8 @@ import './faultCompare.css'
  * - 整页切换:进入故障分析时工具的整个工作区切换到本板块,可返回;
  * - 左栏核心是**序列空间图形化**(已见字节条 + Gap hatch + SACK 绿块 + 重传回补箭头 +
  *   ACK 游标),不是逐报文列表 —— VDI 抓包数千报文的列表不可用;
+ * - 左栏顶部为**事件切换器**:VDI 实测一个会话常有大量缺口事件,只看 events[0] 不可用;
+ *   切换事件由父层重算视图模型,本组件以 eventKey 重挂载来复位播放状态;
  * - 阶段带为时间进度条形态(DSH duration 式):彩色阶段段 + 当前位置游标 + 刻度,
  *   当前阶段信息面板固定展示;
  * - 关键报文链只含证据链报文(点击跳回原报文)。
@@ -19,6 +21,14 @@ interface FaultCompareProps {
   vm: CompareViewModel | null
   onSelectPacket: (n: number) => void
   onBack: () => void
+  /** 事件切换器数据(可选;不传或为空时不渲染切换器) */
+  events?: CompareEventSummary[]
+  /** 当前选中事件下标 */
+  eventIndex?: number
+  /** 切换事件回调;eventKey 变化时内容区整体重挂载(播放复位) */
+  onSelectEvent?: (i: number) => void
+  /** 当前事件的稳定 id,作为内容区 remount key */
+  eventKey?: string
 }
 
 function phaseLabel(p: PlaybackPhase): string {
@@ -123,7 +133,34 @@ function SeqSpaceGraphic({ vm, playhead }: { vm: CompareViewModel; playhead: num
   )
 }
 
-export function FaultCompare({ vm, onSelectPacket, onBack }: FaultCompareProps) {
+/** 外壳:空态判定 + 以 eventKey 重挂载内容区(切换事件即复位播放/阶段选中) */
+export function FaultCompare(props: FaultCompareProps) {
+  const { vm } = props
+  if (!vm) {
+    return (
+      <div className="fc-page" data-testid="fault-compare-empty">
+        <div className="fc-toolbar">
+          <button type="button" onClick={props.onBack} data-testid="fc-back">
+            ← 返回时序视图
+          </button>
+        </div>
+        <div className="fc-empty">
+          <p>该会话未检出可解释的 TCP 事件,没有可对照的故障过程。</p>
+        </div>
+      </div>
+    )
+  }
+  return <CompareContent key={props.eventKey ?? 'single'} {...props} vm={vm} />
+}
+
+function CompareContent({
+  vm,
+  onSelectPacket,
+  onBack,
+  events,
+  eventIndex = 0,
+  onSelectEvent,
+}: FaultCompareProps & { vm: CompareViewModel }) {
   const stageAt = useMemo(
     () => (t: number): number => {
       if (!vm || vm.stages.length === 0) return -1
@@ -136,24 +173,6 @@ export function FaultCompare({ vm, onSelectPacket, onBack }: FaultCompareProps) 
   )
   const pb = usePlayback(vm?.stages ?? [], stageAt)
   const [selectedStage, setSelectedStage] = useState<number | null>(null)
-
-  if (!vm) {
-    return (
-      <div className="fc-page" data-testid="fault-compare-empty">
-        <div className="fc-toolbar">
-          <button type="button" onClick={onBack} data-testid="fc-back">
-            ← 返回时序视图
-          </button>
-        </div>
-        <div className="fc-empty">
-          <p>该会话未检出可解释的 TCP 事件,没有可对照的故障过程。</p>
-        </div>
-      </div>
-    )
-  }
-
-  const activeIdx = selectedStage ?? pb.activeStageIndex
-  const active = activeIdx >= 0 ? vm.stages[activeIdx] : null
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     switch (e.key) {
@@ -179,6 +198,10 @@ export function FaultCompare({ vm, onSelectPacket, onBack }: FaultCompareProps) 
         break
     }
   }
+
+  const activeIdx = selectedStage ?? pb.activeStageIndex
+  const active = activeIdx >= 0 ? vm.stages[activeIdx] : null
+  const showSwitcher = !!events && events.length > 0 && !!onSelectEvent
 
   return (
     <div className="fc-page" data-testid="fault-compare" tabIndex={0} onKeyDown={onKeyDown}>
@@ -227,6 +250,34 @@ export function FaultCompare({ vm, onSelectPacket, onBack }: FaultCompareProps) 
           <h3>
             实际故障 <span className="fc-real-badge">真实抓包</span>
           </h3>
+
+          {/* 事件切换器:VDI 实测单会话常有大量缺口事件,只看第一个不可用 */}
+          {showSwitcher && (
+            <div className="fc-eventlist" data-testid="fc-event-list" role="tablist" aria-label="检出的事件">
+              {events!.map((ev, i) => (
+                <button
+                  key={ev.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={i === eventIndex}
+                  className={`fc-evbtn ${i === eventIndex ? 'active' : ''}`}
+                  onClick={() => onSelectEvent!(i)}
+                >
+                  <span className="fc-evbtn-no">{i + 1}</span>
+                  <span className="fc-evbtn-body">
+                    <span className="fc-evbtn-kind">
+                      {ev.kindLabel}
+                      {!ev.recovered && <em className="fc-evbtn-unrec">未恢复</em>}
+                    </span>
+                    <small>
+                      {ev.gapText ? `缺口 ${ev.gapText} · ` : ''}
+                      {ev.startTime.toFixed(3)}–{ev.endTime.toFixed(3)}s · {ev.severity}
+                    </small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 序列空间图形化:核心可视化 */}
           <SeqSpaceGraphic vm={vm} playhead={pb.time} />

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, cleanup } from '@testing-library/react'
-import type { CompareViewModel } from '../m4/viewModel'
+import type { CompareEventSummary, CompareViewModel } from '../m4/viewModel'
 import { FaultCompare } from './FaultCompare'
 
 afterEach(cleanup) // 无 globals 钩子,组件残留会让 getByTestId 跨用例重复命中
@@ -176,5 +176,97 @@ describe('FaultCompare 对照页(整页板块)', () => {
     const banner = screen.getByText('⚠ 抓包从连接中途开始:流起始处的缺失不构成丢包证据。').parentElement
     expect(banner?.textContent).toContain('中途开始')
     expect(banner?.textContent).toContain('unknown')
+  })
+})
+
+describe('FaultCompare 多事件切换器(VDI 实测:单会话大量缺口事件)', () => {
+  const summaries: CompareEventSummary[] = [
+    {
+      id: '0:c2s:possible-loss-or-delay:101',
+      kindLabel: '疑似丢包 / 延迟到达',
+      severity: 'high',
+      recovered: false,
+      gapText: '101–201(100B)',
+      startTime: 0.05,
+      endTime: 0.26,
+    },
+    {
+      id: '0:c2s:possible-ack-loss-or-spurious:201',
+      kindLabel: '疑似 ACK 丢失 / 冗余重传',
+      severity: 'low',
+      recovered: true,
+      gapText: undefined,
+      startTime: 0.3,
+      endTime: 0.31,
+    },
+    {
+      id: '0:c2s:reordering:301',
+      kindLabel: '乱序到达',
+      severity: 'low',
+      recovered: true,
+      gapText: '301–401(100B)',
+      startTime: 0.4,
+      endTime: 0.42,
+    },
+  ]
+
+  it('左栏顶部渲染事件列表:序号/类型/缺口/未恢复标注齐备,当前项高亮', () => {
+    const { container } = render(
+      <FaultCompare vm={makeVm()} events={summaries} eventIndex={1} onSelectEvent={vi.fn()} onSelectPacket={vi.fn()} onBack={vi.fn()} />,
+    )
+    const list = screen.getByTestId('fc-event-list')
+    // 三条事件的类型标签齐全(引擎优先序展示)
+    expect(list.textContent).toContain('疑似丢包 / 延迟到达')
+    expect(list.textContent).toContain('疑似 ACK 丢失 / 冗余重传')
+    expect(list.textContent).toContain('乱序到达')
+    // 未恢复徽标只标在未恢复事件上
+    expect(list.querySelectorAll('.fc-evbtn-unrec')).toHaveLength(1)
+    expect(list.textContent).toContain('未恢复')
+    // 当前选中是第 2 个
+    const tabs = [...container.querySelectorAll('.fc-evbtn')]
+    expect(tabs).toHaveLength(3)
+    expect(tabs[1].className).toContain('active')
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('点击条目触发 onSelectEvent(下标);事件卡仍由当前 vm 渲染', () => {
+    const onSel = vi.fn()
+    render(<FaultCompare vm={makeVm()} events={summaries} eventIndex={0} onSelectEvent={onSel} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const tabs = screen.getAllByRole('tab')
+    fireEvent.click(tabs[2])
+    expect(onSel).toHaveBeenCalledWith(2)
+    // 当前事件的完整信息不受列表影响
+    expect(screen.getByTestId('fc-stage-panel')).toBeTruthy()
+  })
+
+  it('不传 events 或只有一个事件时不渲染切换器(向后兼容)', () => {
+    const { container } = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(container.querySelector('[data-testid="fc-event-list"]')).toBeNull()
+    const single = render(<FaultCompare vm={makeVm()} events={[summaries[0]]} eventIndex={0} onSelectEvent={vi.fn()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(single.container.querySelector('[data-testid="fc-event-list"]')).not.toBeNull()
+  })
+
+  it('eventKey 变化重挂载内容区:阶段选中与播放进度复位到初始态', () => {
+    const props = {
+      vm: makeVm(),
+      events: summaries,
+      eventIndex: 0,
+      onSelectEvent: vi.fn(),
+      onSelectPacket: vi.fn(),
+      onBack: vi.fn(),
+    }
+    const view = render(<FaultCompare {...props} eventKey={summaries[0].id} />)
+
+    // 选中的是阶段带上的「重传回补」卡(第 4 阶段)
+    const retxCard = screen.getAllByRole('button').find(
+      (b) => b.className.includes('fc-stage-card') && b.textContent?.includes('重传回补'),
+    )!
+    fireEvent.click(retxCard)
+    expect(screen.getByTestId('fc-stage-panel').textContent).toContain('阶段 4/5')
+
+    // 切换事件(父层换 key 重挂载):选中态必须归零回到首阶段,不得把上个事件的浏览位置带过去
+    view.rerender(<FaultCompare {...props} eventKey={summaries[2].id} />)
+    expect(screen.getByTestId('fc-stage-panel').textContent).toContain('阶段 1/5')
+    expect(view.container.querySelector('.fc-timeband-seg.active')).toBeTruthy() // 首阶段高亮
   })
 })

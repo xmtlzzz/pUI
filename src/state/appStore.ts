@@ -90,8 +90,11 @@ export interface AppState {
   getHex: (n: number) => string | null
   /** M4 故障对照页:进入时记录会话 id;派生数据(事件/阶段)在渲染时按需重算,不入 store */
   compareFor: string | null
+  /** 对照页内当前查看的事件下标(导航性 UI 状态;进入新对照时重置为 0) */
+  compareEventIndex: number
   openCompare: (conversationId: string) => void
   closeCompare: () => void
+  setCompareEventIndex: (i: number) => void
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -118,9 +121,11 @@ export const useApp = create<AppState>((set, get) => ({
   error: null,
   hexCache: {},
   compareFor: null,
+  compareEventIndex: 0,
 
-  openCompare: (conversationId) => set({ compareFor: conversationId }),
+  openCompare: (conversationId) => set({ compareFor: conversationId, compareEventIndex: 0 }),
   closeCompare: () => set({ compareFor: null }),
+  setCompareEventIndex: (i) => set({ compareEventIndex: Math.max(0, i) }),
 
   async openFile(path) {
     const seq = get().loadSeq + 1

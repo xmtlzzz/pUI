@@ -3,7 +3,7 @@ import type { Packet } from '../model/types'
 import { analyzeStream } from '../analysis/tcp/streamAnalysis'
 import { detectTcpEvents } from '../analysis/tcp/events'
 import { deriveStages } from '../analysis/tcp/stages'
-import { buildCompareViewModel, stageAtTime } from './viewModel'
+import { buildCompareViewModel, buildEventSummaries, stageAtTime } from './viewModel'
 
 /**
  * M4 对照页视图模型:引擎输出 -> 组件可渲染纯数据。
@@ -196,6 +196,43 @@ describe('buildCompareViewModel', () => {
 
   it('确定性:同一输入两次构建完全一致', () => {
     expect(JSON.stringify(buildVM(lossChain()))).toBe(JSON.stringify(buildVM(lossChain())))
+  })
+})
+
+describe('buildEventSummaries — 多事件切换器摘要', () => {
+  it('保持引擎输出序(未恢复优先),字段与事件一一对应', () => {
+    const packets = lossChain()
+    // 追加一个缺口外的纯重复重发:#11 已回补缺口,再发一次 seq=201-len100 已见字节
+    packets.push(
+      c2s({
+        number: 13, time: 0.30, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 501, tcpLen: 100,
+        tcpAnalysis: ['retransmission'], tcpCompleteness: 15,
+      }),
+    )
+    const facts = analyzeStream(packets)
+    const events = detectTcpEvents(facts, packets)
+    expect(events.length).toBeGreaterThanOrEqual(2)
+
+    const summaries = buildEventSummaries(events)
+    expect(summaries.map((s) => s.id)).toEqual(events.map((e) => e.id))
+    // 引擎序:未恢复在前;同为已恢复按证据分排序 —— 摘要层不得重排
+    for (let i = 0; i < summaries.length; i++) {
+      expect(summaries[i].kindLabel).toBeTruthy()
+      expect(summaries[i].severity).toBe(events[i].severity)
+      expect(summaries[i].recovered).toBe(events[i].recovered)
+      if (events[i].gap) expect(summaries[i].gapText).toContain(`${events[i].gap!.start}`)
+      else expect(summaries[i].gapText).toBeUndefined()
+    }
+    // 缺口类在前(未恢复或证据更完整),伪重传的缺口文案必须为空
+    expect(summaries[0].kindLabel).toMatch(/疑似丢包/)
+    const spurious = summaries.find((s) => s.kindLabel.includes('冗余'))
+    expect(spurious?.gapText).toBeUndefined()
+    // 确定性:两次构建逐字节一致
+    expect(JSON.stringify(buildEventSummaries(events))).toBe(JSON.stringify(summaries))
+  })
+
+  it('空数组返回空数组', () => {
+    expect(buildEventSummaries([])).toEqual([])
   })
 })
 

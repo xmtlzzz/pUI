@@ -93,6 +93,7 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
       options: collectFilterOptions(packets),
       selectedId: conv.id,
       compareFor: null,
+      compareEventIndex: 0,
     })
 
     const { container } = render(<AppLayout />)
@@ -112,6 +113,63 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     fireEvent.click(container.querySelector('[data-testid="fc-back"]')!)
     expect(container.querySelector('.pane.filter')).toBeTruthy()
     expect(useApp.getState().compareFor).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('多事件会话:左栏切换器列出全部检出事件,点击切换后 headline/关键报文随之更换', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    // 构造两个可解释事件的链:
+    //  ① 缺口事件(seq=101–201 未被回补,未恢复优先排序置顶)
+    //  ② 缺口之外的纯重复重发(伪重传/疑似 ACK 丢失)
+    const pkt = (o: Record<string, unknown>) => ({ transport: 'tcp', proto: 'tcp', len: 54 + Number(o.tcpLen ?? 0), direction: 'other', tcpStream: 0, ...o }) as never
+    const c2s = (o: Record<string, unknown>) => pkt({ srcIp: '10.0.0.1', dstIp: '10.0.0.2', srcPort: 1234, dstPort: 80, ...o })
+    const s2c = (o: Record<string, unknown>) => pkt({ srcIp: '10.0.0.2', dstIp: '10.0.0.1', srcPort: 80, dstPort: 1234, ...o })
+    const SYN = '0x0002'
+    const SYNACK = '0x0012'
+    const PSHACK = '0x0018'
+    const packets = [
+      c2s({ number: 1, time: 0, tcpFlags: SYN, tcpSeq: 0, tcpLen: 0 }),
+      s2c({ number: 2, time: 0.01, tcpFlags: SYNACK, tcpSeq: 0, tcpAck: 1, tcpLen: 0 }),
+      c2s({ number: 3, time: 0.02, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 1, tcpLen: 0 }),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0 }),
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100 }), // 越过缺口到达
+      s2c({ number: 7, time: 0.06, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[201, 301]], tcpDupAckNum: 1 }),
+      // 重发已完整见过的 [201,301):序列空间无对应缺口 → 独立的伪重传事件
+      c2s({ number: 8, time: 0.30, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpAnalysis: ['retransmission'] }),
+    ]
+    const conversations = aggregateConversations(packets)
+    const conv = conversations[0]
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      selectedId: conv.id,
+      compareFor: null,
+      compareEventIndex: 0,
+    })
+
+    const { container } = render(<AppLayout />)
+    act(() => {
+      useApp.getState().openCompare(conv.id)
+    })
+
+    // 切换器出现且含两条事件;默认选中引擎序第一条(未恢复的缺口事件)
+    const list = container.querySelector('[data-testid="fc-event-list"]')!
+    expect(list).toBeTruthy()
+    const tabs = [...list.querySelectorAll('.fc-evbtn')]
+    expect(tabs).toHaveLength(2)
+    expect(tabs[0].className).toContain('active')
+    expect(container.querySelector('.fc-headline')!.textContent).toMatch(/疑似丢包 \/ 延迟到达/)
+    expect(container.querySelector('.fc-headline')!.textContent).toContain('101–201')
+
+    // 点击第二条(伪重传)→ headline 更换,视图模型整体重建
+    act(() => {
+      useApp.getState().setCompareEventIndex(1)
+    })
+    expect(container.querySelector('.fc-headline')!.textContent).toMatch(/疑似 ACK 丢失 \/ 冗余重传/)
+    expect(container.querySelectorAll('.fc-evbtn')[1].className).toContain('active')
     vi.unstubAllGlobals()
   })
 })

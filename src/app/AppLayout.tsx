@@ -14,7 +14,8 @@ import { saveText } from '../bridge/tauri'
 import { analyzeStream } from '../analysis/tcp/streamAnalysis'
 import { detectTcpEvents } from '../analysis/tcp/events'
 import { deriveStages } from '../analysis/tcp/stages'
-import { buildCompareViewModel } from '../m4/viewModel'
+import { buildCompareViewModel, buildEventSummaries, type CompareViewModel } from '../m4/viewModel'
+import type { TcpEvent } from '../analysis/tcp/events'
 
 function clamp(v: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, v))
@@ -29,6 +30,8 @@ export function AppLayout() {
   const highlight = useApp((s) => s.highlight)
   const selectPacket = useApp((s) => s.selectPacket)
   const compareFor = useApp((s) => s.compareFor)
+  const compareEventIndex = useApp((s) => s.compareEventIndex)
+  const setCompareEventIndex = useApp((s) => s.setCompareEventIndex)
   const openCompare = useApp((s) => s.openCompare)
   const closeCompare = useApp((s) => s.closeCompare)
   const [drag, setDrag] = useState(false)
@@ -36,16 +39,20 @@ export function AppLayout() {
   const svgRef = useRef<SVGSVGElement | null>(null)
 
   // M4 对照页数据:按需从当前选中会话派生(引擎是纯函数,重算成本低,不入 store)。
+  // detectTcpEvents 一次给出全部事件(引擎序:未恢复优先);左栏切换器在事件间跳转,
+  // 视图模型只为当前选中的那个事件构建(deriveStages 是纯函数,单事件成本可控)。
   // 无事件时 vm 为 null,FaultCompare 自行渲染空态。
-  const compareVm = useMemo(() => {
+  const compare = useMemo(() => {
     if (!compareFor || !selected || selected.id !== compareFor) return null
     const facts = analyzeStream(selected.packets)
-    const events = detectTcpEvents(facts, selected.packets)
-    const event = events[0]
-    if (!event) return null
-    const stages = deriveStages(event, facts, selected.packets)
-    return buildCompareViewModel(selected.packets, facts, event, stages)
-  }, [compareFor, selected])
+    const events: TcpEvent[] = detectTcpEvents(facts, selected.packets)
+    if (events.length === 0) return { summaries: [], eventIndex: -1, vm: null as CompareViewModel | null }
+    const idx = Math.min(Math.max(compareEventIndex, 0), events.length - 1)
+    const stages = deriveStages(events[idx], facts, selected.packets)
+    const vm = buildCompareViewModel(selected.packets, facts, events[idx], stages)
+    return { summaries: buildEventSummaries(events), eventIndex: idx, vm }
+  }, [compareFor, selected, compareEventIndex])
+  const compareVm = compare?.vm ?? null
 
   // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下);持久化,拖一次即记住
   const LS_LIST = 'pui:listWidth'
@@ -189,6 +196,10 @@ export function AppLayout() {
           <ErrorBoundary name="故障分析">
             <FaultCompare
               vm={compareVm}
+              events={compare?.summaries}
+              eventIndex={compare?.eventIndex}
+              onSelectEvent={setCompareEventIndex}
+              eventKey={compare?.eventIndex != null && compare.eventIndex >= 0 ? compare.summaries[compare.eventIndex]?.id : undefined}
               onSelectPacket={(n) => {
                 // 跳回原报文:退出对照板块回到主视图并定位报文详情
                 closeCompare()

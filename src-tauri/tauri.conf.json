@@ -18,7 +18,8 @@
         "minWidth": 960,
         "minHeight": 600,
         "decorations": false,
-        "theme": "Light"
+        "theme": "Light",
+        "visible": false
       }
     ],
     "security": {

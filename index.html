@@ -5,9 +5,132 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>pUI · 抓包报文时序分析</title>
+    <style>
+      /* 启动加载层:纯内联 HTML+SVG+CSS,零 JS 依赖 —— WebView 首帧即渲染,
+          消除 JS bundle 加载期间的白屏。造型精神取自 emotion-ball(纯 SVG 表情球,
+          零图片资源);此处为原创极简手绘,未使用该项目代码与角色形象。 */
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+        z-index: 9999;
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        user-select: none;
+        transition: opacity 0.25s ease;
+      }
+      #boot.bye {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #boot svg {
+        width: 96px;
+        height: 96px;
+        animation: boot-bounce 1s cubic-bezier(0.34, 1.56, 0.64, 1) infinite alternate;
+      }
+      @keyframes boot-bounce {
+        from {
+          transform: translateY(-14px);
+        }
+        to {
+          transform: translateY(6px) scale(0.96, 0.9);
+        }
+      }
+      .boot-shadow {
+        width: 44px;
+        height: 8px;
+        border-radius: 50%;
+        background: #cbd5e1;
+        margin-top: 2px;
+        animation: boot-shadow 1s ease-in-out infinite alternate;
+      }
+      @keyframes boot-shadow {
+        from {
+          transform: scaleX(0.55);
+          opacity: 0.35;
+        }
+        to {
+          transform: scaleX(1.1);
+          opacity: 0.8;
+        }
+      }
+      /* 眼睛:左右扫视(加载=在找东西) */
+      .boot-eyes {
+        animation: boot-look 2.4s ease-in-out infinite;
+      }
+      @keyframes boot-look {
+        0%,
+        100% {
+          transform: translateX(-4px);
+        }
+        50% {
+          transform: translateX(4px);
+        }
+      }
+      /* 眨眼:扫视周期内眨一次 */
+      .boot-eye {
+        transform-origin: center;
+        animation: boot-blink 2.4s ease-in-out infinite;
+      }
+      @keyframes boot-blink {
+        0%,
+        42%,
+        54%,
+        100% {
+          transform: scaleY(1);
+        }
+        48% {
+          transform: scaleY(0.08);
+        }
+      }
+      .boot-title {
+        margin-top: 14px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        letter-spacing: 0.5px;
+      }
+      .boot-sub {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+    </style>
   </head>
 
   <body>
+    <div id="boot">
+      <svg viewBox="0 0 96 96" role="img" aria-label="加载中">
+        <!-- 思考环:头顶悬浮弧(加载状态标识),旋转 -->
+        <ellipse cx="48" cy="14" rx="16" ry="4.5" fill="none" stroke="#93c5fd" stroke-width="3" stroke-linecap="round" stroke-dasharray="20 30">
+          <animateTransform attributeName="transform" type="rotate" from="0 48 14" to="360 48 14" dur="2s" repeatCount="indefinite" />
+        </ellipse>
+        <!-- 球体:原创极简 blob -->
+        <circle cx="48" cy="54" r="30" fill="#F6EFE4" stroke="#e2d9c8" stroke-width="1.5" />
+        <!-- 高光 -->
+        <ellipse cx="38" cy="42" rx="9" ry="5.5" fill="#ffffff" opacity="0.7" transform="rotate(-24 38 42)" />
+        <!-- 眼睛(组内左右扫视 + 眨眼) -->
+        <g class="boot-eyes">
+          <g class="boot-eye">
+            <circle cx="39" cy="50" r="4.2" fill="#2b2b33" />
+          </g>
+          <g class="boot-eye">
+            <circle cx="57" cy="50" r="4.2" fill="#2b2b33" />
+          </g>
+        </g>
+        <!-- 嘴:小弧(专注) -->
+        <path d="M43 63 Q48 66.5 53 63" fill="none" stroke="#2b2b33" stroke-width="2.4" stroke-linecap="round" />
+        <!-- 腮红 -->
+        <ellipse cx="33" cy="60" rx="3.4" ry="2" fill="#f3c8c0" opacity="0.8" />
+        <ellipse cx="63" cy="60" rx="3.4" ry="2" fill="#f3c8c0" opacity="0.8" />
+      </svg>
+      <div class="boot-shadow"></div>
+      <div class="boot-title">pUI 抓包报文时序分析</div>
+      <div class="boot-sub">正在启动…</div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -16,6 +16,19 @@ pub fn run() {
             resolved_path: Default::default(),
             temp_files: Default::default(),
         }))
+        .setup(|app| {
+            // 窗口默认隐藏(visible:false),前端 React 首帧后主动 show()——
+            // 消除 WebView2 初始化期间的启动白屏。此处兜底:JS 万一没跑起来,
+            // 2.5s 后强制显示,窗口永不消失(宁白屏勿无响应)
+            let window = app.get_webview_window("main");
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(2500));
+                if let Some(w) = window {
+                    let _ = w.show();
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::locate_tshark,
             commands::set_tshark_path,

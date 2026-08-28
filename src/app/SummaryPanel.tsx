@@ -8,6 +8,7 @@ import { computeRttStats, MIN_RTT_SAMPLES } from '../stats/rttStats'
 import { computeCaptureQuality } from '../stats/captureQuality'
 import { computeWindowStats } from '../stats/windowStats'
 import { computeHealthScore } from '../stats/healthScore'
+import { countAppEvents, runApplicationAnalyzers } from '../analysis/app/analyzers'
 import { protocolColor } from '../model/protocolColors'
 import { displayHost } from '../model/types'
 
@@ -35,6 +36,18 @@ export function SummaryPanel() {
   const cq = useMemo(() => (conv ? computeCaptureQuality(conv.packets) : null), [conv])
   const ws = useMemo(() => (conv ? computeWindowStats(conv.packets) : null), [conv])
   const health = useMemo(() => (conv ? computeHealthScore(conv.packets) : null), [conv])
+  // M6:应用层事件(HTTP/DNS/TLS 插件,只消费已解析字段)。慢响应阈值沿用全局慢响应阈值。
+  const slowThreshold = useApp((s) => s.slowThreshold)
+  const appEvents = useMemo(() => (conv ? runApplicationAnalyzers(conv.packets) : []), [conv])
+  const appCounts = useMemo(() => countAppEvents(appEvents), [appEvents])
+  const slowResponses = useMemo(
+    () =>
+      appEvents
+        .filter((e) => e.kind === 'response' && e.durationSeconds != null && e.durationSeconds > slowThreshold)
+        .sort((a, b) => (b.durationSeconds ?? 0) - (a.durationSeconds ?? 0))
+        .slice(0, 5),
+    [appEvents, slowThreshold],
+  )
 
   if (!summary.conversationCount) {
     return <div className="empty">打开文件后显示分析摘要</div>
@@ -137,6 +150,36 @@ export function SummaryPanel() {
           {cq.available && cq.truncatedCount > 0 && (
             <div className="issue-line" title={`截断帧:#${cq.truncatedPackets.join(', #')}`}>
               ⚠ 存在截断帧(snaplen/采集口限制):这些报文的载荷分析受限;截断是采集侧信号,不指示网络丢包
+            </div>
+          )}
+        </>
+      )}
+      {/* M6:应用层事件(选中会话)。只陈述观察到的交互次数;慢响应阈值=全局慢响应阈值,
+          耗时来自 tshark http.time(请求到响应,含对端处理,非纯网络时延) */}
+      {conv && appEvents.length > 0 && (
+        <>
+          <div className="sub-title">应用层事件({displayHost(conv!.client)} ⇄ {displayHost(conv!.server)})</div>
+          <div className="summary-grid" data-testid="summary-app">
+            {appCounts.map((c) => (
+              <span key={`${c.app}:${c.kind}`}>
+                {c.app.toUpperCase()} {c.kind === 'request' ? '请求' : c.kind === 'response' ? '响应' : c.kind === 'query' ? '查询' : '握手'} <b>{c.count}</b>
+              </span>
+            ))}
+          </div>
+          {slowResponses.length > 0 && (
+            <div className="issue-line" data-testid="summary-app-slow" title="http.time 超过慢响应阈值(含对端处理时延);慢响应是观察,原因可能在网络/对端/应用,需结合 TCP 事件判断">
+              ⚠ 慢响应(&gt;{slowThreshold}s) {slowResponses.length} 条(点击在时序图高亮):
+              {slowResponses.map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  className="detail-evbtn"
+                  title={`${e.summary} · ${e.durationSeconds?.toFixed(2)}s · #${e.packetNumber}(点击高亮定位)`}
+                  onClick={() => setHighlight([e.packetNumber])}
+                >
+                  #{e.packetNumber} {e.durationSeconds?.toFixed(2)}s
+                </button>
+              ))}
             </div>
           )}
         </>

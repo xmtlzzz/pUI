@@ -160,3 +160,32 @@ describe('SummaryPanel 健康分(仅筛选用)', () => {
     expect(v2.container.querySelector('[data-testid="summary-health"]')!.textContent).toContain('(-15)')
   })
 })
+
+describe('SummaryPanel 应用层事件(M6 插件接入)', () => {
+  it('选中 HTTP 会话时显示请求/响应计数;慢响应超阈值列出并可点击高亮', () => {
+    const httpPkts: Packet[] = [
+      { ...pkt(1), proto: 'http', httpMethod: 'GET', httpUri: '/api' },
+      { ...pkt(2), proto: 'http', httpCode: '200', httpTime: 0.2 },
+      { ...pkt(3), proto: 'http', httpMethod: 'GET', httpUri: '/slow' },
+      { ...pkt(4), proto: 'http', httpCode: '504', httpTime: 2.5 }, // > 默认慢阈值 1s
+    ]
+    useApp.setState({ conversations: [conv('1', httpPkts)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const grid = container.querySelector('[data-testid="summary-app"]')!
+    expect(grid.textContent).toContain('HTTP 请求')
+    expect(grid.textContent).toContain('HTTP 响应')
+    // 慢响应区:只有 #4(2.5s > 1s)
+    const slow = container.querySelector('[data-testid="summary-app-slow"]')!
+    expect(slow.textContent).toContain('#4')
+    expect(slow.textContent).not.toContain('#2')
+    // 点击慢响应 → 高亮该报文(下钻)
+    fireEvent.click(slow.querySelector('button')!)
+    expect(useApp.getState().highlight).toEqual([4])
+  })
+
+  it('无应用字段的 TCP 会话不渲染应用层区', () => {
+    useApp.setState({ conversations: [conv('1', [pkt(1)])], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    expect(container.querySelector('[data-testid="summary-app"]')).toBeNull()
+  })
+})

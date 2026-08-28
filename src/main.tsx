@@ -28,6 +28,15 @@ requestAnimationFrame(() => {
   const boot = document.getElementById("boot")
   if (boot) {
     boot.classList.add("bye")
-    window.setTimeout(() => boot.remove(), 300)
+    window.setTimeout(() => {
+      // 先停 emotion-ball 引擎(内置 RAF),再移除启动层节点
+      const teardown = (window as { __puiBootTeardown?: () => void }).__puiBootTeardown
+      try {
+        teardown?.()
+      } catch {
+        /* 忽略 */
+      }
+      boot.remove()
+    }, 300)
   }
 });

@@ -43,8 +43,12 @@ interface CaptureStreamedResult {
 /** 打开抓包(流式):Rust 按帧边界分块经 Channel 回传,前端逐块解析追加,
  *  onProgress 每块回调一次(帧数进度)。Tauri 缺席时回落浏览器 fixture 路径。
  *  数据完整性红线:分块解析出错绝不能静默 —— onmessage 里没有 await 链,
- *  错误必须记下并在 invoke 返回后抛出;帧数对不上同样视为损坏。 */
+ *  错误必须记下并在 invoke 返回后抛出;帧数对不上同样视为损坏。
+ *  command 与 invokeArgs 必须成对传入(open_capture→path / open_capture_data→
+ *  fileName+base64Data):曾因命令名写死,示例参数被发往 open_capture 报
+ *  「missing required key path」。 */
 async function receiveStreamedCapture(
+  command: 'open_capture' | 'open_capture_data',
   invokeArgs: Record<string, unknown>,
   onProgress?: (frames: number) => void,
 ): Promise<{ packets: Packet[]; out: CaptureStreamedResult }> {
@@ -61,7 +65,7 @@ async function receiveStreamedCapture(
     }
     onProgress?.(state.count)
   }
-  const out = await invoke<CaptureStreamedResult>('open_capture', { ...invokeArgs, onChunk: channel })
+  const out = await invoke<CaptureStreamedResult>(command, { ...invokeArgs, onChunk: channel })
   if (parseError) throw parseError
   if (out.frames > 0 && packets.length === 0) {
     throw new Error(`分块解析未产出任何报文(Rust 报告 ${out.frames} 帧):批格式契约不匹配`)
@@ -78,7 +82,7 @@ export async function openCapture(
   onProgress?: (frames: number) => void,
 ): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   if (isTauri()) {
-    const { packets, out } = await receiveStreamedCapture({ path }, onProgress)
+    const { packets, out } = await receiveStreamedCapture('open_capture', { path }, onProgress)
     return { meta: computeMeta(path.split(/[\\/]/).pop() ?? path, packets, out.size), packets, path: out.path }
   }
   // browser dev fallback: 读取已提交的解析产物
@@ -102,7 +106,11 @@ export async function openSample(
     let bin = ''
     for (const b of buf) bin += String.fromCharCode(b)
     const base64 = btoa(bin)
-    const { packets, out } = await receiveStreamedCapture({ fileName: `${name}.pcapng`, base64Data: base64 }, onProgress)
+    const { packets, out } = await receiveStreamedCapture(
+      'open_capture_data',
+      { fileName: `${name}.pcapng`, base64Data: base64 },
+      onProgress,
+    )
     return { meta: computeMeta(`${name}.pcapng`, packets, out.size), packets, path: out.path }
   }
   const jres = await fetch(`/fixtures/examples/parsed/${name}.json`)

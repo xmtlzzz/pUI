@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment jsdom
+import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import { computeMeta } from './tauri'
 
 describe('bridge helpers', () => {
@@ -36,5 +37,59 @@ describe('bridge helpers', () => {
   it('computeMeta 透传 parseMs', () => {
     const meta = computeMeta('demo.pcapng', [] as never, 0, 123.4)
     expect(meta.parseMs).toBe(123.4)
+  })
+})
+
+// ---- 命令路由回归(mock @tauri-apps/api/core;需 jsdom 提供 window/btoa) ----
+// 事故:receiveStreamedCapture 命令名写死,打开示例时 open_capture_data 的参数
+// 被发往 open_capture,报「missing required key path」
+import { vi } from 'vitest'
+
+const invokeMock = vi.fn()
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args),
+  Channel: class {
+    onmessage: ((msg: unknown) => void) | null = null
+  },
+}))
+
+describe('bridge 命令路由(流式打开,Tauri 分支)', () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+  })
+  afterEach(() => {
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
+  it('openCapture → open_capture,携带 path 与 onChunk', async () => {
+    const { openCapture } = await import('./tauri')
+    invokeMock.mockResolvedValue({ size: 100, path: 'C:/x.pcap', frames: 0 })
+    await openCapture('C:/x.pcap')
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    const [cmd, args] = invokeMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('open_capture')
+    expect(args.path).toBe('C:/x.pcap')
+    expect(args.onChunk).toBeTruthy()
+  })
+
+  it('openSample → open_capture_data,携带 fileName/base64Data(事故回归)', async () => {
+    const { openSample } = await import('./tauri')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new Uint8Array([0x0a, 0x0d, 0x0d, 0x0a]).buffer,
+      })),
+    )
+    invokeMock.mockResolvedValue({ size: 4, path: 'C:/tmp/demo.pcapng', frames: 0 })
+    await openSample('demo')
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    const [cmd, args] = invokeMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('open_capture_data')
+    expect(args.fileName).toBe('demo.pcapng')
+    expect(typeof args.base64Data).toBe('string')
+    expect(args.onChunk).toBeTruthy()
+    vi.unstubAllGlobals()
   })
 })

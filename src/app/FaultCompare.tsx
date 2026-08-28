@@ -40,6 +40,11 @@ interface FaultCompareProps {
   initialStageIndex?: number
   /** 导出当前事件为 Markdown 证据报告(实际故障侧;正常参考不导出) */
   onExport?: () => void
+  /**
+   * 会话两端身份(可选,「客户端 → 服务端」展示):传入后方向切换器用端点身份
+   * + 箭头标注数据方向,替代 c2s/s2c 黑话;不传时退化为事件方向/对向
+   */
+  endpoints?: { client: string; server: string }
 }
 
 function phaseLabel(p: PlaybackPhase): string {
@@ -75,6 +80,12 @@ function useNarrowViewport(breakpoint = 900): boolean {
 }
 
 const STAGE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981', '#ec4899', '#14b8a6', '#f97316']
+
+/** 端点展示:截断过长的地址(host:port),中间省略 */
+function endpointLabel(ep: string, max = 22): string {
+  if (ep.length <= max) return ep
+  return `${ep.slice(0, Math.max(6, max - 1))}…`
+}
 
 /** 恢复脉冲的持续时长(归一化时间轴占比) */
 const PING_DUR = 0.07
@@ -126,6 +137,7 @@ export function SeqSpaceGraphic({
   onZoomRange,
   baseRange,
   showEventPins = true,
+  onSelectPacket,
 }: {
   vm: CompareViewModel
   playhead: number
@@ -148,6 +160,8 @@ export function SeqSpaceGraphic({
   baseRange?: BaseRange
   /** 是否渲染事件位置轨(对向静态视图无本事件证据链,传 false) */
   showEventPins?: boolean
+  /** 点击事件轨图钉跳到对应报文;不传则图钉仅悬停提示 */
+  onSelectPacket?: (n: number) => void
 }) {
   const sq = seqSpaceOverride ?? vm.seqSpace
   const base = baseRange ?? { min: sq.axisMin, max: sq.axisMax }
@@ -411,25 +425,30 @@ export function SeqSpaceGraphic({
       })()}
       {/* 事件位置轨(M5 用户反馈):把证据链报文按序列号位置排布在下方空白带,
           让"这个位置发生了什么"直接可读 —— 数据段=彩色短条,纯 ACK=三角刻度。
-          颜色与阶段带一致;点击图例可整体开关。showEventPins=false(对向静态视图)
-          不渲染 —— 对向没有本事件的证据链 */}
+          颜色与阶段带一致;点击图钉跳到对应报文(定位问题);
+          图例可整体开关。showEventPins=false(对向静态视图)不渲染 */}
       {layers.evt && showEventPins && vm.eventPins.length > 0 && (
-        <g data-testid="fc-event-pins">
+        <g data-testid="fc-event-pins" className={onSelectPacket ? 'fc-pins-clickable' : undefined}>
           <line x1={8} y1={116} x2={W - 8} y2={116} stroke="#eef2f7" />
           {vm.eventPins.map((pin, i) => {
             const px = x(pin.seq)
             if (px < 2 || px > W - 2) return null // 缩放窗口外
             const color = SEQ_STAGE_COLORS[((pin.colorIndex % SEQ_STAGE_COLORS.length) + SEQ_STAGE_COLORS.length) % SEQ_STAGE_COLORS.length]
             const w = Math.max((pin.len > 0 ? x(Math.min(pin.seq + pin.len, sq.axisMax)) - px : 0), 3)
+            const clickable = onSelectPacket != null
+            const hit = {
+              onClick: clickable ? () => onSelectPacket!(pin.packetNumber) : undefined,
+              style: { cursor: clickable ? ('pointer' as const) : undefined },
+            }
             return (
-              <g key={`pin${i}`}>
+              <g key={`pin${i}`} {...hit}>
                 {pin.kind === 'data' ? (
                   <rect x={px} y={106} width={w} height={7} fill={color} rx={1.5}>
-                    <title>{`${pin.label} seq=${pin.seq}${pin.len ? ` len=${pin.len}` : ''}`}</title>
+                    <title>{`${pin.label} seq=${pin.seq}${pin.len ? ` len=${pin.len}` : ''}${clickable ? '(点击查看报文)' : ''}`}</title>
                   </rect>
                 ) : (
                   <path d={`M${px - 4},112 L${px + 4},112 L${px},105 z`} fill={color}>
-                    <title>{pin.label}</title>
+                    <title>{`${pin.label}${clickable ? '(点击查看报文)' : ''}`}</title>
                   </path>
                 )}
                 <text x={px} y={124} textAnchor="middle" fontSize={8.5} fill={color}>
@@ -486,6 +505,7 @@ function CompareContent({
   onSelectEvent,
   initialStageIndex,
   onExport,
+  endpoints,
 }: FaultCompareProps & { vm: CompareViewModel }) {
   const stageAt = useMemo(
     () => (t: number): number => {
@@ -653,29 +673,40 @@ function CompareContent({
           )}
 
           {/* 序列空间方向切换(M4:双向流对向视图)+ 视图范围/缩放(M5 完整 SSV)。
-              缩放控件始终可用(缺口邻域内也可放大) */}
+              方向按钮用「端点 → 端点」形态直观标注数据流向(传入 endpoints 时),
+              否则退化为事件方向/对向;c2s/s2c 黑话仅保留在 title 里供对照 */}
           <div className="fc-dir-row">
             {vm.opposite && (
                 <div className="seg" role="tablist" aria-label="序列空间方向" data-testid="fc-dir-toggle">
                   <button
                     type="button"
                     className={viewSide === 'event' ? 'on' : ''}
+                    title={`数据方向 ${vm.direction}(报文从该方向发出)`}
                     onClick={() => {
                       setViewSide('event')
                       setZoom(null)
                     }}
                   >
-                    事件方向({vm.direction})
+                    {endpoints
+                      ? vm.direction === 'c2s'
+                        ? `${endpointLabel(endpoints.client)} → ${endpointLabel(endpoints.server)}`
+                        : `${endpointLabel(endpoints.server)} → ${endpointLabel(endpoints.client)}`
+                      : `事件方向(${vm.direction})`}
                   </button>
                   <button
                     type="button"
                     className={viewSide === 'opp' ? 'on' : ''}
+                    title={`对向 ${vm.opposite.dir}(静态事实视图:无事件证据链)`}
                     onClick={() => {
                       setViewSide('opp')
                       setZoom(null)
                     }}
                   >
-                    对向({vm.opposite.dir})
+                    {endpoints
+                      ? vm.opposite.dir === 'c2s'
+                        ? `${endpointLabel(endpoints.client)} → ${endpointLabel(endpoints.server)}`
+                        : `${endpointLabel(endpoints.server)} → ${endpointLabel(endpoints.client)}`
+                      : `对向(${vm.opposite.dir})`}
                   </button>
                 </div>
               )}
@@ -822,6 +853,7 @@ function CompareContent({
               zoomRange={zoom}
               onZoomRange={setZoom}
               baseRange={{ min: baseView.axisMin, max: baseView.axisMax }}
+              onSelectPacket={onSelectPacket ? (n) => onSelectPacket(n, jumpCtx()) : undefined}
               playhead={pb.time}
               progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
             />

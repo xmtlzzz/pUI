@@ -311,6 +311,7 @@ export function AppLayout() {
               onExport={onExportCompare}
               onSelectPacket={jumpToPacket}
               onBack={exitCompare}
+              endpoints={selected ? { client: selected.client, server: selected.server } : undefined}
             />
           </ErrorBoundary>
         </>

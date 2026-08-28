@@ -249,10 +249,24 @@ describe('FaultCompare 对照页(整页板块)', () => {
       },
     })
     const view = render(<FaultCompare vm={vm} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
-    // 切换器出现(主界面 .seg 风格)
+    // 切换器出现(主界面 .seg 风格);未传 endpoints 时退化为事件方向/对向
     const toggle = screen.getByTestId('fc-dir-toggle')
     expect(toggle.textContent).toContain('事件方向(c2s)')
     expect(toggle.textContent).toContain('对向(s2c)')
+    // 传入 endpoints:按钮用「端点 → 端点」形态标注数据流向,替代 c2s/s2c 黑话
+    const view2 = render(
+      <FaultCompare
+        vm={vm}
+        onSelectPacket={vi.fn()}
+        onBack={vi.fn()}
+        endpoints={{ client: '10.0.0.5:1234', server: '93.184.216.34:443' }}
+      />,
+    )
+    const toggle2 = view2.container.querySelector('[data-testid="fc-dir-toggle"]')!
+    expect(toggle2.textContent).toContain('10.0.0.5:1234 → 93.184.216.34:443')
+    // 对向是 s2c:箭头反向(服务端 → 客户端)
+    expect(toggle2.textContent).toContain('93.184.216.34:443 → 10.0.0.5:1234')
+    view2.unmount()
     // 默认事件方向视图
     expect(screen.getByLabelText('序列空间图形化')).toBeTruthy()
     // 切到对向 → 对向静态视图(独立 aria-label,轴覆盖对向数据)
@@ -264,6 +278,7 @@ describe('FaultCompare 对照页(整页板块)', () => {
     fireEvent.click(toggle.querySelectorAll('button')[0])
     expect(screen.getByLabelText('序列空间图形化')).toBeTruthy()
     void view
+    void view2
   })
 
   it('窄窗口(<900px):双标签切换实际故障/正常参考,单栏渲染', () => {
@@ -551,6 +566,17 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
     // 图层开关:关闭后整轨消失
     fireEvent.click(screen.getByTestId('fc-layer-evt'))
     expect(screen.getByTestId('fc-seqspace').querySelector('[data-testid="fc-event-pins"]')).toBeNull()
+  })
+
+  it('事件轨图钉可点击定位报文(用户反馈"如何查看/定位问题"):点击跳包并携带事件+阶段上下文', () => {
+    const onSelectPacket = vi.fn()
+    render(<FaultCompare vm={makeVm()} onSelectPacket={onSelectPacket} onBack={vi.fn()} />)
+    const pins = screen.getByTestId('fc-seqspace').querySelector('[data-testid="fc-event-pins"]')!
+    expect(pins.getAttribute('class')).toContain('fc-pins-clickable')
+    // 点击 #6 图钉(缺口显露)→ 跳到报文 6,上下文=当前事件+当前阶段
+    const groups = [...pins.querySelectorAll('g')]
+    fireEvent.click(groups[0])
+    expect(onSelectPacket).toHaveBeenCalledWith(6, { eventIndex: 0, stageIndex: expect.any(Number) })
   })
 
   it('ACK 游标自解释:标签注明累计确认,图例可开关该图层', () => {

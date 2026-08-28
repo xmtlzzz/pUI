@@ -587,6 +587,17 @@
   cursor: grabbing;
 }
 
+/* 事件位置轨可点击(跳报文):悬停时图钉加重,提示可点 */
+.fc-pins-clickable rect,
+.fc-pins-clickable path {
+  transition: opacity 0.12s ease;
+}
+
+.fc-pins-clickable:hover rect,
+.fc-pins-clickable:hover path {
+  opacity: 0.82;
+}
+
 .fc-dir-note {
   font-size: 11px;
   color: #94a3b8;

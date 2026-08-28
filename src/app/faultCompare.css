@@ -553,6 +553,10 @@
   height: 0;
 }
 
+.lg-ack {
+  background: #1d4ed8;
+}
+
 /* 序列空间方向切换(事件方向/对向)+ 视图范围/缩放(M5 完整 SSV) */
 .fc-dir-row {
   display: flex;

@@ -388,7 +388,7 @@ export function SeqSpaceGraphic({
               </>
             )}
             <text x={cx} y={showPing ? 76 : 88} textAnchor="middle" fontSize={10} fill="#1d4ed8">
-              ACK {ackPos}
+              累计确认 ACK {ackPos}
             </text>
           </g>
         )
@@ -739,6 +739,17 @@ function CompareContent({
                 重传回补
               </button>
             )}
+            <button
+              type="button"
+              className={`lg-item${layers.ack ? ' on' : ''}`}
+              aria-pressed={layers.ack}
+              data-testid="fc-layer-ack"
+              title="点击显示/隐藏累计确认游标"
+              onClick={() => setLayers((l) => ({ ...l, ack: !l.ack }))}
+            >
+              <i className="lg lg-ack" />
+              累计确认(ACK)
+            </button>
           </div>
 
           {/* 序列空间图形化:核心可视化(事件方向=分镜动画;对向=静态事实;静态模式信息等价)。

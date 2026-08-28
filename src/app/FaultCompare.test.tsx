@@ -534,4 +534,19 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
     fireEvent.click(screen.getByTestId('fc-layer-seen'))
     expect(svg().textContent).not.toContain('已见字节 0')
   })
+
+  it('ACK 游标自解释(用户反馈"红框突兀"):游标标签注明累计确认,图例可开关该图层', () => {
+    // 从末阶段恢复:播放时刻落在首个 ACK 之后,游标可见(待播放 t=0 时它尚不存在,同样是正确行为)
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} initialStageIndex={4} />)
+    const svg = () => screen.getByTestId('fc-seqspace')
+    // 游标标签自带含义说明
+    expect(svg().textContent).toMatch(/累计确认 ACK \d/)
+    // 图例含 ACK 项且可关闭
+    const ackBtn = screen.getByTestId('fc-layer-ack') as HTMLButtonElement
+    expect(ackBtn.textContent).toContain('累计确认')
+    fireEvent.click(ackBtn)
+    expect(svg().textContent).not.toContain('累计确认')
+    fireEvent.click(screen.getByTestId('fc-layer-ack'))
+    expect(svg().textContent).toMatch(/累计确认 ACK \d/)
+  })
 })

@@ -186,7 +186,7 @@ export function SeqSpaceGraphic({
             opacity={gapPop ? gapPop.opacity : 1}
             style={style}
           >
-            <title>{`缺口 ${Math.round(s)}–${Math.round(e)}`}</title>
+            <title>{`未收到 ${Math.round(s)}–${Math.round(e)}`}</title>
           </rect>
         )
       })}
@@ -437,7 +437,7 @@ function CompareContent({
       {(vm.degraded.midStream || vm.degraded.unorderableInput || vm.degraded.lengthUnavailable) && (
         <div className="fc-degraded" role="status">
           {vm.degraded.midStream && <p>⚠ 抓包从连接中途开始:流起始处的缺失不构成丢包证据。</p>}
-          {vm.degraded.lengthUnavailable && <p>⚠ 载荷长度不可用:字节数以 unknown 显示(不会显示为 0)。</p>}
+          {vm.degraded.lengthUnavailable && <p>⚠ 载荷长度不可用:相关字节数省略显示(绝不以 0 冒充)。</p>}
           {vm.degraded.unorderableInput && <p>⚠ 序列空间存在无法定位的输入:图形仅供参考。</p>}
         </div>
       )}
@@ -504,18 +504,19 @@ function CompareContent({
             </div>
           )}
 
-          {/* 序列空间图例:图形中各颜色/纹理的含义(用户反馈:红绿块含义要显式说明) */}
+          {/* 序列空间图例:图形中各颜色/纹理的含义(用户反馈:红绿块含义要显式说明)。
+              随当前视图取值:对向视图无重传箭头,图例不得提示不存在的图元 */}
           <div className="fc-seq-legend" data-testid="fc-seq-legend">
             <span>
               <i className="lg lg-seen" />已见字节
             </span>
             <span>
-              <i className="lg lg-gap" />缺口(未到达)
+              <i className="lg lg-gap" />未收到
             </span>
             <span>
               <i className="lg lg-sack" />SACK(对端已收)
             </span>
-            {vm.seqSpace.retxArrow && (
+            {(viewSide === 'event' || !vm.opposite) && vm.seqSpace.retxArrow && (
               <span>
                 <i className="lg lg-retx" />重传回补
               </span>

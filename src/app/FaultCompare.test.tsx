@@ -64,6 +64,7 @@ function makeVm(overrides: Partial<CompareViewModel> = {}): CompareViewModel {
     marks: { gapRevealAt: 0.12, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.55, recoverAt: 0.9 },
     direction: 'c2s',
     opposite: null,
+    allGaps: [[101, 201]],
     degraded: { unorderableInput: false, midStream: false, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
     ...overrides,
@@ -204,7 +205,7 @@ describe('FaultCompare 对照页(整页板块)', () => {
     render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
     const legend = screen.getByTestId('fc-seq-legend')
     expect(legend.textContent).toContain('已见字节')
-    expect(legend.textContent).toContain('缺口')
+    expect(legend.textContent).toContain('未收到')
     expect(legend.textContent).toContain('SACK')
     expect(legend.textContent).toContain('重传回补')
     // 轴说明:这是字节序列号空间
@@ -352,7 +353,10 @@ describe('FaultCompare 对照页(整页板块)', () => {
     render(<FaultCompare vm={vm} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
     const banner = screen.getByText('⚠ 抓包从连接中途开始:流起始处的缺失不构成丢包证据。').parentElement
     expect(banner?.textContent).toContain('中途开始')
-    expect(banner?.textContent).toContain('unknown')
+    // 措辞与实际行为一致:缺长度的字段是省略显示(不存在 "unknown" 字样渲染),绝不以 0 冒充
+    expect(banner?.textContent).toContain('省略显示')
+    expect(banner?.textContent).toContain('绝不以 0 冒充')
+    expect(banner?.textContent).not.toContain('unknown')
   })
 })
 

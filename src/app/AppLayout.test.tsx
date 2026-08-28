@@ -255,4 +255,76 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(Number.parseFloat(cursor.style.left)).toBeGreaterThan(0)
     vi.unstubAllGlobals()
   })
+
+  // 对抗审查发现的下标覆盖回归:openCompare 会把 compareEventIndex 重置为 0,
+  // 任何"先设下标再 openCompare"的路径都会把命中结果覆盖成事件 1。
+  const mk = (o: Record<string, unknown>) => ({ transport: 'tcp', proto: 'tcp', len: 54 + Number(o.tcpLen ?? 0), direction: 'other', tcpStream: 0, ...o }) as never
+  const c2s = (o: Record<string, unknown>) => mk({ srcIp: '10.0.0.1', dstIp: '10.0.0.2', srcPort: 1234, dstPort: 80, ...o })
+  const s2c = (o: Record<string, unknown>) => mk({ srcIp: '10.0.0.2', dstIp: '10.0.0.1', srcPort: 80, dstPort: 1234, ...o })
+  const SYN = '0x0002'
+  const SYNACK = '0x0012'
+  const PSHACK = '0x0018'
+  const twoEventPackets = () => [
+    c2s({ number: 1, time: 0, tcpFlags: SYN, tcpSeq: 0, tcpLen: 0 }),
+    s2c({ number: 2, time: 0.01, tcpFlags: SYNACK, tcpSeq: 0, tcpAck: 1, tcpLen: 0 }),
+    c2s({ number: 3, time: 0.02, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 1, tcpLen: 0 }),
+    c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+    s2c({ number: 5, time: 0.04, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0 }),
+    c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100 }),
+    s2c({ number: 7, time: 0.06, tcpFlags: '0x0010', tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[201, 301]], tcpDupAckNum: 1 }),
+    c2s({ number: 8, time: 0.30, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpAnalysis: ['retransmission'] }),
+  ]
+  const setupTwoEvents = () => {
+    const packets = twoEventPackets()
+    const conversations = aggregateConversations(packets)
+    const conv = conversations[0]
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      selectedId: conv.id,
+      compareFor: null,
+      compareEventIndex: 0,
+      compareResume: null,
+    })
+    return conv
+  }
+
+  it('「查看事件上下文」命中第 2 个事件时打开对应事件,而非被 openCompare 重置回事件 1', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    setupTwoEvents()
+    const { container } = render(<AppLayout />)
+
+    act(() => {
+      useApp.getState().selectPacket(8) // 伪重传事件的证据报文
+    })
+    act(() => {
+      fireEvent.click(container.querySelector('[data-testid="pd-view-events"]')!)
+    })
+    expect(container.querySelector('[data-testid="fault-compare"]')).toBeTruthy()
+    // 事件下标 1(第二条)处于激活态;旧行为会落在事件 0
+    expect(useApp.getState().compareEventIndex).toBe(1)
+    expect(container.querySelectorAll('.fc-evbtn')[1].className).toContain('active')
+    expect(container.querySelector('.fc-headline')!.textContent).toMatch(/疑似 ACK 丢失 \/ 冗余重传/)
+    vi.unstubAllGlobals()
+  })
+
+  it('「返回故障分析」恢复事件 2:openCompare 的下标重置不得覆盖恢复下标', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const conv = setupTwoEvents()
+    useApp.setState({ compareResume: { conversationId: conv.id, eventIndex: 1, stageIndex: 0 } })
+    const { container } = render(<AppLayout />)
+
+    const resumeBtn = container.querySelector('[data-testid="fault-analyze-resume"]') as HTMLButtonElement
+    expect(resumeBtn.textContent).toContain('事件 2')
+    act(() => {
+      fireEvent.click(resumeBtn)
+    })
+    expect(container.querySelector('[data-testid="fault-compare"]')).toBeTruthy()
+    expect(useApp.getState().compareEventIndex).toBe(1)
+    expect(container.querySelectorAll('.fc-evbtn')[1].className).toContain('active')
+    expect(useApp.getState().compareResume).toBeNull()
+    vi.unstubAllGlobals()
+  })
 })

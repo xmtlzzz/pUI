@@ -90,11 +90,14 @@ export function exportCompareReport(input: CompareReportInput): string {
   L.push('## 序列空间摘要')
   L.push('')
   const sq = vm.seqSpace
-  L.push(`- 字节区间: ${Math.round(sq.axisMin)}–${Math.round(sq.axisMax)}`)
-  if (sq.gaps.length) {
-    L.push(`- 缺口: ${sq.gaps.map(([a, b]) => `${Math.round(a)}–${Math.round(b)}`).join(', ')}`)
+  L.push(`- 图形视窗(聚焦缺口邻域): ${Math.round(sq.axisMin)}–${Math.round(sq.axisMax)}`)
+  // 缺口清单取全量(vm.allGaps):seqSpace.gaps 已按图形视窗裁剪,直接导出会少报
+  // 视窗外的缺口 —— 证据报告宁可列全,不可静默丢弃(旧缓存视图模型无 allGaps 时回退)
+  const gapList = vm.allGaps ?? sq.gaps
+  if (gapList.length) {
+    L.push(`- 缺口: ${gapList.map(([a, b]) => `${Math.round(a)}–${Math.round(b)}`).join(', ')}`)
   } else {
-    L.push('- 缺口: 无(伪重传/窗口类场景)')
+    L.push('- 缺口: 无(伪重传类场景)')
   }
   L.push(`- SACK 块(合并后): ${sq.sackBlocks.length}${sq.sackBlocks.length >= 100 ? '(截断至渲染上限)' : ''}`)
   L.push('')
@@ -103,7 +106,7 @@ export function exportCompareReport(input: CompareReportInput): string {
     L.push('## 降级说明')
     L.push('')
     if (vm.degraded.midStream) L.push('- 抓包从连接中途开始:流起始处的缺失不构成丢包证据')
-    if (vm.degraded.lengthUnavailable) L.push('- 载荷长度不可用:字节数以 unknown 处理')
+    if (vm.degraded.lengthUnavailable) L.push('- 载荷长度不可用:相关字节数省略显示(绝不以 0 冒充)')
     if (vm.degraded.unorderableInput) L.push('- 序列空间存在无法定位的输入:分析仅供参考')
     L.push('')
   }

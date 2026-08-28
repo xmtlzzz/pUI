@@ -47,12 +47,12 @@ export function analyzeConversationIssues(conv: Conversation, opts: IssueOptions
     const synAck = packets.find((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x12) === 0x12)
     if (syn && !synAck && !rst) {
       // RST 是 SYN 的合法拒绝响应,不算"未收到 SYN-ACK"的丢包
-      issues.push({ type: 'syn-no-reply', message: `TCP 连接未建立:SYN(#${syn.number})未收到 SYN-ACK`, packetNumber: syn.number })
+      issues.push({ type: 'syn-no-reply', message: `TCP 连接未建立:SYN(#${syn.number})已发出,抓包范围内未收到 SYN-ACK`, packetNumber: syn.number })
     }
     const hasFin = packets.some((p) => p.tcpFlags && (parseInt(p.tcpFlags, 16) & 0x01) !== 0)
     if (!hasFin && !rst && !startsMidStream) {
       // RST 已终止连接、或抓到的是连接中途的片段(本就没有 FIN 可期待)时,不提示未正常关闭
-      issues.push({ type: 'no-close', message: 'TCP 连接未正常关闭(未收到 FIN)' })
+      issues.push({ type: 'no-close', message: 'TCP 连接未正常关闭(抓包范围内未收到 FIN)' })
     }
     const retrans = packets.filter((p) => p.tcpAnalysis?.includes('retransmission') || p.tcpAnalysis?.includes('fast-retransmission'))
     if (retrans.length) {

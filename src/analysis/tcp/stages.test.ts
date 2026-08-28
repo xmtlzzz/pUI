@@ -160,6 +160,92 @@ describe('deriveStages — 故障阶段推导(审批强化要求:阶段标注)',
     ])
   })
 
+  it('未填补的缺口事件不得引用其他缺口的填补报文(跨缺口/跨方向张冠李戴回归)', () => {
+    // c2s 缺口 [101,201) 始终未填补;s2c 有自己的缺口且已被 #10 回补。
+    // 旧实现取"facts 中第一条有填补者的缺口",会给 c2s 事件拼出含 #10 的
+    // 「重传回补」阶段 —— 包号、方向全部张冠李戴,且进入导出报告。
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      s2c({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 101, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 7, time: 0.06, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 101, tcpLen: 100, tcpCompleteness: 15 }), // 暴露 c2s 缺口 [101,201),未填补
+      s2c({ number: 8, time: 0.07, tcpFlags: ACK, tcpSeq: 101, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[201, 301]], tcpCompleteness: 15 }),
+      s2c({ number: 9, time: 0.08, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 101, tcpLen: 100, tcpCompleteness: 15 }), // 暴露 s2c 缺口 [101,201)
+      s2c({ number: 10, time: 0.09, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 101, tcpLen: 100, tcpAnalysis: ['retransmission'], tcpCompleteness: 15 }), // 回补 s2c 缺口
+      c2s({ number: 11, time: 0.10, tcpFlags: ACK, tcpSeq: 301, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ]
+    const { facts, packets: ps } = run(packets)
+    const evs = detectTcpEvents(facts, ps)
+    const c2sEvent = evs.find((e) => e.direction === 'c2s' && e.gap?.start === 101)!
+    expect(c2sEvent.recovered).toBe(false) // 未填补
+    const stages = deriveStages(c2sEvent, facts, ps)
+    // 不得出现「重传回补」阶段:本事件的缺口没有填补者。
+    // (#10 的重复确认仍合法属于本事件 —— 它是 s2c 发出的、ACK 停在本缺口起点的报文;
+    //  被禁止的是把 #10 当作本缺口的"填补/重传"引用。)
+    expect(stages.map((s) => s.label)).toEqual(['正常传输', '缺口显露', '重复确认与 SACK 增长'])
+  })
+
+  it('部分重叠的伪重传:阶段摘要的新增字节数如实显示(硬编码 0 回归)', () => {
+    // 先见 [1,51),重发 seq=1 len=100 → 新增字节 50/100(overlapping-retransmit)
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 50, tcpCompleteness: 15 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 1, tcpAck: 51, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 6, time: 0.30, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpAnalysis: ['retransmission'], tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.31, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+    ]
+    const { facts, packets: ps } = run(packets)
+    const evs = detectTcpEvents(facts, ps)
+    const spurious = evs.find((e) => e.kind === 'possible-ack-loss-or-spurious')!
+    const stages = deriveStages(spurious, facts, ps)
+    const retxStage = stages.find((s) => s.label === '冗余重传')!
+    expect(retxStage.summary).toContain('新增字节 50/100')
+    // 不再硬编码 "0"(注意 "50/100" 含子串 "0/100",用锚定匹配)
+    expect(retxStage.summary).not.toMatch(/新增字节 0\//)
+    // 断言语句限定在"该重发对应的序列区间",不断言全流零缺口
+    expect(retxStage.summary).toMatch(/该重发对应的序列区间无缺口/)
+  })
+
+  it('静默窗内有新数据段时不声称「无新数据传输」', () => {
+    // #6 是静默窗内的新数据(未被确认),重传 #8 的静默窗并不完全静默
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 6, time: 0.15, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 8, time: 0.30, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpAnalysis: ['retransmission'], tcpCompleteness: 15 }),
+      s2c({ number: 9, time: 0.31, tcpFlags: ACK, tcpSeq: 1, tcpAck: 201, tcpLen: 0, tcpCompleteness: 15 }),
+    ]
+    const { facts, packets: ps } = run(packets)
+    const evs = detectTcpEvents(facts, ps)
+    const spurious = evs.find((e) => e.kind === 'possible-ack-loss-or-spurious')!
+    const stages = deriveStages(spurious, facts, ps)
+    const silence = stages.find((s) => s.label === '静默窗')!
+    expect(silence.summary).toMatch(/仍有新数据段|并非完全静默/)
+    expect(silence.summary).not.toMatch(/内无新数据传输/)
+  })
+
+  it('重传后 ACK 前进:阶段标签为「确认前进」而非「确认状态不变」(反义标签回归)', () => {
+    // case-3 变体:#9 的 ACK 前进到 301 —— ACK 实际变化,标签不得再称「不变」
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 201, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({
+        number: 8, time: 0.30, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100,
+        tcpAnalysis: ['retransmission'], tcpCompleteness: 15,
+      }),
+      s2c({ number: 9, time: 0.31, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ]
+    const { facts, packets: ps } = run(packets)
+    const stages = deriveStages(detectTcpEvents(facts, ps)[0], facts, ps)
+    expect(stages[stages.length - 1].label).toBe('确认前进')
+    expect(stages[stages.length - 1].summary).toMatch(/ack=301/)
+  })
+
   it('确定性:同一输入两次推导完全一致', () => {
     const build = () => {
       const packets = lossChain()

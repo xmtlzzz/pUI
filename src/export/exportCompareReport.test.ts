@@ -46,6 +46,8 @@ function makeVm(): CompareViewModel {
     marks: { gapRevealAt: 0.1, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.6, recoverAt: 0.9 },
     direction: 'c2s',
     opposite: null,
+    // 全量缺口(未按图形视窗裁剪)—— 证据报告按它列全,不缺报
+    allGaps: [[101, 201]],
     degraded: { unorderableInput: false, midStream: true, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
   }
@@ -102,9 +104,25 @@ describe('exportCompareReport — 对照页证据导出', () => {
     vm.card.recovered = false
     vm.card.gapText = undefined
     vm.seqSpace.gaps = []
+    vm.allGaps = []
     const md = exportCompareReport({ ...input, vm })
     expect(md).toContain('**未恢复**')
-    expect(md).toContain('- 缺口: 无(伪重传/窗口类场景)')
+    expect(md).toContain('- 缺口: 无(伪重传类场景)')
+  })
+
+  it('缺口清单取全量(allGaps):视窗外的缺口也必须列入,不得少报', () => {
+    const vm = makeVm()
+    // 图形视窗只覆盖到 501;视窗外还有一个 1500–1601 的缺口
+    vm.seqSpace.gaps = [[101, 201]]
+    vm.allGaps = [
+      [101, 201],
+      [1500, 1601],
+    ]
+    const md = exportCompareReport({ ...input, vm })
+    expect(md).toContain('101–201, 1500–1601')
+    // 措辞标明这是聚焦视窗,不是会话字节总量
+    expect(md).toContain('图形视窗(聚焦缺口邻域)')
+    expect(md).not.toContain('字节区间')
   })
 
   it('文件名 ASCII 安全且含事件序号', () => {

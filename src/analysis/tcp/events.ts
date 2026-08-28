@@ -280,8 +280,21 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
 
     const kind: TcpEventKind = isLateArrival ? 'reordering' : 'possible-loss-or-delay'
 
-    if (gap.filled && !isLateArrival && filler) {
-      mk(`缺失数据被重新发送`, gap.filledByPacket!, 'tcp.seq_raw', gap.start)
+    // 填补观察项(只陈述可观测事实):重叠填补 = 同一段字节见了两次,「重发」可观测;
+    // 全新字节填补 = 抓包点从未见过这些字节,只能说「由后续报文补齐」——
+    // 「被重新发送」对全新字节路径是不可观测的推断,不得进观察层(观察/推断分层红线)。
+    // 证据字段值填填补报文自身的 seq(重叠填补时可以≠缺口起点,如实记录)。
+    if (gap.filled && !isLateArrival && filler && fillerPkt) {
+      if (filler.newBytes < filler.seqLen) {
+        mk(
+          `缺失数据被重新发送(填补段与此前已见字节重叠)`,
+          fillerPkt.number,
+          'tcp.seq_raw',
+          fillerPkt.tcpSeq ?? gap.start,
+        )
+      } else {
+        mk(`缺失数据由后续报文补齐(填补段携带全新字节)`, fillerPkt.number, 'tcp.seq_raw', fillerPkt.tcpSeq ?? gap.start)
+      }
     }
 
     // 恢复 ACK:填补之后第一个 ACK 越过缺口终点(从填补时刻的二分位置向后找)

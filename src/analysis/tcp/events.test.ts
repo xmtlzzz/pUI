@@ -322,6 +322,33 @@ describe('detectTcpEvents — 填补分类器(classifyFill):启发信号必须�
     expect(loss!.inference.confidence).toBe('high')
     expect(loss!.recovered).toBe(true)
     expect(loss!.classificationSignals?.fillerCarriesOnlyNewBytes).toBe(false)
+    // 重叠填补可观测到"同一段字节发了两次":观察层措辞为「重发」,
+    // 且证据值填填补报文自身 seq(51),不是缺口起点(101)——点击验证要对得上
+    const fillObs = loss!.observations.find((o) => o.statement.includes('重新发送'))
+    expect(fillObs?.statement).toBe('缺失数据被重新发送(填补段与此前已见字节重叠)')
+    expect(fillObs?.value).toBe(51)
+  })
+
+  it('观察/推断分层:全新字节的填补在观察层不得写成「被重新发送」(推断进分类,不进事实)', () => {
+    const evs = run([
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      c2s({ number: 5, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 6, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.07, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      s2c({ number: 8, time: 0.08, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 9, time: 0.1, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 10, time: 0.11, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ])
+    const loss = evs.find((e) => e.kind === 'possible-loss-or-delay')!
+    expect(loss.classificationSignals?.fillerCarriesOnlyNewBytes).toBe(true)
+    // 填补段字节在本抓包中从未出现过:「被重新发送」不可观测,只能陈述"由后续报文补齐"
+    const fillObs = loss.observations.find((o) => /补齐|重新发送/.test(o.statement))
+    expect(fillObs?.statement).toBe('缺失数据由后续报文补齐(填补段携带全新字节)')
+    expect(fillObs?.value).toBe(101)
+    // 重传判定保留在分类/推断层(rationale 与 kind),不渗入观察陈述
+    expect(loss.observations.some((o) => o.statement.includes('重新发送'))).toBe(false)
+    expect(loss.rationale).toBeTruthy()
   })
 
   it('rationale 一律非空,且不含确定性丢包断言', () => {

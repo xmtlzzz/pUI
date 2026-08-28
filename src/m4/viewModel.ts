@@ -2,6 +2,7 @@ import type { Packet } from '../model/types'
 import type { StreamAnalysisFacts, StreamDirection } from '../analysis/tcp/streamAnalysis'
 import type { TcpEvent } from '../analysis/tcp/events'
 import type { EventStage } from '../analysis/tcp/stages'
+import { seqDiff } from '../analysis/tcp/seq'
 
 /**
  * M4 故障/正常对照页的视图模型层:把引擎输出投影为组件可直接渲染的纯数据。
@@ -97,6 +98,11 @@ export interface CompareViewModel {
   direction: StreamDirection
   /** 对向序列空间:双向流中事件方向之外那一侧的字节空间;对向无数据时为 null */
   opposite: { dir: StreamDirection; view: SeqSpaceView } | null
+  /**
+   * 事件方向的全部缺口(未按图形视窗裁剪)。seqSpace.gaps 只画视窗内的缺口,
+   * 证据导出必须列全,否则会少报缺失(有测试钉住)。
+   */
+  allGaps: Array<[number, number]>
   degraded: {
     unorderableInput: boolean
     midStream: boolean
@@ -131,8 +137,8 @@ export function gapTextOf(event: TcpEvent): string | undefined {
 export function buildEventSummaries(events: TcpEvent[]): CompareEventSummary[] {
   return events.map((e) => ({
     id: e.id,
-    kindLabel: KIND_LABEL[e.kind],
-    severity: e.severity,
+    kindLabel: kindLabelFor(e),
+    severity: severityZh(e.severity),
     recovered: e.recovered,
     gapText: gapTextOf(e),
     startTime: e.startTime,
@@ -186,6 +192,20 @@ const KIND_LABEL: Record<TcpEvent['kind'], string> = {
   'possible-ack-loss-or-spurious': '疑似 ACK 丢失 / 冗余重传',
 }
 
+/** 严重度/置信度的中文展示(low/medium/high 原始枚举不直接面向用户) */
+export function severityZh(v: string): string {
+  return v === 'low' ? '低' : v === 'medium' ? '中' : v === 'high' ? '高' : v
+}
+
+/**
+ * 事件的展示标签。乱序分类在低置信模糊区(引擎自述"无法排除该段确曾丢失")
+ * 不得以断言语气进入 headline/切换器,降级为「疑似」。
+ */
+export function kindLabelFor(event: TcpEvent): string {
+  if (event.kind === 'reordering' && event.inference.confidence === 'low') return '疑似乱序(迟到补齐)'
+  return KIND_LABEL[event.kind]
+}
+
 function flagsLabel(flagsHex: string | undefined): string {
   if (!flagsHex) return ''
   const n = Number.parseInt(flagsHex, 16)
@@ -199,23 +219,32 @@ function flagsLabel(flagsHex: string | undefined): string {
   return parts.join('·')
 }
 
-/** 报文的展示方向:以流内首个数据报文源端点为 c2s(与分析层 dirOf 一致的近似) */
-function directionOf(p: Packet, c2sKey: string | null): 'c2s' | 's2c' {
-  if (!c2sKey) return p.srcPort != null && p.dstPort != null && p.srcPort < p.dstPort ? 'c2s' : 's2c'
-  return `${p.srcIp ?? '?'}:${p.srcPort ?? 0}` === c2sKey ? 'c2s' : 's2c'
+/**
+ * 报文的展示方向:以 facts.segments 的方向归属为准(分析层以流内首包源端点定义
+ * c2s,每个报文——含纯 ACK——都在 segments 里有方向记录)。自建锚点(如"首个
+ * 载荷段")在纯 ACK 开头的中途抓包里会与分析层分属两端,导致关键报文链与导出
+ * 报告的方向箭头整体反转 —— 方向语义只允许一个来源。
+ */
+function directionOf(p: Packet, dirMap: Map<number, StreamDirection>): 'c2s' | 's2c' {
+  const d = dirMap.get(p.number)
+  if (d) return d
+  return p.srcPort != null && p.dstPort != null && p.srcPort < p.dstPort ? 'c2s' : 's2c'
 }
 
 /**
  * 从事件的证据结构推断报文的事件角色(渲染在报文旁的醒目标注)。
  * 依据是 detectTcpEvents 输出的确定性字段(packet 相等性),不是对文本的猜测。
+ * 伪重传的「确认无变化」需调用方先核实恢复 ACK 与重传前等值(spuriousAckUnchanged),
+ * 未核实/不等值时降级为「确认」—— 不做无证据的断言。
  */
-function roleBadgeOf(packetNumber: number, event: TcpEvent): string | undefined {
+function roleBadgeOf(packetNumber: number, event: TcpEvent, spuriousAckUnchanged: boolean): string | undefined {
   if (event.originalSegmentPacket === packetNumber && event.gap) return '缺口显露'
   if (event.retransmissionPacket === packetNumber) {
     return event.kind === 'reordering' ? '迟到补齐' : event.gap ? '重传回补' : '冗余重传'
   }
   if (event.recoveryAckPacket === packetNumber) {
-    return event.kind === 'possible-ack-loss-or-spurious' ? '确认无变化' : '恢复'
+    if (event.kind !== 'possible-ack-loss-or-spurious') return '恢复'
+    return spuriousAckUnchanged ? '确认无变化' : '确认'
   }
   if (event.duplicateAckPackets.includes(packetNumber)) return `重复确认 ×${event.duplicateAckCount}`
   return undefined
@@ -252,10 +281,25 @@ export function buildCompareViewModel(
 ): CompareViewModel | null {
   if (!event || stages.length === 0) return null
 
-  // c2s 锚点:首个数据段源端点(facts.segments 已带 direction,直接取第一个非零载荷段的)
-  const firstSeg = facts.segments.find((s) => s.seqLen > 0)
-  const firstPkt = firstSeg ? packets.find((p) => p.number === firstSeg.packetNumber) : undefined
-  const c2sKey = firstPkt ? `${firstPkt.srcIp ?? '?'}:${firstPkt.srcPort ?? 0}` : null
+  // 报文方向表:与分析层同源(segments 覆盖全部报文,含纯 ACK),见 directionOf 注释
+  const dirMap = new Map<number, StreamDirection>()
+  for (const sg of facts.segments) dirMap.set(sg.packetNumber, sg.direction)
+
+  // 伪重传徽标「确认无变化」必须先核实:恢复 ACK 与重传前(同方向)ACK 等值。
+  // 引擎的 recoveryAck 只是"重发后第一条反向 ACK",期间可能有新数据被确认
+  const ackDir: StreamDirection = event.direction === 'c2s' ? 's2c' : 'c2s'
+  let spuriousAckUnchanged = false
+  if (event.kind === 'possible-ack-loss-or-spurious' && event.retransmissionPacket != null && event.recoveryAckPacket != null) {
+    const retxT = packets.find((p) => p.number === event.retransmissionPacket)?.time
+    const after = packets.find((p) => p.number === event.recoveryAckPacket)
+    const before = retxT != null
+      ? packets
+          .filter((p) => p.time < retxT && p.tcpAck != null && dirMap.get(p.number) === ackDir)
+          .sort((a, b) => a.time - b.time)
+          .pop()
+      : undefined
+    spuriousAckUnchanged = after?.tcpAck != null && before?.tcpAck != null && seqDiff(after.tcpAck, before.tcpAck) === 0
+  }
 
   // 阶段带布局:按 startTime 稳定排序(防御 derive 顺序与时间倒挂,用户反馈"阶段反了"),
   // 并**均匀等分**每个阶段占 1/N —— 阶段是离散事件点(真实时间跨度常为零),按真实时间
@@ -285,7 +329,7 @@ export function buildCompareViewModel(
       return {
         packetNumber: p.number,
         time: p.time,
-        dir: directionOf(p, c2sKey),
+        dir: directionOf(p, dirMap),
         label: labelParts.join(' ') || 'TCP',
         flags: p.tcpFlags,
         seq: p.tcpSeq,
@@ -294,7 +338,7 @@ export function buildCompareViewModel(
         sackBlocks: p.tcpSackBlocks,
         tags: p.tcpAnalysis,
         stageIndex: stageIdx,
-        roleBadge: roleBadgeOf(p.number, event),
+        roleBadge: roleBadgeOf(p.number, event, spuriousAckUnchanged),
       }
     })
 
@@ -305,12 +349,12 @@ export function buildCompareViewModel(
   const opposite = buildOppositeSeqSpaceView(facts, packets, event)
 
   const card: EventCard = {
-    kindLabel: KIND_LABEL[event.kind],
-    severity: event.severity,
+    kindLabel: kindLabelFor(event),
+    severity: severityZh(event.severity),
     recovered: event.recovered,
     gapText: gapTextOf(event),
     observations: event.observations.map((o) => ({ packetNumber: o.packetNumber, statement: o.statement })),
-    inference: { statement: event.inference.statement, confidence: event.inference.confidence },
+    inference: { statement: event.inference.statement, confidence: severityZh(event.inference.confidence) },
     limitations: event.limitations,
   }
 
@@ -347,7 +391,8 @@ export function buildCompareViewModel(
     if (w0 != null && w1 != null && w1 >= w0) marks.dupAckWindow = [w0, w1]
   }
 
-  const gap = gapTextOf(event) ?? '无'
+  // headline:无缺口(伪重传类)时不再拼出「缺口 无」;严重度/置信度以中文呈现
+  const gapPart = gapTextOf(event) != null ? `缺口 ${gapTextOf(event)}` : '无缺口'
   return {
     card,
     seqSpace,
@@ -357,13 +402,16 @@ export function buildCompareViewModel(
     marks,
     direction: event.direction,
     opposite,
+    allGaps: facts.gaps
+      .filter((g) => g.direction === event.direction)
+      .map((g) => [g.start, g.end] as [number, number]),
     degraded: {
       unorderableInput: facts.unorderableInput,
       midStream: facts.midStream,
       lengthUnavailable: facts.lengthUnavailable,
       noEvents: false,
     },
-    headline: `${KIND_LABEL[event.kind]} · 缺口 ${gap} · ${event.severity}`,
+    headline: `${kindLabelFor(event)} · ${gapPart} · ${severityZh(event.severity)}`,
   }
 }
 
@@ -400,6 +448,13 @@ function buildSeqSpaceView(
   event: TcpEvent,
   retxSeq: number | undefined,
 ): SeqSpaceView {
+  // 轴以事件方向的 ISN 空间为中心,因此**只画该方向**的数据:已见条/缺口按
+  // direction 过滤,SACK/ACK 游标只认 ackDir(对向数据的确认由对向报文携带)。
+  // 不过滤会把两个 ISN 空间混进同一坐标轴(对向视图已落实同一条原则)。
+  const dirMap = new Map<number, StreamDirection>()
+  for (const sg of facts.segments) dirMap.set(sg.packetNumber, sg.direction)
+  const ackDir: StreamDirection = event.direction === 'c2s' ? 's2c' : 'c2s'
+
   // 轴范围:以缺口为中心,前后各留缺口宽度的 3 倍(最小 100B)——缺口约占轴的 1/6,
   // 既醒目又能把邻域已见数据与 SACK 块(缺口后已到达的数据)一起画进来;
   // 伪重传场景无缺口,以重传 seq 为中心取固定窗口
@@ -424,7 +479,7 @@ function buildSeqSpaceView(
   // 已见字节:从 facts 的段分类重建(有载荷的段按 seq+len 并入;用简单合并,数量有限)
   const seenRaw: Array<[number, number]> = []
   for (const seg of facts.segments) {
-    if (seg.seqLen <= 0) continue
+    if (seg.seqLen <= 0 || seg.direction !== event.direction) continue
     seenRaw.push([seg.seq, (seg.seq + seg.seqLen) >>> 0])
   }
   const seenRuns = mergeRanges(seenRaw)
@@ -432,19 +487,24 @@ function buildSeqSpaceView(
     .filter((r): r is [number, number] => r != null)
 
   const gaps = facts.gaps
+    .filter((g) => g.direction === event.direction)
     .map((g) => clip([g.start, g.end]))
     .filter((r): r is [number, number] => r != null)
 
   const sackRaw: Array<[number, number]> = []
-  for (const p of packets) for (const b of p.tcpSackBlocks ?? []) sackRaw.push(b)
+  for (const p of packets) {
+    if (dirMap.get(p.number) !== ackDir) continue
+    for (const b of p.tcpSackBlocks ?? []) sackRaw.push(b)
+  }
   const sackBlocks = mergeRanges(sackRaw)
     .map(clip)
     .filter((r): r is [number, number] => r != null)
     .slice(0, SEQ_VIEW_MAX_SACK)
 
-  // ACK 轨迹:反向报文的 (time, ack) 序列,裁剪到轴范围附近
+  // ACK 轨迹:对向报文的 (time, ack) 序列 —— 混入事件方向自身的 ACK 会让
+  // 游标在两个 ISN 空间之间来回跳(看起来像 ACK 倒退)
   const ackTrack = packets
-    .filter((p) => p.tcpAck != null)
+    .filter((p) => p.tcpAck != null && dirMap.get(p.number) === ackDir)
     .sort((x, y) => x.time - y.time)
     .map((p) => ({ time: p.time, ack: p.tcpAck! }))
 
@@ -460,7 +520,7 @@ function buildSeqSpaceView(
     sackBlocks,
     ackTrack,
     retxArrow: retxSeq != null ? { seq: retxSeq } : undefined,
-    rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, axisMin, axisMax),
+    rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, axisMin, axisMax, event.direction),
   }
 }
 
@@ -479,11 +539,12 @@ function buildRangeLabels(
   gaps: Array<[number, number]>,
   axisMin: number,
   axisMax: number,
+  dir: StreamDirection,
 ): SeqSpaceView['rangeLabels'] {
   const axisSpan = axisMax - axisMin
   const labels: SeqSpaceView['rangeLabels'] = []
   for (const [s, e] of seenRuns) {
-    labels.push({ start: s, end: e, text: seenRunLabel(facts, packets, s, e), kind: 'seen' })
+    labels.push({ start: s, end: e, text: seenRunLabel(facts, packets, s, e, dir), kind: 'seen' })
   }
   for (const [s, e] of gaps) {
     labels.push({ start: s, end: e, text: '未收到', kind: 'gap' })
@@ -501,10 +562,11 @@ function seenRunLabel(
   packets: Packet[],
   s: number,
   e: number,
+  dir: StreamDirection,
 ): string {
   const mid = s + Math.floor((e - s) / 2)
   for (const seg of facts.segments) {
-    if (seg.seqLen <= 0) continue
+    if (seg.seqLen <= 0 || seg.direction !== dir) continue
     const end = (seg.seq + seg.seqLen) >>> 0
     if (seg.seq <= mid && mid < end) {
       const p = packets.find((q) => q.number === seg.packetNumber)
@@ -558,26 +620,15 @@ export function buildOppositeSeqSpaceView(
     .filter((r): r is [number, number] => r != null)
   const gaps = oppGaps.map((g) => [g.start, g.end] as [number, number]).filter((r) => clip(r) != null)
 
-  // 方向锚点:facts 中任一有方向归属的段的源端点(与 buildCompareViewModel 同法)
-  let c2sKey: string | null = null
-  for (const s of facts.segments) {
-    const p = packets.find((q) => q.number === s.packetNumber)
-    if (!p) continue
-    if (s.direction === 'c2s') {
-      c2sKey = `${p.srcIp ?? '?'}:${p.srcPort ?? 0}`
-      break
-    }
-  }
-  const dirOf = (p: Packet): 'c2s' | 's2c' => {
-    if (!c2sKey) return p.srcPort != null && p.dstPort != null && p.srcPort < p.dstPort ? 'c2s' : 's2c'
-    return `${p.srcIp ?? '?'}:${p.srcPort ?? 0}` === c2sKey ? 'c2s' : 's2c'
-  }
+  // 方向归属:与分析层同源的报文方向表(见 directionOf 注释)
+  const dirMap = new Map<number, StreamDirection>()
+  for (const sg of facts.segments) dirMap.set(sg.packetNumber, sg.direction)
 
   // 对向数据的确认/SACK 由方向 !== opp 的报文携带
   const sackRaw: Array<[number, number]> = []
   const ackTrack: Array<{ time: number; ack: number }> = []
   for (const p of packets) {
-    if (dirOf(p) === opp) continue
+    if (dirMap.get(p.number) === opp) continue
     for (const b of p.tcpSackBlocks ?? []) sackRaw.push(b)
     if (p.tcpAck != null) ackTrack.push({ time: p.time, ack: p.tcpAck })
   }
@@ -597,7 +648,7 @@ export function buildOppositeSeqSpaceView(
         .slice(0, SEQ_VIEW_MAX_SACK),
       ackTrack,
       retxArrow: undefined, // 对向无事件聚焦,无重传箭头
-      rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, a0, a1),
+      rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, a0, a1, opp),
     },
   }
 }

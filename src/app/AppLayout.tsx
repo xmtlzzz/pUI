@@ -105,13 +105,14 @@ export function AppLayout() {
     [closeCompare, compare, jumpFromCompare, selectPacket, selected],
   )
 
-  // 报文详情侧「返回故障分析」:消费 resume 恢复事件与阶段
+  // 报文详情侧「返回故障分析」:消费 resume 恢复事件与阶段。
+  // 注意顺序:openCompare 会把事件下标重置为 0,必须先开再设,否则恢复的下标被覆盖
   const resumeFaultAnalysis = useCallback(() => {
     const r = consumeCompareResume()
     if (!r || !selected || selected.id !== r.conversationId) return
-    setCompareEventIndex(r.eventIndex)
     setPendingResume(r)
     openCompare(r.conversationId)
+    setCompareEventIndex(r.eventIndex)
   }, [consumeCompareResume, openCompare, selected, setCompareEventIndex])
 
   // 报文详情「查看事件上下文」入口:点击时惰性分析当前会话(TCP 事件检测是纯函数,
@@ -135,9 +136,11 @@ export function AppLayout() {
               ev.duplicateAckPackets.includes(pNum),
           )
         : -1
-    if (found > 0) setCompareEventIndex(found) // 下标 0 为默认值,无需设置
+    // 顺序同理:openCompare 会重置事件下标为 0,先开再定位 —— 否则命中的是
+    // 事件 2 及之后时,打开的永远是被重置后的事件 1
     setPendingResume(null)
     openCompare(selected.id)
+    if (found > 0) setCompareEventIndex(found) // 下标 0 为默认值,无需设置
   }, [openCompare, selected, setCompareEventIndex])
 
   // 对照页证据导出(口径:实际故障侧=证据;正常参考示意永不进入导出)

@@ -55,7 +55,7 @@ export function deriveStages(
 
   // ---- 伪重传/疑似 ACK 丢失类:无缺口,按「正常发确 → 静默窗 → 冗余重传 → 确认无变化」划分 ----
   if (event.kind === 'possible-ack-loss-or-spurious') {
-    return spuriousStages(event, packets, nums)
+    return spuriousStages(event, facts, packets, nums)
   }
 
   // ---- 缺口类(loss/delay 与 reordering):按证据链节点划分 ----
@@ -102,18 +102,30 @@ function gapStages(event: TcpEvent, facts: StreamAnalysisFacts, nums: Map<number
     .sort((a, b) => a.time - b.time)
     .pop()
   if (firstDataBefore) {
-    const ackAfter = [...nums.values()]
-      .find(
-        (p) =>
-          p.time > firstDataBefore.time &&
-          p.time < exposeObs.time &&
-          dirKey(p.number) !== dirKey(firstDataBefore.number),
-      )
+    // 确认报文必须真的携带 ACK 且覆盖该段(ack ≥ seq+len)才能说「被正常确认」;
+    // 只带时间相邻的报文会渲染出 ack=null 或把滞后的确认说成确认完成
+    const segEnd =
+      firstDataBefore.tcpSeq != null && firstDataBefore.tcpLen != null
+        ? (firstDataBefore.tcpSeq + firstDataBefore.tcpLen) >>> 0
+        : null
+    const ackAfter = [...nums.values()].find(
+      (p) =>
+        p.time > firstDataBefore.time &&
+        p.time < exposeObs.time &&
+        dirKey(p.number) !== dirKey(firstDataBefore.number) &&
+        p.tcpAck != null,
+    )
+    const ackCovers =
+      ackAfter?.tcpAck != null && segEnd != null ? seqDiff(ackAfter.tcpAck, segEnd) >= 0 : false
     stages.push({
       label: '正常传输',
-      summary: `段 #${firstDataBefore.number}(seq=${firstDataBefore.tcpSeq},${firstDataBefore.tcpLen}B)被正常确认${
-        ackAfter ? `(#${ackAfter.number} ack=${ackAfter.tcpAck})` : ''
-      },此时序列空间无缺口`,
+      summary: `段 #${firstDataBefore.number}(seq=${firstDataBefore.tcpSeq},${firstDataBefore.tcpLen}B)${
+        ackAfter
+          ? ackCovers
+            ? `被正常确认(#${ackAfter.number} ack=${ackAfter.tcpAck})`
+            : `(随后收到 #${ackAfter.number} ack=${ackAfter.tcpAck},确认未覆盖该段)`
+          : ''
+      },此时该段区间无缺口`,
       fromPacket: firstDataBefore.number,
       toPacket: ackAfter?.number ?? firstDataBefore.number,
       startTime: firstDataBefore.time,
@@ -153,8 +165,15 @@ function gapStages(event: TcpEvent, facts: StreamAnalysisFacts, nums: Map<number
 
   // ④ 补齐:重传回补(loss 类)或 迟到补齐(reordering 类)。
   //    注意 reordering 事件的 retransmissionPacket 刻意留空(迟到原始段不是重发),
-  //    填补者要从 gap 生命周期的 filledByPacket 拿,两条路径都要能定位到填补报文。
-  const fillerPacket = event.retransmissionPacket ?? facts.gaps.find((g) => g.filledByPacket != null)?.filledByPacket
+  //    填补者要从 gap 生命周期的 filledByPacket 拿。查找必须锚定**本事件自己的缺口**
+  //    (方向+起止都匹配):facts.gaps 是跨方向全局序,泛泛取"第一条有填补者的缺口"
+  //    在多缺口/双向流里会引用别的缺口的重传报文(张冠李戴,且会给未填补事件
+  //    凭空造出补齐阶段)。
+  const ownGap =
+    event.gap != null
+      ? facts.gaps.find((g) => g.direction === event.direction && g.start === event.gap!.start && g.end === event.gap!.end)
+      : undefined
+  const fillerPacket = event.retransmissionPacket ?? ownGap?.filledByPacket
   const fillTime = fillerPacket != null ? nums.get(fillerPacket)?.time : undefined
   if (fillerPacket != null && fillTime != null) {
     if (event.kind === 'reordering') {
@@ -162,7 +181,12 @@ function gapStages(event: TcpEvent, facts: StreamAnalysisFacts, nums: Map<number
       const tagObs = obs.find((o) => /tshark/.test(o.statement))
       stages.push({
         label: '迟到补齐',
-        summary: `#${fillerPacket} 迟到到达填补缺口(seq=${filler?.tcpSeq});tshark 标注为 retransmission,但该段携带的全部是新字节——标签是现象,序列空间证明只是乱序`,
+        // tshark 标签是条件记录的观察(events 层只在报文带 tcp.analysis 时记),
+        // 这里必须同样条件化 —— 无标签时不得虚构「tshark 标注为 retransmission」;
+        // 「证明只是乱序」也超出证据(模糊区无法排除确曾丢失),改为「支持」
+        summary: `#${fillerPacket} 迟到到达填补缺口(seq=${filler?.tcpSeq});该段携带的全部是新字节${
+          tagObs ? ',tshark 标注为 retransmission(标签是现象,不参与分类)' : ''
+        }——序列空间支持迟到原始段(乱序),而非重发`,
         fromPacket: fillerPacket,
         toPacket: fillerPacket,
         startTime: fillTime,
@@ -170,26 +194,37 @@ function gapStages(event: TcpEvent, facts: StreamAnalysisFacts, nums: Map<number
         observationRefs: tagObs ? [tagObs.id] : [],
       })
     } else {
-      const tagObs = obs.find((o) => /tshark 标注/.test(o.statement))
-      const resendObs = obs.find((o) => /重新发送/.test(o.statement))
+      const tagObs = obs.find((o) => /tshark/.test(o.statement))
+      // 填补观察项按新旧字节分流措辞(events 层同口径):重叠填补才能观测到「重发」,
+      // 全新字节的填补只能说「补齐」,重传判定交给分类信号,不得写进事实陈述
+      const fillObs = obs.find((o) => /重新发送|由后续报文补齐/.test(o.statement))
+      const fSeg = facts.segments.find((sg) => sg.packetNumber === fillerPacket)
+      const overlapText =
+        fSeg && fSeg.newBytes < fSeg.seqLen ? `(与此前已见字节重叠 ${fSeg.seqLen - fSeg.newBytes}B)` : ''
+      const summary =
+        fSeg && fSeg.newBytes < fSeg.seqLen
+          ? `#${fillerPacket} 重发缺失数据(seq=${event.gap?.start})${overlapText},几何上精确回补缺口`
+          : `#${fillerPacket} 携带缺失字节补齐缺口(seq=${event.gap?.start});该段字节在本抓包中此前未见,分类信号判定为重传回补`
       stages.push({
         label: '重传回补',
-        summary: `#${fillerPacket} 重发缺失数据(seq=${event.gap?.start}),几何上精确回补缺口`,
+        summary,
         fromPacket: fillerPacket,
         toPacket: fillerPacket,
         startTime: fillTime,
         endTime: fillTime,
-        observationRefs: [tagObs?.id, resendObs?.id].filter((x): x is string => x != null),
+        observationRefs: [tagObs?.id, fillObs?.id].filter((x): x is string => x != null),
       })
     }
   }
 
-  // ⑤ 恢复:ACK 越过缺口终点
+  // ⑤ 恢复:ACK 到达/越过缺口终点(判据是 seqDiff ≥ 0,ack == 终点即已闭合,
+  //    此时不能说「越过」)
   const recPkt = event.recoveryAckPacket != null ? nums.get(event.recoveryAckPacket) : undefined
-  if (recPkt) {
+  if (recPkt && recPkt.tcpAck != null && event.gap) {
+    const crossed = seqDiff(recPkt.tcpAck, event.gap.end) > 0
     stages.push({
       label: '恢复',
-      summary: `#${recPkt.number} 的 ACK 前进到 ${recPkt.tcpAck},越过缺口终点 ${event.gap?.end},缺口闭合`,
+      summary: `#${recPkt.number} 的 ACK 前进到 ${recPkt.tcpAck},${crossed ? '越过' : '到达'}缺口终点 ${event.gap.end},缺口闭合`,
       fromPacket: recPkt.number,
       toPacket: recPkt.number,
       startTime: recPkt.time,
@@ -202,10 +237,19 @@ function gapStages(event: TcpEvent, facts: StreamAnalysisFacts, nums: Map<number
 }
 
 /** 伪重传类阶段:正常发确 → 静默窗 → 冗余重传 → 确认无变化·已恢复 */
-function spuriousStages(event: TcpEvent, packets: Packet[], nums: Map<number, Packet>): EventStage[] {
+function spuriousStages(
+  event: TcpEvent,
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  nums: Map<number, Packet>,
+): EventStage[] {
   const retx = event.retransmissionPacket != null ? nums.get(event.retransmissionPacket) : undefined
   if (!retx) return []
   const obs = event.observations
+  // 方向过滤:确认类报文只认 ackDir(对端),数据类只认事件方向 ——
+  // 不过滤时双向流会把对端的 ACK/数据混进来,静默窗与「确认无变化」全部失真
+  const dirOfPacket = (n: number): 'c2s' | 's2c' | '?' => facts.segments.find((sg) => sg.packetNumber === n)?.direction ?? '?'
+  const ackDir: 'c2s' | 's2c' = event.direction === 'c2s' ? 's2c' : 'c2s'
 
   // 重传之前的原始段:与其 seq 相同、时间更早的数据段
   const original = [...packets]
@@ -217,7 +261,13 @@ function spuriousStages(event: TcpEvent, packets: Packet[], nums: Map<number, Pa
   // ① 正常发确:原始段及其确认(以及更早的一对,若有)
   if (original) {
     const ackDirPackets = packets
-      .filter((p) => p.time <= retx.time && p.tcpAck != null && p.number !== retx.number)
+      .filter(
+        (p) =>
+          p.time <= retx.time &&
+          p.tcpAck != null &&
+          p.number !== retx.number &&
+          dirOfPacket(p.number) === ackDir,
+      )
       .sort((a, b) => a.time - b.time)
     const lastAckBeforeRetx = ackDirPackets[ackDirPackets.length - 1]
     stages.push({
@@ -232,24 +282,34 @@ function spuriousStages(event: TcpEvent, packets: Packet[], nums: Map<number, Pa
       observationRefs: [],
     })
 
-    // ② 静默窗:最后确认之后到重传之间无任何新数据 —— 静默本身是证据
-    //    (发送端长时间未看到确认才触发重传;此处展示实际静默时长)
-    const silenceMs = ((retx.time - (lastAckBeforeRetx?.time ?? original.time)) * 1000).toFixed(0)
+    // ② 静默窗:最后确认之后到重传之间的间隔。静默是否成立要实际扫描该窗口:
+    //    该方向确有新数据段时不得声称「无新数据传输」,只陈述观测到的间隔
+    const winStartT = lastAckBeforeRetx?.time ?? original.time
+    const hasDataInWindow = facts.segments.some(
+      (sg) => sg.direction === event.direction && sg.payloadLen > 0 && sg.time > winStartT && sg.time < retx.time,
+    )
+    const silenceMs = ((retx.time - winStartT) * 1000).toFixed(0)
     stages.push({
       label: '静默窗',
-      summary: `${silenceMs}ms 内无新数据传输;随后发生重传,提示发送端可能未看到此前的确认`,
+      summary: hasDataInWindow
+        ? `重传距上次确认 ${silenceMs}ms,期间该方向仍有新数据段(并非完全静默);重传提示发送端可能未看到此前的确认`
+        : `${silenceMs}ms 内该方向无新数据传输;随后发生重传,提示发送端可能未看到此前的确认`,
       fromPacket: lastAckBeforeRetx?.number ?? original.number,
       toPacket: retx.number - 1 >= (lastAckBeforeRetx?.number ?? original.number) ? retx.number - 1 : retx.number,
-      startTime: lastAckBeforeRetx?.time ?? original.time,
+      startTime: winStartT,
       endTime: retx.time,
       observationRefs: [],
     })
   }
 
-  // ③ 冗余重传
+  // ③ 冗余重传:新增字节数从段分类如实取(部分重叠时 >0),与观察项同一口径;
+  //    「零缺口」只对该重发对应的序列区间成立,不断言全流无缺口
+  const retxSeg = facts.segments.find((sg) => sg.packetNumber === retx.number)
   stages.push({
     label: '冗余重传',
-    summary: `#${retx.number} 重发 seq=${retx.tcpSeq}(新增字节 ${obs[0]?.value != null ? '' : ''}0/${retx.tcpLen});序列空间零缺口——数据早已到达`,
+    summary: `#${retx.number} 重发 seq=${retx.tcpSeq}${
+      retxSeg ? `(新增字节 ${retxSeg.newBytes}/${retxSeg.seqLen})` : ''
+    };该重发对应的序列区间无缺口——重发的字节此前已被接收`,
     fromPacket: retx.number,
     toPacket: retx.number,
     startTime: retx.time,
@@ -257,18 +317,26 @@ function spuriousStages(event: TcpEvent, packets: Packet[], nums: Map<number, Pa
     observationRefs: obs.filter((o) => o.packetNumber === retx.number).map((o) => o.id),
   })
 
-  // ④ 确认无变化:重传后的响应 ACK 与重传前相同
+  // ④ 确认状态:重传后的响应 ACK 与重传前比较(同方向)。有比较才有结论:
+  //    相同 →「确认无变化·已恢复」;前进 →「确认前进」;找不到参照 → 不下断言
   const ackAfter = packets
-    .filter((p) => p.time > retx.time && p.tcpAck != null)
+    .filter((p) => p.time > retx.time && p.tcpAck != null && dirOfPacket(p.number) === ackDir)
     .sort((a, b) => a.time - b.time)[0]
   if (ackAfter) {
     const ackBefore = packets
-      .filter((p) => p.time < retx.time && p.tcpAck != null)
+      .filter((p) => p.time < retx.time && p.tcpAck != null && dirOfPacket(p.number) === ackDir)
       .sort((a, b) => b.time - a.time)[0]
-    const unchanged = ackBefore != null && seqDiff(ackAfter.tcpAck!, ackBefore.tcpAck!) === 0
+    const delta = ackBefore != null ? seqDiff(ackAfter.tcpAck!, ackBefore.tcpAck!) : null
+    const unchanged = delta === 0
     stages.push({
-      label: unchanged ? '确认无变化·已恢复' : '确认状态不变',
-      summary: `#${ackAfter.number} 回应 ack=${ackAfter.tcpAck}${unchanged ? ',与重传前相同——无需恢复任何数据' : ''}`,
+      label: unchanged ? '确认无变化·已恢复' : delta == null ? '确认' : '确认前进',
+      summary: `#${ackAfter.number} 回应 ack=${ackAfter.tcpAck}${
+        unchanged
+          ? ',与重传前相同——无需恢复任何数据'
+          : delta != null
+            ? `,较重传前(ack=${ackBefore!.tcpAck})前进`
+            : ''
+      }`,
       fromPacket: ackAfter.number,
       toPacket: ackAfter.number,
       startTime: ackAfter.time,

@@ -7,6 +7,7 @@ import {
   buildCompareViewModel,
   buildEventSummaries,
   popIn,
+  severityZh,
   stageAtTime,
   windowProgress,
 } from './viewModel'
@@ -181,6 +182,95 @@ describe('buildCompareViewModel', () => {
     expect(retx?.roleBadge).toMatch(/冗余重传/)
     // 伪重传场景无缺口:seqSpace.gaps 为空
     expect(vm2!.seqSpace.gaps).toEqual([])
+    // headline:无缺口事件不再拼出「缺口 无」;严重度以中文呈现
+    expect(vm2!.headline).toContain('无缺口')
+    expect(vm2!.headline).not.toContain('缺口 无')
+    expect(vm2!.headline).toContain('· 低')
+  })
+
+  it('伪重传后 ACK 前进:徽标降级为「确认」、阶段标签为「确认前进」(不做无证据断言)', () => {
+    const packets = spuriousChain().map((p) =>
+      p.number === 9 ? s2c({ number: 9, time: 0.31, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }) : p,
+    )
+    const vm2 = buildVM(packets)!
+    expect(vm2.keyPackets.find((m) => m.packetNumber === 9)?.roleBadge).toBe('确认')
+    expect(vm2.stages[vm2.stages.length - 1].label).toBe('确认前进')
+  })
+
+  it('双向流(对向字节与缺口区间数值重叠):主视图只画事件方向字节,ACK/SACK 不混入对向 ISN 空间', () => {
+    // 旧实现不过滤方向:对向 s2c 的 [101,201) 字节会"填平"c2s 缺口的图形,
+    // c2s 自身携带的 ACK 也混进游标造成回跳。这里让两向字节区间数值重叠,
+    // 任何混向都会立刻改变图形事实。
+    const packets = [
+      ...handshake(), // #1 c2s SYN, #2 s2c SYNACK(seq=0), #3 c2s ACK
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 0, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }), // 暴露 c2s 缺口 [101,201)
+      s2c({ number: 7, time: 0.06, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 101, tcpLen: 100, tcpCompleteness: 15 }), // 对向数据占同数值区间
+      c2s({ number: 8, time: 0.07, tcpFlags: ACK, tcpSeq: 301, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[5100, 5200]], tcpCompleteness: 15 }), // c2s 携带的 SACK 描述对向空间,不得混入
+      s2c({ number: 9, time: 0.08, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 201, tcpLen: 100, tcpCompleteness: 15 }),
+    ]
+    const vmBi = buildVM(packets)!
+    const sq = vmBi.seqSpace
+    // 缺口仍可见:对向字节不得"填平"事件方向的缺口图形
+    expect(sq.gaps).toEqual([[101, 201]])
+    // 已见条只含事件方向(c2s)字节:[0,101) ∪ [201,301);混入对向 [101,201) 会连成 [0,301)
+    expect(sq.seenRuns).toEqual([
+      [0, 101],
+      [201, 301],
+    ])
+    // ACK 游标只认对向(s2c)报文:#2/#5/#7/#9 共 4 条;c2s 自身的 ACK 不混入
+    expect(sq.ackTrack).toHaveLength(4)
+    // SACK 只收对向报文携带的(描述本方向数据);c2s 携带的 SACK(描述对向空间)不混入
+    expect(sq.sackBlocks).toEqual([])
+    // 全量缺口如实导出用
+    expect(vmBi.allGaps).toEqual([[101, 201]])
+  })
+
+  it('方向锚点与分析层一致:流首包为服务端报文时,关键报文链方向不反转', () => {
+    // 中途接入常见形态:抓包从服务端报文开始。分析层以流首包源端点为 c2s,
+    // 关键报文链必须沿用同一锚点 —— 旧实现自建"首个载荷段"锚点,方向整体反转
+    const packets = [
+      s2c({ number: 1, time: 0, tcpFlags: ACK, tcpSeq: 0, tcpAck: 1, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 2, time: 0.01, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 3, time: 0.02, tcpFlags: ACK, tcpSeq: 0, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+    ]
+    const vmMid = buildVM(packets)!
+    expect(vmMid).not.toBeNull()
+    // 分析层语义:流首包源端点(服务端)= c2s
+    const serverKey = `${packets[0].srcIp}:${packets[0].srcPort}`
+    for (const k of vmMid.keyPackets) {
+      const p = packets.find((q) => q.number === k.packetNumber)!
+      expect(k.dir).toBe(`${p.srcIp}:${p.srcPort}` === serverKey ? 'c2s' : 's2c')
+    }
+  })
+
+  it('低置信乱序以「疑似」进入卡片与 headline;高置信保持「乱序到达」', () => {
+    // 模糊区(100ms ≤ 间隔 <200ms 且重复 ACK <3):引擎自述"无法排除确曾丢失"
+    const ambiguous = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 5, time: 0.04, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 201, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 7, time: 0.06, tcpFlags: ACK, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpCompleteness: 15 }),
+      c2s({ number: 8, time: 0.20, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 }),
+      s2c({ number: 9, time: 0.21, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 }),
+    ]
+    const vmLow = buildVM(ambiguous)!
+    expect(vmLow.card.kindLabel).toBe('疑似乱序(迟到补齐)')
+    expect(vmLow.headline.startsWith('疑似乱序(迟到补齐)')).toBe(true)
+
+    // 高置信迟到补齐(间隔 20ms):保持断言语气
+    const fast = ambiguous.map((p) =>
+      p.number === 8
+        ? c2s({ number: 8, time: 0.07, tcpFlags: PSHACK, tcpSeq: 101, tcpAck: 1, tcpLen: 100, tcpCompleteness: 15 })
+        : p.number === 9
+          ? s2c({ number: 9, time: 0.08, tcpFlags: ACK, tcpSeq: 1, tcpAck: 301, tcpLen: 0, tcpCompleteness: 15 })
+          : p,
+    )
+    const vmHigh = buildVM(fast)!
+    expect(vmHigh.card.kindLabel).toBe('乱序到达')
   })
 
   it('降级信号从 facts 直通', () => {
@@ -269,7 +359,9 @@ describe('buildEventSummaries — 多事件切换器摘要', () => {
     // 引擎序:未恢复在前;同为已恢复按证据分排序 —— 摘要层不得重排
     for (let i = 0; i < summaries.length; i++) {
       expect(summaries[i].kindLabel).toBeTruthy()
-      expect(summaries[i].severity).toBe(events[i].severity)
+      // 严重度以中文呈现(low/medium/high 枚举不直接面向用户)
+      expect(summaries[i].severity).toBe(severityZh(events[i].severity))
+      expect(['低', '中', '高']).toContain(summaries[i].severity)
       expect(summaries[i].recovered).toBe(events[i].recovered)
       if (events[i].gap) expect(summaries[i].gapText).toContain(`${events[i].gap!.start}`)
       else expect(summaries[i].gapText).toBeUndefined()

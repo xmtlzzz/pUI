@@ -51,7 +51,8 @@ M5 剩余(按优先级):
 - [x] SYN 重传/RST/零窗口接入会话标注;RTT 分位数;Capture Quality;窗口变化统计
 - [x] Health Score(health-v1 透明公式+扣分明细,仅筛选用)
 - [x] 完整 Sequence Space View(缩放/筛选):全景+缺口邻域双模式,滚轮/按钮缩放、拖拽平移,图例即图层开关
-- [ ] 性能:10 万包 Worker 化解析、tshark 分批/流式、事件虚拟化
+- [x] 性能(第一批):10 万包主线程卡顿的根因(JSON.parse+字段投影)Worker 化 —— parseWorker+parseAsync 调度层(<1MB 主线程直解/≥1MB 走 Worker/失败回落),bridge 三入口接入;方向控件端点箭头化+事件轨图钉点击定位报文;SACK 紫色区分;ACK 游标自解释
+- [ ] 性能(第二批):tshark 分批/流式(Rust 侧)、大列表事件虚拟化
 
 ## 四、未开工(按计划 M5-M7)
 
@@ -76,7 +77,7 @@ M5 剩余(按优先级):
 - [ ] **bundle 体积**:gsap 使主 chunk 增至 ~127KB gzip;可懒加载(动态 import)或按需迁移到 WAAPI
 - [ ] **FaultCompare 单文件偏大**(~500 行):已拆出外壳/内容区与可测试的 SeqSpaceGraphic;StageBand/EventCard 子组件化可继续
 - [ ] **CI 缺位**:全部门槛本地手跑;建议 GitHub Actions/本地 pre-push 钩子跑 vitest+build+cargo
-- [ ] **解析主线程**:>10 万包 tshark JSON 前端 parse 在主线程(128MB 守卫内可能秒级卡顿)——M5 Worker 化前置
+- [x] **解析主线程**:`parseAsync` 调度层已落地(<1MB 主线程直解,≥1MB 走 parseWorker,失败自动回落);Rust 侧 tshark 分批/流式仍在第二批
 - [ ] seqSpace 的 `ackTrack` 每次 build 全量扫描 packets(单会话 O(n),VDI 规模无感;Worker 化后自然消解)
 - [ ] 报文详情「查看事件上下文」点击时同步运行 analyzeStream+detectTcpEvents(有 perfGuard 护栏;若 VDI 会话点击感到顿挫,可在后台异步后跳转)
 

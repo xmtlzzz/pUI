@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { parsePackets } from '../parse/parsePackets'
+import { parsePacketsAsync } from '../parse/parseAsync'
 import type { CaptureMeta, Packet } from '../model/types'
 
 export function isTauri(): boolean {
@@ -30,7 +30,8 @@ export function computeMeta(fileName: string, packets: Packet[], fileSize = 0, p
 export async function openCapture(path: string): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   if (isTauri()) {
     const out = await invoke<{ json: string; size: number; path: string }>('open_capture', { path })
-    const packets = parsePackets(out.json)
+    // 大 JSON 走 Worker 解析(10 万包秒级卡顿的根因在主线程 JSON.parse),小文本同步直解
+    const packets = await parsePacketsAsync(out.json)
     return { meta: computeMeta(path.split(/[\\/]/).pop() ?? path, packets, out.size), packets, path: out.path }
   }
   // browser dev fallback: 读取已提交的解析产物
@@ -38,7 +39,7 @@ export async function openCapture(path: string): Promise<{ meta: CaptureMeta; pa
   const res = await fetch(`/fixtures/parsed/${name}.json`)
   if (!res.ok) throw new Error(`no fixture for ${name}`)
   const raw = await res.text()
-  const packets = parsePackets(raw)
+  const packets = await parsePacketsAsync(raw)
   return { meta: computeMeta(`${name}.pcapng`, packets), packets, path }
 }
 
@@ -52,13 +53,13 @@ export async function openSample(name: string): Promise<{ meta: CaptureMeta; pac
     for (const b of buf) bin += String.fromCharCode(b)
     const base64 = btoa(bin)
     const out = await invoke<{ json: string; size: number; path: string }>('open_capture_data', { fileName: `${name}.pcapng`, base64Data: base64 })
-    const packets = parsePackets(out.json)
+    const packets = await parsePacketsAsync(out.json)
     return { meta: computeMeta(`${name}.pcapng`, packets, out.size), packets, path: out.path }
   }
   const jres = await fetch(`/fixtures/examples/parsed/${name}.json`)
   if (!jres.ok) throw new Error(`missing example: ${name}`)
   const raw = await jres.text()
-  const packets = parsePackets(raw)
+  const packets = await parsePacketsAsync(raw)
   return { meta: computeMeta(`${name}.pcapng`, packets), packets, path: name }
 }
 

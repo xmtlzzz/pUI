@@ -41,20 +41,44 @@ interface CaptureStreamedResult {
 }
 
 /** 打开抓包(流式):Rust 按帧边界分块经 Channel 回传,前端逐块解析追加,
- *  onProgress 每块回调一次(帧数进度)。Tauri 缺席时回落浏览器 fixture 路径。 */
+ *  onProgress 每块回调一次(帧数进度)。Tauri 缺席时回落浏览器 fixture 路径。
+ *  数据完整性红线:分块解析出错绝不能静默 —— onmessage 里没有 await 链,
+ *  错误必须记下并在 invoke 返回后抛出;帧数对不上同样视为损坏。 */
+async function receiveStreamedCapture(
+  invokeArgs: Record<string, unknown>,
+  onProgress?: (frames: number) => void,
+): Promise<{ packets: Packet[]; out: CaptureStreamedResult }> {
+  const packets: Packet[] = []
+  const state = { count: 0 }
+  let parseError: Error | null = null
+  const channel = new Channel<CaptureChunkMsg>()
+  channel.onmessage = (msg) => {
+    try {
+      parsePacketsBatch(state, msg.text, packets)
+    } catch (e) {
+      // 首个错误生效;后续块跳过解析但继续消费(保持消息序,防状态错乱)
+      parseError = parseError ?? (e instanceof Error ? e : new Error(String(e)))
+    }
+    onProgress?.(state.count)
+  }
+  const out = await invoke<CaptureStreamedResult>('open_capture', { ...invokeArgs, onChunk: channel })
+  if (parseError) throw parseError
+  if (out.frames > 0 && packets.length === 0) {
+    throw new Error(`分块解析未产出任何报文(Rust 报告 ${out.frames} 帧):批格式契约不匹配`)
+  }
+  if (packets.length > 0 && out.frames > 0 && Math.abs(packets.length - out.frames) > out.frames * 0.5 + 8) {
+    // 帧数严重偏差(>50%+8)视为传输/解析损坏;小偏差容忍(畸形帧被跳过)
+    throw new Error(`分块解析帧数不符(前端 ${packets.length} / Rust ${out.frames}):数据可能不完整`)
+  }
+  return { packets, out }
+}
+
 export async function openCapture(
   path: string,
   onProgress?: (frames: number) => void,
 ): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   if (isTauri()) {
-    const packets: Packet[] = []
-    const state = { count: 0 }
-    const channel = new Channel<CaptureChunkMsg>()
-    channel.onmessage = (msg) => {
-      parsePacketsBatch(state, msg.text, packets)
-      onProgress?.(state.count)
-    }
-    const out = await invoke<CaptureStreamedResult>('open_capture', { path, onChunk: channel })
+    const { packets, out } = await receiveStreamedCapture({ path }, onProgress)
     return { meta: computeMeta(path.split(/[\\/]/).pop() ?? path, packets, out.size), packets, path: out.path }
   }
   // browser dev fallback: 读取已提交的解析产物
@@ -78,14 +102,7 @@ export async function openSample(
     let bin = ''
     for (const b of buf) bin += String.fromCharCode(b)
     const base64 = btoa(bin)
-    const packets: Packet[] = []
-    const state = { count: 0 }
-    const channel = new Channel<CaptureChunkMsg>()
-    channel.onmessage = (msg) => {
-      parsePacketsBatch(state, msg.text, packets)
-      onProgress?.(state.count)
-    }
-    const out = await invoke<CaptureStreamedResult>('open_capture_data', { fileName: `${name}.pcapng`, base64Data: base64, onChunk: channel })
+    const { packets, out } = await receiveStreamedCapture({ fileName: `${name}.pcapng`, base64Data: base64 }, onProgress)
     return { meta: computeMeta(`${name}.pcapng`, packets, out.size), packets, path: out.path }
   }
   const jres = await fetch(`/fixtures/examples/parsed/${name}.json`)

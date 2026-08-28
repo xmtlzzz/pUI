@@ -228,29 +228,21 @@ export function parsePackets(jsonText: string): Packet[] {
 /**
  * 分批解析(M5 流式):Rust 侧按帧边界分批回传,前端逐批 parse、逐批投影,
  * 单次 JSON.parse 的峰值内存从「整段文本+对象图」降为「单批文本+单批对象图」。
- * 批文本 = 若干完整帧对象的裸序列(无外层数组括号,帧间有逗号),
- * 修补为 `[...]` 数组后复用 parsePackets 的单帧投影;帧号以**全局帧序**为准
- * (frame.number 缺失时回退),因此跨批累计帧数作偏移。
+ *
+ * Rust 批的真实形态(run_capture_stream 切帧语义,勿凭想象假设):
+ * - 首批以 '[' 开头(整个输出数组的开括号随第一帧一起进来);
+ * - 中间批以 ',' 开头(帧间逗号留在下一帧的切片头部);
+ * - 末批以 ']' 结尾(EOF 冲尾,数组闭括号);
+ * - 单批(输出 < 4MB)= 完整数组 '[...]'。
+ * 因此这里必须清洗四类残片:前 '['、后 ']'、前后悬挂逗号,再包数组解析。
+ * 帧号以**全局帧序**为回退(frame.number 缺失时),跨批用累计帧数偏移。
  */
-export function parsePacketsBatchStart(): { count: number } {
-  return { count: 0 }
-}
-
 export function parsePacketsBatchPush(state: { count: number }, batchText: string, out: Packet[]): void {
-  // 批 = "帧对象,帧对象,..."(Rust 已按帧边界切齐,无半帧)。剥掉帧间逗号后包数组。
-  // 容错:批内文本若意外含 [ ] 包裹(Rust 行为变化),也按已有括号处理
   let text = batchText.trim()
-  if (text.startsWith('[')) {
-    // 已是数组形态
-    const data = JSON.parse(text) as RawJson[]
-    for (const entry of data) {
-      const F = makeFrameFields(entry._source.layers as Record<string, unknown>)
-      out.push(frameToPacket(F, state.count))
-      state.count += 1
-    }
-    return
-  }
-  if (text.endsWith(',')) text = text.slice(0, -1)
+  if (text.startsWith('[')) text = text.slice(1)
+  if (text.endsWith(']')) text = text.slice(0, -1)
+  text = text.replace(/^\s*,/, '').replace(/,\s*$/, '').trim()
+  if (text === '') return // 末批可能只剩 ']'
   const data = JSON.parse(`[${text}]`) as RawJson[]
   for (const entry of data) {
     const F = makeFrameFields(entry._source.layers as Record<string, unknown>)

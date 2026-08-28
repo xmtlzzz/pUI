@@ -122,4 +122,44 @@ describe('parsePacketsBatch — M5 流式分批解析(Rust 帧边界批)', () =>
     const out: ReturnType<typeof parsePackets> = []
     expect(() => parsePacketsBatch(state, '{broken', out)).toThrow()
   })
+
+  it('Rust 真实批形态(大文件多批):首批带 [ 前缀/中批逗号开头/末批 ] 结尾——逐批解析与整段一致(用户 VDI 文件回归)', () => {
+    // 这是从 run_capture_stream 切帧语义实测的批形态(曾因前端按想象的
+    // "裸对象序列"假设解析,大文件全批失败 → 空会话无报错):
+    //   首批 = '[\\n  {f1}'(数组开括号随第一帧进来)
+    //   中批 = ',\\n  {fN}'(帧间逗号留在下帧切片头部)
+    //   末批 = '\\n]'(EOF 冲尾,只剩数组闭括号)
+    const mk = (n: string, ip: string, len: string): string =>
+      flatFrame({
+        'frame.number': n,
+        'frame.time_relative': String(Number(n) * 0.1),
+        'frame.len': '66',
+        'frame.protocols': 'eth:ethertype:ip:tcp',
+        'ip.src': ip,
+        'tcp.len': len,
+      })
+    const whole = parsePackets(`[${mk('1', '10.0.0.1', '0')},${mk('2', '10.0.0.2', '100')},${mk('3', '10.0.0.1', '0')}]`)
+    expect(whole).toHaveLength(3)
+
+    const batches = [`[${mk('1', '10.0.0.1', '0')}`, `,${mk('2', '10.0.0.2', '100')}`, `,${mk('3', '10.0.0.1', '0')}`, '\n]']
+    const state = { count: 0 }
+    const out: ReturnType<typeof parsePackets> = []
+    let lastProgress = 0
+    for (const b of batches) {
+      parsePacketsBatch(state, b, out)
+      lastProgress = state.count
+    }
+    expect(lastProgress).toBe(3)
+    expect(JSON.stringify(out)).toBe(JSON.stringify(whole))
+  })
+
+  it('单批完整数组(小文件形态):整段 [..] 一批到达也能解析', () => {
+    const mk = (n: string): string =>
+      flatFrame({ 'frame.number': n, 'frame.time_relative': '0', 'frame.protocols': 'eth:ethertype:ip:tcp', 'tcp.len': '0' })
+    const whole = parsePackets(`[${mk('1')},${mk('2')}]`)
+    const state = { count: 0 }
+    const out: ReturnType<typeof parsePackets> = []
+    parsePacketsBatch(state, `[${mk('1')},${mk('2')}]`, out)
+    expect(JSON.stringify(out)).toBe(JSON.stringify(whole))
+  })
 })

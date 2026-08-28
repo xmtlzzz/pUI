@@ -61,5 +61,7 @@
     <script src="/emotion-ball/js/engine.js"></script>
     <!-- pUI 接入层:创建实例 + 把销毁钩子暴露给 main.tsx -->
     <script src="/emotion-ball/boot.js"></script>
+    <!-- React 入口(缺失=Vite 不打包应用,启动屏永远不退场——有契约测试钉住) -->
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

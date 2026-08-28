@@ -10,7 +10,24 @@ use commands::AppState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // 单实例锁(必须最先注册):再次点击 exe 时唤起已有窗口而非开新进程。
+        // 用户实测多次点击产生多个实例;回调里 show+focus 保证「点了就有窗口」
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
+        // 页面加载完成即显示窗口:此时 index.html(含表情球启动层)已就绪,
+        // 用户看到的是启动屏而非白屏;不依赖 React/JS(隐藏窗口会冻结 WebView2 rAF,
+        // 若由前端 show 存在死锁路径)。2.5s 线程兜底继续保留。
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let _ = webview.show();
+            }
+        })
         .manage(Arc::new(AppState {
             tshark_path: Default::default(),
             resolved_path: Default::default(),

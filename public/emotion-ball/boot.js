@@ -7,6 +7,18 @@
   'use strict'
   function boot() {
     var mount = document.getElementById('boot-ball')
+    // 启动诊断:bundle 加载/执行失败时,启动屏直接显示原因(而非无声卡死)。
+    // 走外部脚本(本文件),生产 CSP script-src 'self' 允许
+    var sub = document.querySelector('#boot .boot-sub')
+    function fail(msg) {
+      if (sub) sub.textContent = '启动出错: ' + msg
+    }
+    window.addEventListener('error', function (e) {
+      if (document.getElementById('boot')) fail((e && e.message) || '脚本加载失败')
+    })
+    window.addEventListener('unhandledrejection', function (e) {
+      if (document.getElementById('boot')) fail(String((e && e.reason && e.reason.message) || e.reason || 'promise 异常'))
+    })
     if (!mount || typeof window.EmotionBall === 'undefined') return
     try {
       var ball = window.EmotionBall.create(mount, {

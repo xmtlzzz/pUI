@@ -220,7 +220,8 @@ export function SeqSpaceGraphic({
       {(() => {
         const out: React.ReactNode[] = []
         let lastEndX = -Infinity
-        const ordered = [...sq.rangeLabels].sort((a, b) => a.start - b.start)
+        // 兜底空数组:热更新/内存缓存中旧构建的视图模型没有 rangeLabels 字段
+        const ordered = [...(sq.rangeLabels ?? [])].sort((a, b) => a.start - b.start)
         for (const l of ordered) {
           const x0 = x(l.start)
           const x1 = x(l.end)

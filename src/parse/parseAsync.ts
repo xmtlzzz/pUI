@@ -1,4 +1,4 @@
-import { parsePackets } from './parsePackets'
+import { parsePackets, parsePacketsBatchPush } from './parsePackets'
 import type { Packet } from '../model/types'
 
 /**
@@ -89,4 +89,14 @@ export function resetParseWorkerForTest(): void {
   worker?.terminate()
   worker = null
   pending = null
+}
+
+/**
+ * 分批解析调度(M5 流式):Rust 按帧边界分批回传的批文本,逐批投影追加到 out。
+ * 批解析固定在主线程逐批执行 —— 单批 ~4MB 文本的 parse 在毫秒级,
+ * 且各批之间事件循环可呼吸(相比整段秒级 parse,不会长时间占住主线程);
+ * Worker 化留待批数实测仍构成压力时再引入。
+ */
+export function parsePacketsBatch(state: { count: number }, batchText: string, out: Packet[]): void {
+  parsePacketsBatchPush(state, batchText, out)
 }

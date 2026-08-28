@@ -72,6 +72,8 @@ export interface AppState {
   sortKey: SortKey
   sortDir: SortDir
   loading: boolean
+  /** 流式解析进度:已解析帧数(仅在 loading 期间有意义;0 = 尚无数据/非流式路径) */
+  loadingFrames: number
   error: string | null
   hexCache: Record<number, string>
   openFile: (path: string) => Promise<void>
@@ -136,6 +138,7 @@ export const useApp = create<AppState>((set, get) => ({
   tsharkVersion: null,
   slowThreshold: 1,
   loading: false,
+  loadingFrames: 0,
   error: null,
   hexCache: {},
   compareFor: null,
@@ -155,10 +158,13 @@ export const useApp = create<AppState>((set, get) => ({
 
   async openFile(path) {
     const seq = get().loadSeq + 1
-    set({ loading: true, error: null, loadSeq: seq })
+    set({ loading: true, loadingFrames: 0, error: null, loadSeq: seq })
     const t0 = performance.now()
     try {
-      const { meta, packets, path: realPath } = await openCapture(path)
+      const { meta, packets, path: realPath } = await openCapture(path, (frames) => {
+        // 流式进度:仅在本次加载仍有效时更新(过期加载的回调静默丢弃)
+        if (get().loadSeq === seq) set({ loadingFrames: frames })
+      })
       if (get().loadSeq !== seq) return // 已被更新的加载覆盖
       const conversations = aggregateConversations(packets, { slowResponseThreshold: get().slowThreshold })
       const filter = emptyFilter()
@@ -177,10 +183,12 @@ export const useApp = create<AppState>((set, get) => ({
 
   async openExample(name) {
     const seq = get().loadSeq + 1
-    set({ loading: true, error: null, loadSeq: seq })
+    set({ loading: true, loadingFrames: 0, error: null, loadSeq: seq })
     const t0 = performance.now()
     try {
-      const { meta, packets, path } = await openSample(name)
+      const { meta, packets, path } = await openSample(name, (frames) => {
+        if (get().loadSeq === seq) set({ loadingFrames: frames })
+      })
       if (get().loadSeq !== seq) return
       const conversations = aggregateConversations(packets, { slowResponseThreshold: get().slowThreshold })
       const filter = emptyFilter()

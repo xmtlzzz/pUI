@@ -579,6 +579,53 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
     expect(onSelectPacket).toHaveBeenCalledWith(6, { eventIndex: 0, stageIndex: expect.any(Number) })
   })
 
+  it('事件切换器虚拟化(>60 事件):只渲染可视区按钮,滚动换页,选中项自动可见', () => {
+    // 构造 200 条事件摘要(不依赖引擎)
+    const many: CompareEventSummary[] = Array.from({ length: 200 }, (_, i) => ({
+      id: `0:c2s:possible-loss-or-delay:${i}`,
+      kindLabel: '疑似丢包 / 延迟到达',
+      severity: '高',
+      recovered: false,
+      gapText: `${100 + i}–${200 + i}(100B)`,
+      startTime: 1 + i * 0.1,
+      endTime: 1.1 + i * 0.1,
+    }))
+    const onSelect = vi.fn()
+    const view = render(<FaultCompare vm={makeVm()} events={many} eventIndex={0} onSelectEvent={onSelect} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const list = screen.getByTestId('fc-event-list')
+    // 只挂载可视区(200 条 >> viewport 容纳量),但总高由占位撑起
+    const rendered = list.querySelectorAll('.fc-evbtn')
+    expect(rendered.length).toBeLessThan(30)
+    expect(rendered.length).toBeGreaterThan(5)
+    // 首条是事件 1
+    expect(rendered[0].querySelector('.fc-evbtn-no')?.textContent).toBe('1')
+    // 滚动到中部:窗口平移,出现靠后的事件
+    fireEvent.scroll(list, { target: { scrollTop: 100 * 58 } })
+    const nos = [...list.querySelectorAll('.fc-evbtn-no')].map((n) => Number(n.textContent))
+    expect(Math.max(...nos)).toBeGreaterThan(90)
+    // 直接点可见按钮:回调带全局下标(占位偏移正确)
+    const btn = list.querySelectorAll('.fc-evbtn')[3]
+    fireEvent.click(btn)
+    expect(onSelect).toHaveBeenCalled()
+    const calledIdx = onSelect.mock.calls[0][0] as number
+    expect(calledIdx).toBeGreaterThan(50)
+    void view
+  })
+
+  it('事件切换器(≤60 事件):全量渲染,行为与旧版一致', () => {
+    const few: CompareEventSummary[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `0:c2s:possible-loss-or-delay:${i}`,
+      kindLabel: '疑似丢包 / 延迟到达',
+      severity: '高',
+      recovered: false,
+      gapText: `${100 + i}–${200 + i}(100B)`,
+      startTime: 1 + i * 0.1,
+      endTime: 1.1 + i * 0.1,
+    }))
+    render(<FaultCompare vm={makeVm()} events={few} eventIndex={2} onSelectEvent={vi.fn()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(screen.getByTestId('fc-event-list').querySelectorAll('.fc-evbtn')).toHaveLength(10)
+  })
+
   it('ACK 游标自解释:标签注明累计确认,图例可开关该图层', () => {
     // 从末阶段恢复:播放时刻落在首个 ACK 之后,游标可见(待播放 t=0 时它尚不存在,同样是正确行为)
     render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} initialStageIndex={4} />)

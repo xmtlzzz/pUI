@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import { parsePacketsAsync } from '../parse/parseAsync'
+import { Channel } from '@tauri-apps/api/core'
+import { parsePacketsAsync, parsePacketsBatch } from '../parse/parseAsync'
 import type { CaptureMeta, Packet } from '../model/types'
 
 export function isTauri(): boolean {
@@ -27,11 +28,33 @@ export function computeMeta(fileName: string, packets: Packet[], fileSize = 0, p
   }
 }
 
-export async function openCapture(path: string): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
+interface CaptureChunkMsg {
+  seq: number
+  text: string
+  done: boolean
+}
+
+interface CaptureStreamedResult {
+  size: number
+  path: string
+  frames: number
+}
+
+/** 打开抓包(流式):Rust 按帧边界分块经 Channel 回传,前端逐块解析追加,
+ *  onProgress 每块回调一次(帧数进度)。Tauri 缺席时回落浏览器 fixture 路径。 */
+export async function openCapture(
+  path: string,
+  onProgress?: (frames: number) => void,
+): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   if (isTauri()) {
-    const out = await invoke<{ json: string; size: number; path: string }>('open_capture', { path })
-    // 大 JSON 走 Worker 解析(10 万包秒级卡顿的根因在主线程 JSON.parse),小文本同步直解
-    const packets = await parsePacketsAsync(out.json)
+    const packets: Packet[] = []
+    const state = { count: 0 }
+    const channel = new Channel<CaptureChunkMsg>()
+    channel.onmessage = (msg) => {
+      parsePacketsBatch(state, msg.text, packets)
+      onProgress?.(state.count)
+    }
+    const out = await invoke<CaptureStreamedResult>('open_capture', { path, onChunk: channel })
     return { meta: computeMeta(path.split(/[\\/]/).pop() ?? path, packets, out.size), packets, path: out.path }
   }
   // browser dev fallback: 读取已提交的解析产物
@@ -43,7 +66,10 @@ export async function openCapture(path: string): Promise<{ meta: CaptureMeta; pa
   return { meta: computeMeta(`${name}.pcapng`, packets), packets, path }
 }
 
-export async function openSample(name: string): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
+export async function openSample(
+  name: string,
+  onProgress?: (frames: number) => void,
+): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   const url = `/fixtures/examples/${name}.pcapng`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`missing example: ${name}`)
@@ -52,8 +78,14 @@ export async function openSample(name: string): Promise<{ meta: CaptureMeta; pac
     let bin = ''
     for (const b of buf) bin += String.fromCharCode(b)
     const base64 = btoa(bin)
-    const out = await invoke<{ json: string; size: number; path: string }>('open_capture_data', { fileName: `${name}.pcapng`, base64Data: base64 })
-    const packets = await parsePacketsAsync(out.json)
+    const packets: Packet[] = []
+    const state = { count: 0 }
+    const channel = new Channel<CaptureChunkMsg>()
+    channel.onmessage = (msg) => {
+      parsePacketsBatch(state, msg.text, packets)
+      onProgress?.(state.count)
+    }
+    const out = await invoke<CaptureStreamedResult>('open_capture_data', { fileName: `${name}.pcapng`, base64Data: base64, onChunk: channel })
     return { meta: computeMeta(`${name}.pcapng`, packets, out.size), packets, path: out.path }
   }
   const jres = await fetch(`/fixtures/examples/parsed/${name}.json`)

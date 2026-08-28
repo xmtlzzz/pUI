@@ -221,66 +221,105 @@ export function parsePackets(jsonText: string): Packet[] {
   const data = JSON.parse(jsonText) as RawJson[]
   return data.map((entry, i) => {
     const F = makeFrameFields(entry._source.layers as Record<string, unknown>)
-    const protocols = (first(F.get('frame.protocols')) ?? '').split(':').filter((s) => s !== '')
-    const transport = transportOf(protocols)
-    const srcIp = first(F.get('ip.src')) ?? first(F.get('ipv6.src'))
-    const dstIp = first(F.get('ip.dst')) ?? first(F.get('ipv6.dst'))
-    const srcPort = int(F.get('tcp.srcport')) ?? int(F.get('udp.srcport'))
-    const dstPort = int(F.get('tcp.dstport')) ?? int(F.get('udp.dstport'))
-    const proto = appProto(protocols)
-    const reqLine = first(F.get('http.request.line'))
-    const resLine = first(F.get('http.response.line'))
-    const analysisTags: string[] = []
-    for (const [field, tag] of ANALYSIS_FIELDS) {
-      // 去重两种来源的重复:①同一标签的连字符/下划线两种字段名都命中;
-      // ②平铺模式下单个 dup ACK 报文的 duplicate_ack 值是 ["1","1"](实测),
-      // 按数组条目计数会让重复 ACK 数翻倍 —— 标签只表示"该报文有此现象",按报文计一次
-      if (F.get(field) != null && !analysisTags.includes(tag)) analysisTags.push(tag)
-    }
-    const dnsResp = first(F.get('dns.flags.response'))
-    const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
-      proto,
-      transport,
-      tcpFlags: tcpFlagsHex(F.getRaw('tcp.flags')),
-      httpMethod: first(F.get('http.request.method')) ?? parseRequestLine(reqLine).method,
-      httpUri: first(F.get('http.request.uri')) ?? parseRequestLine(reqLine).uri,
-      httpCode: first(F.get('http.response.code')) ?? parseResponseCode(resLine),
-      dnsQuery: first(F.get('dns.qry.name')),
-    }
-    return {
-      number: int(F.get('frame.number')) ?? i + 1,
-      time: float(F.get('frame.time_relative')) ?? 0,
-      timeEpoch: float(F.get('frame.time_epoch')),
-      interfaceId: first(F.get('frame.interface_id')),
-      len: int(F.get('frame.len')) ?? 0,
-      capLen: int(F.get('frame.cap_len')),
-      transport,
-      proto,
-      srcIp,
-      dstIp,
-      srcMac: first(F.get('eth.src')),
-      dstMac: first(F.get('eth.dst')),
-      srcPort,
-      dstPort,
-      tcpFlags: base.tcpFlags,
-      tcpSeq: float(F.get('tcp.seq_raw')),
-      tcpAck: float(F.get('tcp.ack_raw')),
-      tcpStream: int(F.get('tcp.stream')),
-      tcpLen: int(F.get('tcp.len')),
-      tcpWindow: int(F.get('tcp.window_size')),
-      tcpCompleteness: int(F.get('tcp.completeness')),
-      tcpSackBlocks: sackBlocks(all(F.get('tcp.options.sack_le')), all(F.get('tcp.options.sack_re'))),
-      tcpDupAckNum: int(F.get('tcp.analysis.duplicate_ack_num')) ?? int(F.get('tcp.analysis.duplicate-ack-num')),
-      tcpAnalysis: analysisTags.length ? analysisTags : undefined,
-      httpTime: float(F.get('http.time')),
-      httpMethod: base.httpMethod,
-      httpUri: base.httpUri,
-      httpCode: base.httpCode,
-      dnsQuery: base.dnsQuery,
-      tlsType: first(F.get('tls.handshake.type')),
-      // dns.flags.response:树形态为 "0"/"1",-e 形态为 "False"/"True",两者都识别
-      info: makeInfo({ ...base, info: dnsResp === '1' || dnsResp === 'True' ? 'response' : undefined }),
-      direction: 'other',
-    }
+    return frameToPacket(F, i)
   })
+}
+
+/**
+ * 分批解析(M5 流式):Rust 侧按帧边界分批回传,前端逐批 parse、逐批投影,
+ * 单次 JSON.parse 的峰值内存从「整段文本+对象图」降为「单批文本+单批对象图」。
+ * 批文本 = 若干完整帧对象的裸序列(无外层数组括号,帧间有逗号),
+ * 修补为 `[...]` 数组后复用 parsePackets 的单帧投影;帧号以**全局帧序**为准
+ * (frame.number 缺失时回退),因此跨批累计帧数作偏移。
+ */
+export function parsePacketsBatchStart(): { count: number } {
+  return { count: 0 }
+}
+
+export function parsePacketsBatchPush(state: { count: number }, batchText: string, out: Packet[]): void {
+  // 批 = "帧对象,帧对象,..."(Rust 已按帧边界切齐,无半帧)。剥掉帧间逗号后包数组。
+  // 容错:批内文本若意外含 [ ] 包裹(Rust 行为变化),也按已有括号处理
+  let text = batchText.trim()
+  if (text.startsWith('[')) {
+    // 已是数组形态
+    const data = JSON.parse(text) as RawJson[]
+    for (const entry of data) {
+      const F = makeFrameFields(entry._source.layers as Record<string, unknown>)
+      out.push(frameToPacket(F, state.count))
+      state.count += 1
+    }
+    return
+  }
+  if (text.endsWith(',')) text = text.slice(0, -1)
+  const data = JSON.parse(`[${text}]`) as RawJson[]
+  for (const entry of data) {
+    const F = makeFrameFields(entry._source.layers as Record<string, unknown>)
+    out.push(frameToPacket(F, state.count))
+    state.count += 1
+  }
+}
+
+/** 单帧字段访问器 -> Packet(主线程/Worker/分批三路共用的投影,帧号回退用全局帧序) */
+function frameToPacket(F: ReturnType<typeof makeFrameFields>, fallbackIndex: number): Packet {
+  const protocols = (first(F.get('frame.protocols')) ?? '').split(':').filter((s) => s !== '')
+  const transport = transportOf(protocols)
+  const srcIp = first(F.get('ip.src')) ?? first(F.get('ipv6.src'))
+  const dstIp = first(F.get('ip.dst')) ?? first(F.get('ipv6.dst'))
+  const srcPort = int(F.get('tcp.srcport')) ?? int(F.get('udp.srcport'))
+  const dstPort = int(F.get('tcp.dstport')) ?? int(F.get('udp.dstport'))
+  const proto = appProto(protocols)
+  const reqLine = first(F.get('http.request.line'))
+  const resLine = first(F.get('http.response.line'))
+  const analysisTags: string[] = []
+  for (const [field, tag] of ANALYSIS_FIELDS) {
+    // 去重两种来源的重复:①同一标签的连字符/下划线两种字段名都命中;
+    // ②平铺模式下单个 dup ACK 报文的 duplicate_ack 值是 ["1","1"](实测),
+    // 按数组条目计数会让重复 ACK 数翻倍 —— 标签只表示"该报文有此现象",按报文计一次
+    if (F.get(field) != null && !analysisTags.includes(tag)) analysisTags.push(tag)
+  }
+  const dnsResp = first(F.get('dns.flags.response'))
+  const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
+    proto,
+    transport,
+    tcpFlags: tcpFlagsHex(F.getRaw('tcp.flags')),
+    httpMethod: first(F.get('http.request.method')) ?? parseRequestLine(reqLine).method,
+    httpUri: first(F.get('http.request.uri')) ?? parseRequestLine(reqLine).uri,
+    httpCode: first(F.get('http.response.code')) ?? parseResponseCode(resLine),
+    dnsQuery: first(F.get('dns.qry.name')),
+  }
+  return {
+    number: int(F.get('frame.number')) ?? fallbackIndex + 1,
+    time: float(F.get('frame.time_relative')) ?? 0,
+    timeEpoch: float(F.get('frame.time_epoch')),
+    interfaceId: first(F.get('frame.interface_id')),
+    len: int(F.get('frame.len')) ?? 0,
+    capLen: int(F.get('frame.cap_len')),
+    transport,
+    proto,
+    srcIp,
+    dstIp,
+    srcMac: first(F.get('eth.src')),
+    dstMac: first(F.get('eth.dst')),
+    srcPort,
+    dstPort,
+    tcpFlags: base.tcpFlags,
+    tcpSeq: float(F.get('tcp.seq_raw')),
+    tcpAck: float(F.get('tcp.ack_raw')),
+    tcpStream: int(F.get('tcp.stream')),
+    tcpLen: int(F.get('tcp.len')),
+    tcpWindow: int(F.get('tcp.window_size')),
+    tcpCompleteness: int(F.get('tcp.completeness')),
+    tcpSackBlocks: sackBlocks(all(F.get('tcp.options.sack_le')), all(F.get('tcp.options.sack_re'))),
+    tcpDupAckNum: int(F.get('tcp.analysis.duplicate_ack_num')) ?? int(F.get('tcp.analysis.duplicate-ack-num')),
+    tcpAnalysis: analysisTags.length ? analysisTags : undefined,
+    httpTime: float(F.get('http.time')),
+    httpMethod: base.httpMethod,
+    httpUri: base.httpUri,
+    httpCode: base.httpCode,
+    dnsQuery: base.dnsQuery,
+    tlsType: first(F.get('tls.handshake.type')),
+    // dns.flags.response:树形态为 "0"/"1",-e 形态为 "False"/"True",两者都识别
+    info: makeInfo({ ...base, info: dnsResp === '1' || dnsResp === 'True' ? 'response' : undefined }),
+    direction: 'other',
+  }
 }

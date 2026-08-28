@@ -44,15 +44,36 @@ pub struct CaptureOutput {
     pub path: String, // 供后续 fetch_hex 使用(临时文件场景下为写入后的真实路径)
 }
 
+/// 流式抓包输出(M5 性能第二批):JSON 分块经 Channel 增量回传,
+/// 命令返回值只带元信息 —— 整段 JSON 不再作为单个 IPC 消息传输,
+/// 前端峰值内存从「整段文本」降为「单块文本 + Packet 对象」。
+#[derive(Serialize)]
+pub struct CaptureStreamed {
+    pub size: u64,
+    pub path: String,
+    pub frames: u64, // 已回传的帧数(进度展示/校验)
+}
+
+/// 分块消息:chunk 是一段合法 JSON(帧对象序列,首块以 '[' 起、末块以 ']' 收,
+/// 中间块为裸对象序列);前端 parseAsync 修补为对象数组逐块解析。
+/// frames 累计帧数,done=true 时本条为最后一块。
+#[derive(Serialize, Clone)]
+pub struct CaptureChunk {
+    pub seq: u32,
+    pub text: String,
+    pub done: bool,
+}
+
 #[tauri::command]
 pub async fn open_capture(
     path: String,
+    on_chunk: tauri::ipc::Channel<CaptureChunk>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
-) -> Result<CaptureOutput, String> {
+) -> Result<CaptureStreamed, String> {
     let app = app.clone();
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || open_capture_blocking(&path, &app, &state))
+    tauri::async_runtime::spawn_blocking(move || open_capture_blocking(&path, &app, &state, &on_chunk))
         .await
         .map_err(|e| format!("open_capture task failed: {e}"))?
 }
@@ -79,15 +100,43 @@ fn open_capture_blocking(
     path: &str,
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
-) -> Result<CaptureOutput, String> {
+    on_chunk: &tauri::ipc::Channel<CaptureChunk>,
+) -> Result<CaptureStreamed, String> {
     let size = check_capture_path(path)?;
     let bin = tshark::resolve_cached(app, state).ok_or("tshark not found: set its path in settings")?;
-    let json = tshark::run_capture(&bin, path)?;
-    Ok(CaptureOutput {
-        json,
+    // 流式:tshark stdout 按帧边界分批,逐批经 Channel 回传;内存不积整段 JSON。
+    // run_capture_stream 保证每批只含完整帧对象(无外层 [ ]、无帧间逗号残缺),
+    // 批与批之间在帧边界对齐 —— 前端把批修补为对象数组即可逐批解析。
+    let mut seq: u32 = 0;
+    let mut frames: u64 = 0;
+    tshark::run_capture_stream(&bin, path, tshark::MAX_CAPTURE_JSON, tshark::COMMAND_TIMEOUT, |batch| {
+        frames += count_frames(batch);
+        let msg = CaptureChunk {
+            seq,
+            text: batch.to_string(),
+            done: false,
+        };
+        seq += 1;
+        on_chunk.send(msg).map_err(|e| format!("chunk send failed: {e}"))?;
+        Ok(())
+    })?;
+    Ok(CaptureStreamed {
         size,
         path: path.to_string(),
+        frames,
     })
+}
+
+/// 统计一批帧对象文本中的帧数:帧闭括号 "\n  }" 的出现次数(与切帧标记一致)
+fn count_frames(batch: &str) -> u64 {
+    const FRAME_CLOSE: &str = "\n  }";
+    let mut n = 0u64;
+    let mut rest = batch;
+    while let Some(pos) = rest.find(FRAME_CLOSE) {
+        n += 1;
+        rest = &rest[pos + FRAME_CLOSE.len()..];
+    }
+    n
 }
 
 /// 捕获数据(base64 文本)解码上限:约 128MB(解码后约 96MB),防止超大打爆内存
@@ -163,9 +212,10 @@ fn sanitize_capture_name(file_name: &str) -> Option<String> {
 pub async fn open_capture_data(
     file_name: String,
     base64_data: String,
+    on_chunk: tauri::ipc::Channel<CaptureChunk>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
-) -> Result<CaptureOutput, String> {
+) -> Result<CaptureStreamed, String> {
     let app = app.clone();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -184,7 +234,7 @@ pub async fn open_capture_data(
         let tmp = std::env::temp_dir().join(format!("pui-{token}-{name}"));
         std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
         state.temp_files.lock().unwrap_or_else(|e| e.into_inner()).push(tmp.clone());
-        open_capture_blocking(&tmp.to_string_lossy().into_owned(), &app, &state)
+        open_capture_blocking(&tmp.to_string_lossy().into_owned(), &app, &state, &on_chunk)
     })
     .await
     .map_err(|e| format!("open_capture_data task failed: {e}"))?

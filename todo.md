@@ -1,6 +1,6 @@
 # pUI 项目状态 TODO
 
-> 更新:2026-08-28(第 6 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
+> 更新:2026-08-28(第 7 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
 > 产品目标:把 PCAP 中分散的报文,还原为可验证的网络故障事件和证据链 —— 观察与推断分离,不过度归因。
 
 ---
@@ -9,8 +9,8 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 448 用例全绿(`npx vitest run`,57 文件) |
-| Rust 测试 | 17 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`) |
+| 前端测试 | 464 用例全绿(`npx vitest run`,58 文件) |
+| Rust 测试 | 21 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`) |
 | 构建 | `npm run build` 通过(bundle gzip ≈127KB,含 gsap) |
 | 技术栈 | React 19 + TS 5.8 strict + Zustand 5 + Vite 7 + Vitest 4 + Tauri 2 + tshark 4.6.6 + GSAP |
 | 性能护栏 | 5000 段重传风暴(~1.5 万包/100 缺口)分析 <3s(`perfGuard.test.ts`) |
@@ -52,7 +52,8 @@ M5 剩余(按优先级):
 - [x] Health Score(health-v1 透明公式+扣分明细,仅筛选用)
 - [x] 完整 Sequence Space View(缩放/筛选):全景+缺口邻域双模式,滚轮/按钮缩放、拖拽平移,图例即图层开关
 - [x] 性能(第一批):10 万包主线程卡顿的根因(JSON.parse+字段投影)Worker 化 —— parseWorker+parseAsync 调度层(<1MB 主线程直解/≥1MB 走 Worker/失败回落),bridge 三入口接入;方向控件端点箭头化+事件轨图钉点击定位报文;SACK 紫色区分;ACK 游标自解释
-- [ ] 性能(第二批):tshark 分批/流式(Rust 侧)、大列表事件虚拟化
+- [x] 性能(第二批):tshark 流式分批 —— Rust run_capture_stream 按帧边界切批(~4MB/批)经 tauri ipc::Channel 增量回传,open_capture/open_capture_data 返回不再含整段 JSON;前端逐批投影(parsePacketsBatchPush,帧号跨批累计),解析期间工具条实时显示已解析帧数;事件切换器列表虚拟化(>60 事件只渲染可视区,数千事件不再全量挂载)
+- [ ] 性能(可选收尾):fetch_hex 流式化(低频,收益小);Worker 池化(单只常驻已够)
 
 ## 四、未开工(按计划 M5-M7)
 

@@ -17,6 +17,7 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, hasConversation
   const openFile = useApp((s) => s.openFile)
   const openExample = useApp((s) => s.openExample)
   const loading = useApp((s) => s.loading)
+  const loadingFrames = useApp((s) => s.loadingFrames)
   const diagramStyle = useApp((s) => s.diagramStyle)
   const setDiagramStyle = useApp((s) => s.setDiagramStyle)
   const timeMode = useApp((s) => s.timeMode)
@@ -90,7 +91,7 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, hasConversation
             {tsharkVersion && <> · tshark {tsharkVersion}</>}
           </span>
         )}
-        {loading && <span className="meta pulse">解析中…</span>}
+        {loading && <span className="meta pulse">解析中{loadingFrames > 0 ? `… 已解析 ${loadingFrames.toLocaleString()} 帧` : '…'}</span>}
         {!meta && !loading && <span className="meta dim">打开抓包文件开始分析</span>}
       </div>
 

@@ -62,6 +62,94 @@ function phaseLabel(p: PlaybackPhase): string {
   }
 }
 
+/** 事件切换器虚拟化阈值:低于此值直接全渲染(常规会话 <100 事件,虚拟化反增复杂度) */
+export const EV_VIRTUAL_THRESHOLD = 60
+/** 虚拟化模式下单事件按钮的固定高度(px,与 .fc-evbtn 实测渲染高度一致,上下含 gap 6px) */
+const EV_ITEM_H = 52
+const EV_GAP = 6
+/** 可视区上下各多渲染的行数(滚动缓冲,防白边) */
+const EV_OVERSCAN = 4
+
+/**
+ * 事件切换器(检出的事件列表)。事件少时全渲染;
+ * 多时窗口虚拟化:容器固定高滚动,只挂载可视区按钮(上下留 overscan),
+ * 占位高度用总高撑起滚动条。选中项变化时自动滚动到可视区。
+ */
+export function EventSwitcher({
+  events,
+  eventIndex,
+  onSelectEvent,
+}: {
+  events: CompareEventSummary[]
+  eventIndex: number
+  onSelectEvent: (i: number) => void
+}) {
+  const virtual = events.length > EV_VIRTUAL_THRESHOLD
+  const [scrollTop, setScrollTop] = useState(0)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const viewport = 232 // 与 .fc-eventlist max-height 一致
+  const first = virtual ? Math.max(0, Math.floor(scrollTop / (EV_ITEM_H + EV_GAP)) - EV_OVERSCAN) : 0
+  const visibleCount = virtual ? Math.ceil(viewport / (EV_ITEM_H + EV_GAP)) + EV_OVERSCAN * 2 : events.length
+  const last = Math.min(events.length, first + visibleCount)
+
+  // 选中项在虚拟化模式下必须可见:程序化滚动到选中行(仅当选中项在可视区外)
+  useEffect(() => {
+    if (!virtual || !listRef.current) return
+    const el = listRef.current
+    const top = eventIndex * (EV_ITEM_H + EV_GAP)
+    if (top < el.scrollTop) {
+      el.scrollTop = top
+    } else if (top + EV_ITEM_H > el.scrollTop + viewport) {
+      el.scrollTop = top + EV_ITEM_H - viewport
+    }
+  }, [eventIndex, virtual])
+
+  const renderBtn = (ev: CompareEventSummary, i: number) => (
+    <button
+      key={ev.id}
+      type="button"
+      role="tab"
+      aria-selected={i === eventIndex}
+      className={`fc-evbtn ${i === eventIndex ? 'active' : ''}`}
+      onClick={() => onSelectEvent(i)}
+    >
+      <span className="fc-evbtn-no">{i + 1}</span>
+      <span className="fc-evbtn-body">
+        <span className="fc-evbtn-kind">
+          {ev.kindLabel}
+          {!ev.recovered && <em className="fc-evbtn-unrec">未恢复</em>}
+        </span>
+        <small>
+          {ev.gapText ? `缺口 ${ev.gapText} · ` : ''}
+          {ev.startTime.toFixed(3)}–{ev.endTime.toFixed(3)}s · {ev.severity}
+        </small>
+      </span>
+    </button>
+  )
+
+  if (!virtual) {
+    return (
+      <div className="fc-eventlist" data-testid="fc-event-list" role="tablist" aria-label="检出的事件">
+        {events.map(renderBtn)}
+      </div>
+    )
+  }
+  return (
+    <div
+      className="fc-eventlist"
+      data-testid="fc-event-list"
+      role="tablist"
+      aria-label={`检出的事件(共 ${events.length} 条,仅渲染可视区)`}
+      ref={listRef}
+      onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
+    >
+      <div style={{ height: first * (EV_ITEM_H + EV_GAP), flex: 'none' }} aria-hidden />
+      {events.slice(first, last).map((ev, k) => renderBtn(ev, first + k))}
+      <div style={{ height: Math.max(0, (events.length - last) * (EV_ITEM_H + EV_GAP)), flex: 'none' }} aria-hidden />
+    </div>
+  )
+}
+
 /** 窄窗口检测(案例要求 <900px 双标签);无 matchMedia 环境(测试/SSR)视为宽屏 */
 function useNarrowViewport(breakpoint = 900): boolean {
   const [narrow, setNarrow] = useState(() =>
@@ -644,33 +732,10 @@ function CompareContent({
             实际故障 <span className="fc-real-badge">真实抓包</span>
           </h3>
 
-          {/* 事件切换器:VDI 实测单会话常有大量缺口事件,只看第一个不可用 */}
-          {showSwitcher && (
-            <div className="fc-eventlist" data-testid="fc-event-list" role="tablist" aria-label="检出的事件">
-              {events!.map((ev, i) => (
-                <button
-                  key={ev.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={i === eventIndex}
-                  className={`fc-evbtn ${i === eventIndex ? 'active' : ''}`}
-                  onClick={() => onSelectEvent!(i)}
-                >
-                  <span className="fc-evbtn-no">{i + 1}</span>
-                  <span className="fc-evbtn-body">
-                    <span className="fc-evbtn-kind">
-                      {ev.kindLabel}
-                      {!ev.recovered && <em className="fc-evbtn-unrec">未恢复</em>}
-                    </span>
-                    <small>
-                      {ev.gapText ? `缺口 ${ev.gapText} · ` : ''}
-                      {ev.startTime.toFixed(3)}–{ev.endTime.toFixed(3)}s · {ev.severity}
-                    </small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+          {/* 事件切换器:VDI 实测单会话常有大量缺口事件,只看第一个不可用。
+              事件数超 EV_VIRTUAL_THRESHOLD 时启用窗口虚拟化:只渲染可视区
+              (每项固定高,按 scrollTop 换算),数千事件不再创建数千 DOM */}
+          {showSwitcher && <EventSwitcher events={events!} eventIndex={eventIndex} onSelectEvent={onSelectEvent!} />}
 
           {/* 序列空间方向切换(M4:双向流对向视图)+ 视图范围/缩放(M5 完整 SSV)。
               方向按钮用「端点 → 端点」形态直观标注数据流向(传入 endpoints 时),

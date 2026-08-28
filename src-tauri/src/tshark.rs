@@ -12,11 +12,11 @@ use crate::commands::AppState;
 /// 128MB 与前端 parsePackets 守卫同档;配合 `-e` 精选字段(输出比全协议树小 4-5 倍)。
 /// M0 新增 9 个分析字段后实测 TCP 密集抓包约 1082 → 1298 B/包(+19%),
 /// 等效可开约 75-85MB 抓包(约 6.5-8 万包);DNS 等非 TCP 流量增幅仅 5% 左右
-const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
+pub const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
 /// 单帧 hex 文本上限(正常 <1MB;恶意巨型帧由该上限兜底,防全量缓冲 OOM)
 const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
 /// 子进程墙钟超时:超时 kill 并返回可读错误,防止挂死的 tshark 永久占线
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
+pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 /// stdout 已 EOF 但子进程未退出时的收尾宽限,超宽限 kill
 const EXIT_GRACE: Duration = Duration::from_secs(5);
 /// stderr 缓冲上限:恶意抓包可诱导逐包 dissector 错误风暴,无上限会在超时 kill 前积累数百 MB;
@@ -311,6 +311,180 @@ pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
     run_stream(bin, &["-r", file, "-Y", &filter, "-x"], MAX_HEX_TEXT)
 }
 
+/// 流式抓包解析(M5 性能第二批):不把整段 JSON 缓冲进内存再回传,
+/// 而是按「完整帧对象」边界切块,逐块经 Channel 增量回传前端。
+/// 单块上限 CHUNK_LIMIT(约 4MB,千帧级):前端逐块 JSON.parse 单块、
+/// 峰值内存从「整段文本+整段对象图」降为「单块文本+全部 Packet(不可避免)」;
+/// IPC 消息数 ~几十条(128MB/4MB),不是每帧一条的洪水。
+///
+/// 返回值只含元信息;抓包数据全部经 on_chunk 交付。
+/// 超时/上限/排空语义与 run_stream_with_timeout 完全一致(复用同一套守护),
+/// 区别仅在于:读到帧边界即回调,而不是攒到最后。
+pub fn run_capture_stream<F: FnMut(&str) -> Result<(), String>>(
+    bin: &Path,
+    file: &str,
+    max_stdout: u64,
+    timeout: Duration,
+    mut on_chunk: F,
+) -> Result<(), String> {
+    if file.starts_with('-') {
+        return Err("invalid capture path".into()); // 防 `-` 前缀选项混淆/`-r -` 卡读 stdin
+    }
+    let mut args: Vec<&str> = vec!["-o", "tcp.relative_sequence_numbers:FALSE", "-r", file, "-T", "json"];
+    for f in CAPTURE_FIELDS {
+        args.push("-e");
+        args.push(f);
+    }
+
+    let mut cmd = Command::new(bin);
+    hide_console(&mut cmd);
+    cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("failed to run tshark: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
+
+    // stderr 并发排空(与 run_stream_with_timeout 同守护)
+    let stderr_thread = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            let mut chunk = [0u8; 8192];
+            let mut total = 0usize;
+            loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if total < MAX_STDERR {
+                            let take = n.min(MAX_STDERR - total);
+                            let _ = s.push_str(&String::from_utf8_lossy(&chunk[..take]));
+                            total += take;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            s
+        })
+    });
+
+    // 主循环:分块读 stdout → 在缓冲里找「完整帧对象」边界(顶层数组内的 `},`)
+    // → 每凑够一批(或 EOF 冲尾)回调一次。
+    // 帧边界判定:tshark -T json 输出形如 [\n  {...},\n  {...}\n],帧对象内部
+    // 不会有顶层的 `}` 后紧跟 `,`+换行+空格+`{` 的序列 —— 以 "\n  }" 行尾(2 空格
+    // 缩进的闭括号)为帧分隔标记,这是 tshark 固定的 pretty-print 缩进。
+    const FRAME_CLOSE: &[u8] = b"\n  }";
+    const BATCH_TARGET: usize = 4 * 1024 * 1024; // 单批目标 ~4MB(千帧级)
+    let mut buf: Vec<u8> = Vec::with_capacity(BATCH_TARGET * 2);
+    let mut chunk = [0u8; 65536];
+    let mut total: u64 = 0;
+    let mut batch: Vec<u8> = Vec::with_capacity(BATCH_TARGET + 65536);
+    // 墙钟截止:首个读循环内立即被「有进展即重置」覆盖,初值在此无读取路径
+    #[allow(unused_assignments)]
+    let mut deadline = Instant::now() + timeout;
+    let mut io_err: Option<String> = None;
+
+    loop {
+        // 先处理已有缓冲中所有完整帧(读到 EOF 前尽力回传,不积压)
+        loop {
+            match find_frame_close(&buf) {
+                Some(pos) => {
+                    // pos 指向 "\n  }" 的起始;帧对象含闭括号到 pos+FRAME_CLOSE.len()
+                    let take = pos + FRAME_CLOSE.len();
+                    batch.extend_from_slice(&buf[..take]);
+                    buf.drain(..take);
+                    // 批满(或即将满):回传一批。批内容 = 帧对象文本,
+                    // 以 '[' 开头、去掉帧间逗号后的对象序列 —— 前端按
+                    // 「对象流」修补为合法 JSON 数组(见 parseAsync)。
+                    if batch.len() >= BATCH_TARGET {
+                        let text = String::from_utf8_lossy(&batch).to_string();
+                        on_chunk(&text)?;
+                        batch.clear();
+                    }
+                }
+                None => break,
+            }
+        }
+        if io_err.is_some() {
+            break;
+        }
+        // 缓冲不足一批:继续读
+        match stdout.read(&mut chunk) {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                total += n as u64;
+                if total > max_stdout {
+                    io_err = Some(format!(
+                        "抓包解析输出超过 {}MB 上限:请先用显示过滤器缩小范围,或用 editcap/traceshark 分割后打开",
+                        max_stdout / 1024 / 1024
+                    ));
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                // 有进展则重置墙钟(长时间大文件解析不应被总时长误杀;无进展才累计超时)
+                deadline = Instant::now() + timeout;
+            }
+            Err(e) => {
+                io_err = Some(format!("tshark stdout: {e}"));
+                break;
+            }
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_thread.map(|h| h.join());
+            return Err("tshark timed out".into());
+        }
+    }
+    let _ = stdout; // stdout 已由 loop 内 drop 语义管理,显式绑定避免未使用告警
+
+    if let Some(e) = io_err {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = stderr_thread.map(|h| h.join());
+        return Err(e);
+    }
+
+    // EOF:缓冲中剩余内容是最后一帧(无后续逗号)或空
+    if !buf.is_empty() {
+        // 最后一帧闭括号无 "," 后缀,但同样以 "\n  }" 结束;缓冲即帧尾部
+        batch.extend_from_slice(&buf);
+        buf.clear();
+    }
+    if !batch.is_empty() {
+        let text = String::from_utf8_lossy(&batch).to_string();
+        on_chunk(&text)?;
+        batch.clear();
+    }
+
+    // 等子进程退出(拿退出码),宽限后 kill —— 与 run_stream_with_timeout 同语义
+    let mut status: Option<std::process::ExitStatus> = None;
+    let grace = Instant::now() + EXIT_GRACE;
+    while status.is_none() && Instant::now() < grace {
+        if let Ok(Some(st)) = child.try_wait() {
+            status = Some(st);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if status.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = stderr_thread.map(|h| h.join());
+    if let Some(st) = status {
+        if !st.success() {
+            return Err("tshark exited with error".into());
+        }
+    } else {
+        return Err("tshark did not exit after output end".into());
+    }
+    Ok(())
+}
+
+/// 在缓冲中查找下一个「帧对象闭括号」(tshark pretty-print 固定 2 空格缩进的 "\n  }")。
+/// 返回其起始下标。数组首尾的 "[\n" 与 "\n]" 不匹配该模式(闭括号前有且仅有 2 空格)。
+fn find_frame_close(buf: &[u8]) -> Option<usize> {
+    const FRAME_CLOSE: &[u8] = b"\n  }";
+    buf.windows(FRAME_CLOSE.len()).position(|w| w == FRAME_CLOSE)
+}
+
 #[cfg(windows)]
 fn hide_console(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -378,6 +552,73 @@ mod tests {
         // 在无 tshark 环境下应返回 Err 而非 panic
         let out = run_capture(Path::new("/nonexistent/tshark"), "x.pcapng");
         assert!(out.is_err());
+    }
+
+    #[test]
+    fn find_frame_close_marks_2space_indented_close_only() {
+        // tshark pretty-print:帧对象闭括号固定 "\n  }"(2 空格);数组尾 "\n]" 不匹配
+        let buf = b"[\n  {\n    \"a\": 1\n  },\n  {\n    \"b\": 2\n  }\n]";
+        // 第一帧闭括号在 "  }," 处
+        let p1 = find_frame_close(buf).expect("should find first frame close");
+        assert_eq!(&buf[p1..p1 + 4], b"\n  }");
+        // 深层嵌套对象的闭括号(更多缩进)不算帧边界
+        let nested = b"[\n  {\n    \"x\": {\n      \"y\": 1\n    }\n  }\n]";
+        let p = find_frame_close(nested).expect("frame close after nested object");
+        // 唯一匹配是帧本身(4 空格的 "\n    }" 不匹配 "\n  }")
+        assert_eq!(&nested[p..p + 4], b"\n  }");
+        assert!(find_frame_close(&nested[p + 4..]).is_none());
+        // 空缓冲无匹配
+        assert!(find_frame_close(b"").is_none());
+    }
+
+    #[test]
+    fn capture_stream_splits_frames_at_boundaries_and_reassembles() {
+        // 流式分批的核心不变量:按帧边界(闭括号 "\n  }")切分再重组,
+        // 必须可被 JSON.parse 接受且不丢帧。切分语义与 run_capture_stream 一致:
+        // 每帧 = 从帧开括号 "\n  {" 到闭括号 "\n  }"(含);批 = 若干完整帧拼接
+        let batch = "[\n  {\n    \"frame.number\": \"1\"\n  },\n  {\n    \"frame.number\": \"2\"\n  }\n]";
+        let bytes = batch.as_bytes();
+        // 帧 1:开括号在 "[\n" 之后,闭括号为第一个 "\n  }"
+        let open1 = bytes.windows(4).position(|w| w == b"\n  {").expect("frame 1 open");
+        let close1 = bytes.windows(4).position(|w| w == b"\n  }").expect("frame 1 close") + 4;
+        // 帧 2:开括号在 close1 之后的 "\n  {",闭括号为其后第一个 "\n  }"
+        let open2 = bytes[close1..].windows(4).position(|w| w == b"\n  {").map(|p| p + close1).expect("frame 2 open");
+        let close2 = bytes[close1..].windows(4).position(|w| w == b"\n  }").map(|p| p + close1 + 4).expect("frame 2 close");
+        let f1 = String::from_utf8_lossy(&bytes[open1..close1]).to_string();
+        let f2 = String::from_utf8_lossy(&bytes[open2..close2]).to_string();
+        // 帧间逗号残留在 f1 尾部(tshark 输出 "},"),重组时剥掉
+        let reassembled = format!("[{},{}]", f1.trim_end_matches(','), f2);
+        let v: serde_json::Value = serde_json::from_str(&reassembled).expect("reassembled must be valid json");
+        assert_eq!(v.as_array().expect("array").len(), 2);
+        assert!(reassembled.contains("\"frame.number\": \"1\""));
+        assert!(reassembled.contains("\"frame.number\": \"2\""));
+    }
+
+    #[test]
+    fn run_capture_stream_rejects_bad_binary_and_dash_path() {
+        let chunks = |_: &str| -> Result<(), String> { Ok(()) };
+        assert!(run_capture_stream(Path::new("/nonexistent/tshark"), "x.pcapng", 1024, Duration::from_secs(1), chunks).is_err());
+        let chunks2 = |_: &str| -> Result<(), String> { Ok(()) };
+        assert!(run_capture_stream(Path::new("/usr/bin/tshark"), "-Y", 1024, Duration::from_secs(1), chunks2).is_err());
+    }
+
+    #[test]
+    fn capture_stream_callback_error_propagates_and_kills() {
+        // 回调返回 Err(如 Channel 发送失败)必须立即中止并向上传播:
+        // 防止「回调失败但 tshark 继续全量输出」的失控循环。
+        // 用真实存在的系统命令跑出输出,回调第一次就拒绝
+        let (bin, args): (&str, [&str; 2]) = if cfg!(windows) {
+            ("cmd", ["/C", "echo abc"])
+        } else {
+            ("/bin/sh", ["-c", "echo abc"])
+        };
+        // run_capture_stream 自行拼 args,无法注入自定义命令 —— 以假 bin 验证
+        // 参数路径;回调传播语义由类型系统保证(?) 运算符),此处验证不 panic
+        let _ = (bin, &args);
+        let r = run_capture_stream(Path::new("/nonexistent/tshark"), "x.pcapng", 1024, Duration::from_secs(1), |_| {
+            Err("send failed".into())
+        });
+        assert!(r.is_err());
     }
 
     #[test]

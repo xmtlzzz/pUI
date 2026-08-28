@@ -328,3 +328,25 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     vi.unstubAllGlobals()
   })
 })
+
+describe('解析遮罩(emotion-ball 官方球,emotion 32 处理中忙碌)', () => {
+  it('loading=true 时渲染解析遮罩,帧数进度实时可见;loading=false 移除', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    act(() => {
+      useApp.setState({ loading: true, loadingFrames: 1234, error: null })
+    })
+    const { container } = render(<AppLayout />)
+    const overlay = container.querySelector('[data-testid="parse-overlay"]')!
+    expect(overlay).toBeTruthy()
+    expect(overlay.textContent).toContain('解析中')
+    expect(overlay.textContent).toContain('1,234')
+    // 引擎缺席时降级占位仍在(不白屏)
+    expect(overlay.querySelector('.eb-loader-fallback') || overlay.querySelector('.eb-loader')).toBeTruthy()
+
+    act(() => {
+      useApp.setState({ loading: false, loadingFrames: 0 })
+    })
+    expect(container.querySelector('[data-testid="parse-overlay"]')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+})

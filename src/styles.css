@@ -234,3 +234,52 @@ table.list .time-col { color: #94a3b8; }
 /* 「返回故障分析(事件 N · 阶段 M)」恢复入口 */
 .resume-btn { border-color: #93c5fd; color: #1d4ed8; }
 .resume-btn:hover { background: #eff6ff; border-color: #60a5fa; }
+
+/* emotion-ball 加载组件(eb-loader):球体 + 提示小字纵排 */
+.eb-loader {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.eb-loader-tips {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+.eb-loader-fallback {
+  color: #93c5fd;
+  animation: eb-fallback-pulse 1s ease-in-out infinite alternate;
+}
+@keyframes eb-fallback-pulse {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+/* 抓包解析遮罩:半透明背景(旧内容隐约可见)+ 居中卡片 */
+.parse-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(248, 250, 252, 0.72);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.parse-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12);
+  padding: 22px 34px;
+}
+
+/* hex 详情行内加载 */
+.hex-loading {
+  padding: 4px 0;
+}
+.hex-loading .eb-loader {
+  flex-direction: row;
+  gap: 10px;
+}

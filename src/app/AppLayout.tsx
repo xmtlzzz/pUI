@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from 'react'
 import { Toolbar } from './Toolbar'
+import { EmotionBallLoader } from './EmotionBallLoader'
 import { FilterPanel } from './FilterPanel'
 import { ListPane } from './ListPane'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -26,6 +27,8 @@ function clamp(v: number, min: number, max: number): number {
 export function AppLayout() {
   const openFile = useApp((s) => s.openFile)
   const error = useApp((s) => s.error)
+  const loading = useApp((s) => s.loading)
+  const loadingFrames = useApp((s) => s.loadingFrames)
   const meta = useApp((s) => s.meta)
   const currentPath = useApp((s) => s.currentPath)
   const selected = useApp((s) => selectSelected(s))
@@ -294,6 +297,14 @@ export function AppLayout() {
       onDragLeave={() => setDrag(false)}
       onDrop={onDrop}
     >
+      {/* 抓包解析中:emotion-ball 遮罩(半透明,旧内容隐约可见);帧数进度实时更新 */}
+      {loading && (
+        <div className="parse-overlay" data-testid="parse-overlay" role="status">
+          <div className="parse-card">
+            <EmotionBallLoader emotionId="32" tips={`解析中… 已解析 ${loadingFrames.toLocaleString()} 帧`} size={110} />
+          </div>
+        </div>
+      )}
       {/* M4 整页板块:进入故障分析时整个工作区切换(用户要求,替代右侧面板局部替换)。
           顶部工具条保留(打开文件/导出仍可用),筛选/列表/时序/详情全部让位。 */}
       {compareFor ? (

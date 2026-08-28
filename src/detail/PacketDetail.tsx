@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import { useApp, selectSelectedPacket } from '../state/appStore'
 import { buildPacketTree, type DetailNode } from './packetTree'
+import { EmotionBallLoader } from '../app/EmotionBallLoader'
 
 export function PacketDetail({ onViewTcpEvents }: { onViewTcpEvents?: () => void } = {}) {
   const packet = useApp((s) => selectSelectedPacket(s))
@@ -50,7 +51,11 @@ export function PacketDetail({ onViewTcpEvents }: { onViewTcpEvents?: () => void
         )}
       </div>
       <Tree nodes={buildPacketTree(packet)} />
-      {busy && <div style={{ color: '#94a3b8' }}>加载 hex…</div>}
+      {busy && (
+        <div className="hex-loading" style={{ color: '#94a3b8' }}>
+          <EmotionBallLoader emotionId="40" tips="检索 hex…" size={40} />
+        </div>
+      )}
       {err && <div style={{ color: '#b91c1c' }}>hex 不可用</div>}
       {hex && <pre className="detail-hex">{hex}</pre>}
     </div>

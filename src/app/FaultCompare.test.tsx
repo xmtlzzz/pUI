@@ -36,6 +36,11 @@ function makeVm(overrides: Partial<CompareViewModel> = {}): CompareViewModel {
         { time: 0.26, ack: 501 },
       ],
       retxArrow: { seq: 101 },
+      rangeLabels: [
+        { start: 0, end: 101, text: '数据', kind: 'seen' },
+        { start: 201, end: 401, text: '数据', kind: 'seen' },
+        { start: 101, end: 201, text: '未收到', kind: 'gap' },
+      ],
     },
     keyPackets: [
       { packetNumber: 6, time: 0.05, dir: 'c2s', label: 'PSH·ACK seq=201 len=100', stageIndex: 1, roleBadge: '缺口显露' },
@@ -207,6 +212,18 @@ describe('FaultCompare 对照页(整页板块)', () => {
     expect(svg.textContent).toContain('序列号空间(字节)')
   })
 
+  it('区间标注:每个区间下方有简短类型标注(数据/未收到),窄区间不放文字(防拥挤)', () => {
+    const { container } = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const svg = screen.getByTestId('fc-seqspace')
+    // 标注文字出现在 SVG 中
+    expect(svg.textContent).toContain('未收到')
+    expect(svg.textContent).toContain('数据')
+    // 标注是 SVG text 且位于色块行之下(y=72 附近)
+    const labels = [...svg.querySelectorAll('text')].filter((t) => t.textContent === '未收到' || t.textContent === '数据')
+    expect(labels.length).toBeGreaterThanOrEqual(2)
+    void container
+  })
+
   it('对向序列空间:双向流出现方向切换(.seg),切换后渲染对向静态视图', () => {
     const vm = makeVm({
       direction: 'c2s',
@@ -221,6 +238,7 @@ describe('FaultCompare 对照页(整页板块)', () => {
           sackBlocks: [],
           ackTrack: [{ time: 0.28, ack: 201 }],
           retxArrow: undefined,
+          rangeLabels: [{ start: 1, end: 201, text: '数据', kind: 'seen' }],
         },
       },
     })

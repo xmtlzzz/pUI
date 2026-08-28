@@ -227,6 +227,24 @@ describe('buildCompareViewModel', () => {
     expect(JSON.stringify(buildVM(bi)!.opposite)).toBe(JSON.stringify(vmBi.opposite))
   })
 
+  it('区间标注(rangeLabels):已见标"数据",缺口标"未收到";窄区间与确定性受控(M4 用户反馈)', () => {
+    const sq = vm.seqSpace
+    // 缺口必有标注
+    for (const [gs] of sq.gaps) {
+      const l = sq.rangeLabels.find((x) => x.kind === 'gap' && x.start === gs)
+      expect(l?.text).toBe('未收到')
+    }
+    // 已见区间标注为"数据"或 SYN/FIN 占位;不超上限;位置升序
+    expect(sq.rangeLabels.length).toBeLessThanOrEqual(8)
+    for (let i = 1; i < sq.rangeLabels.length; i++) {
+      expect(sq.rangeLabels[i].start).toBeGreaterThanOrEqual(sq.rangeLabels[i - 1].start)
+    }
+    const seenLabels = sq.rangeLabels.filter((l) => l.kind === 'seen')
+    expect(seenLabels.every((l) => ['数据', 'SYN', 'FIN'].includes(l.text))).toBe(true)
+    // 确定性
+    expect(JSON.stringify(buildVM(lossChain())!.seqSpace.rangeLabels)).toBe(JSON.stringify(sq.rangeLabels))
+  })
+
   it('确定性:同一输入两次构建完全一致', () => {
     expect(JSON.stringify(buildVM(lossChain()))).toBe(JSON.stringify(buildVM(lossChain())))
   })

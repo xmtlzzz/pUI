@@ -56,6 +56,12 @@ export interface SeqSpaceView {
   /** ACK 轨迹(按时间升序):ACK 游标随播放时刻推进 */
   ackTrack: Array<{ time: number; ack: number }>
   retxArrow?: { seq: number }
+  /**
+   * 区间标注(M4 用户反馈):每个已见/SACK 区间的简短报文类型标签,如
+   * "ack"/"数据"/"req"。只标注**代表性区间**(首尾 + 最宽若干个,上限 8 个),
+   * 避免标注过密;渲染时可按宽度丢弃放不下的。
+   */
+  rangeLabels: Array<{ start: number; end: number; text: string; kind: 'seen' | 'gap' }>
 }
 
 /** 事件卡:观察/推断/限制分层(案例文档要求三层固定可见) */
@@ -454,7 +460,62 @@ function buildSeqSpaceView(
     sackBlocks,
     ackTrack,
     retxArrow: retxSeq != null ? { seq: retxSeq } : undefined,
+    rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, axisMin, axisMax),
   }
+}
+
+/** 区间标注上限:按宽度优先保留(防拥挤,用户反馈"标注不能太挤") */
+export const RANGE_LABEL_MAX = 8
+
+/**
+ * 区间标注(M4 用户反馈):给序列空间的每个区间一个简短的类型标签 ——
+ * 已见区间标"数据"(代表段有载荷)或 "SYN"/"FIN"(仅握手占位),缺口标"未收到"。
+ * 过窄(轴宽 1.5% 以下)的区间放不下文字,不标注;超过上限按宽度优先保留。
+ */
+function buildRangeLabels(
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  seenRuns: Array<[number, number]>,
+  gaps: Array<[number, number]>,
+  axisMin: number,
+  axisMax: number,
+): SeqSpaceView['rangeLabels'] {
+  const axisSpan = axisMax - axisMin
+  const labels: SeqSpaceView['rangeLabels'] = []
+  for (const [s, e] of seenRuns) {
+    labels.push({ start: s, end: e, text: seenRunLabel(facts, packets, s, e), kind: 'seen' })
+  }
+  for (const [s, e] of gaps) {
+    labels.push({ start: s, end: e, text: '未收到', kind: 'gap' })
+  }
+  return labels
+    .filter((l) => l.end - l.start >= axisSpan * 0.015)
+    .sort((a, b) => b.end - b.start - (a.end - a.start)) // 宽的优先保留
+    .slice(0, RANGE_LABEL_MAX)
+    .sort((a, b) => a.start - b.start) // 输出按位置升序
+}
+
+/** 已见区间的代表标签:覆盖区间中点的段有载荷 → "数据";仅 SYN/FIN 占位 → 对应名 */
+function seenRunLabel(
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  s: number,
+  e: number,
+): string {
+  const mid = s + Math.floor((e - s) / 2)
+  for (const seg of facts.segments) {
+    if (seg.seqLen <= 0) continue
+    const end = (seg.seq + seg.seqLen) >>> 0
+    if (seg.seq <= mid && mid < end) {
+      const p = packets.find((q) => q.number === seg.packetNumber)
+      if (p && (p.tcpLen ?? 0) > 0) return '数据'
+      const f = Number.parseInt(p?.tcpFlags ?? '', 16)
+      if (!Number.isNaN(f) && f & 0x02) return 'SYN'
+      if (!Number.isNaN(f) && f & 0x01) return 'FIN'
+      return '数据'
+    }
+  }
+  return '数据'
 }
 
 /**
@@ -536,6 +597,7 @@ export function buildOppositeSeqSpaceView(
         .slice(0, SEQ_VIEW_MAX_SACK),
       ackTrack,
       retxArrow: undefined, // 对向无事件聚焦,无重传箭头
+      rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, a0, a1),
     },
   }
 }

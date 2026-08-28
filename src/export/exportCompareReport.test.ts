@@ -26,6 +26,10 @@ function makeVm(): CompareViewModel {
       sackBlocks: [[201, 501]],
       ackTrack: [],
       retxArrow: { seq: 101 },
+      rangeLabels: [
+        { start: 0, end: 101, text: '数据', kind: 'seen' },
+        { start: 101, end: 201, text: '未收到', kind: 'gap' },
+      ],
     },
     keyPackets: [
       { packetNumber: 6, time: 0.05, dir: 'c2s', label: 'PSH·ACK seq=201 len=100', stageIndex: 1, roleBadge: '缺口显露' },

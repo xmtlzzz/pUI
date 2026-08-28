@@ -215,6 +215,36 @@ export function SeqSpaceGraphic({
           </rect>
         )
       })}
+      {/* 区间标注(M4 用户反馈):每个区间下方简短标注它是什么(数据/未收到/SYN…);
+          按像素宽度防拥挤:放不下或与上一个标注太近的跳过 */}
+      {(() => {
+        const out: React.ReactNode[] = []
+        let lastEndX = -Infinity
+        const ordered = [...sq.rangeLabels].sort((a, b) => a.start - b.start)
+        for (const l of ordered) {
+          const x0 = x(l.start)
+          const x1 = x(l.end)
+          const w = x1 - x0
+          if (w < l.text.length * 11 + 6) continue // 放不下
+          const cx = x0 + w / 2
+          const halfText = (l.text.length * 11) / 2
+          if (cx - halfText < lastEndX + 4) continue // 与上一个标注重叠
+          out.push(
+            <text
+              key={`rl-${l.start}-${l.kind}`}
+              x={cx}
+              y={72}
+              textAnchor="middle"
+              fontSize={10}
+              fill={l.kind === 'gap' ? '#b91c1c' : '#475569'}
+            >
+              {l.text}
+            </text>,
+          )
+          lastEndX = cx + halfText
+        }
+        return out
+      })()}
       {/* 重传回补箭头:自缺口末端向上画出(随播放推进),配标签淡入 */}
       {sq.retxArrow && (
         <g>
@@ -470,9 +500,6 @@ function CompareContent({
                   对向({vm.opposite.dir})
                 </button>
               </div>
-              {viewSide === 'opp' && (
-                <span className="fc-dir-note">对向为静态事实视图:无事件证据链,不做分镜动画</span>
-              )}
             </div>
           )}
 

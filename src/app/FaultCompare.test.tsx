@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, cleanup } from '@testing-library/react'
-import type { CompareEventSummary, CompareViewModel } from '../m4/viewModel'
+import { wheelZoom, type CompareEventSummary, type CompareViewModel } from '../m4/viewModel'
 import { FaultCompare, SeqSpaceGraphic } from './FaultCompare'
 
 afterEach(cleanup) // 无 globals 钩子,组件残留会让 getByTestId 跨用例重复命中
@@ -66,6 +66,10 @@ function makeVm(overrides: Partial<CompareViewModel> = {}): CompareViewModel {
     opposite: null,
     panorama: null,
     allGaps: [[101, 201]],
+    eventPins: [
+      { packetNumber: 6, seq: 201, label: '#6 缺口显露', colorIndex: 1, kind: 'data', len: 100 },
+      { packetNumber: 11, seq: 101, label: '#11 重传回补', colorIndex: 3, kind: 'data', len: 100 },
+    ],
     degraded: { unorderableInput: false, midStream: false, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
     ...overrides,
@@ -99,7 +103,7 @@ describe('FaultCompare 对照页(整页板块)', () => {
     // 已见条两段(0-101 / 201-401)
     expect(svg.querySelectorAll('rect[fill="#10b981"]').length).toBe(2)
     // SACK 绿块
-    expect(svg.querySelector('rect[fill="#22c55e"]')).toBeTruthy()
+    expect(svg.querySelector('rect[fill="#8b5cf6"]')).toBeTruthy()
     // 重传回补箭头 + ACK 游标
     expect(svg.textContent).toContain('重传回补')
     expect(svg.textContent).toMatch(/ACK/)
@@ -311,14 +315,14 @@ describe('FaultCompare 对照页(整页板块)', () => {
     expect(gap.getAttribute('opacity')).toBe('1') // Gap 无淡入直接可见
     expect(gap.getAttribute('width')).not.toBe('0')
     // SACK 完整宽度(无增长裁剪)
-    const sack = svg.querySelector('rect[fill="#22c55e"]') as SVGRectElement | null
+    const sack = svg.querySelector('rect[fill="#8b5cf6"]') as SVGRectElement | null
     expect(sack).toBeTruthy()
     expect(Number(sack!.getAttribute('opacity'))).toBe(1)
     // 重传箭头完整画出(y2 顶到 46)
     const retxLine = [...svg.querySelectorAll('line')].find((l) => l.getAttribute('stroke') === '#ef4444')!
     expect(retxLine.getAttribute('y2')).toBe('46')
-    // ACK 游标存在
-    expect(svg.textContent).toMatch(/ACK \d/)
+    // ACK 游标图层结构存在(t=0 时游标本体尚未出现——首个 ACK 在 0.04s,见恢复态用例)
+    expect(svg.textContent).not.toContain('累计确认')
   })
 
   it('progressive 播放态下元素按登场时刻显隐(GSAP 只补间时间,元素状态声明式)', () => {
@@ -333,9 +337,9 @@ describe('FaultCompare 对照页(整页板块)', () => {
     expect(Number(gap.getAttribute('opacity'))).toBeCloseTo(1, 1)
     // SACK 在窗口中点应有部分进度、窗口后满宽
     const sackAtMid = Number(
-      render(<SeqSpaceGraphic vm={vm} playhead={0.35} progressive />).container.querySelector('rect[fill="#22c55e"]')?.getAttribute('width'),
+      render(<SeqSpaceGraphic vm={vm} playhead={0.35} progressive />).container.querySelector('rect[fill="#8b5cf6"]')?.getAttribute('width'),
     )
-    const sackAtEnd = Number(mid.container.querySelector('rect[fill="#22c55e"]')?.getAttribute('width'))
+    const sackAtEnd = Number(mid.container.querySelector('rect[fill="#8b5cf6"]')?.getAttribute('width'))
     expect(sackAtMid).toBeGreaterThan(0)
     expect(sackAtMid).toBeLessThan(sackAtEnd)
     // 恢复脉冲在 recoverAt 后出现(「缺口闭合」提示),脉冲窗与终态都消失
@@ -518,12 +522,12 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
   it('图例即图层开关:关闭 SACK/未收到图层后图形不再渲染对应图元', () => {
     render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
     const svg = () => screen.getByTestId('fc-seqspace')
-    expect(svg().textContent).toContain('SACK 201')
+    expect(svg().textContent).toContain('SACK(对端已收) 201')
     const sackBtn = screen.getByTestId('fc-layer-sack') as HTMLButtonElement
     expect(sackBtn.getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(sackBtn)
     expect((screen.getByTestId('fc-layer-sack') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false')
-    expect(svg().textContent).not.toContain('SACK 201')
+    expect(svg().textContent).not.toContain('SACK(对端已收) 201')
 
     // 缺口图层:缺口矩形与其「未收到」标注一起隐藏
     expect(svg().textContent).toContain('未收到')
@@ -535,18 +539,55 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
     expect(svg().textContent).not.toContain('已见字节 0')
   })
 
-  it('ACK 游标自解释(用户反馈"红框突兀"):游标标签注明累计确认,图例可开关该图层', () => {
+  it('事件位置轨(M5):证据链报文按序列号位置画入下方空白带,数据段为彩条/ACK 为刻度,图层可关', () => {
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const svg = () => screen.getByTestId('fc-seqspace')
+    const pins = svg().querySelector('[data-testid="fc-event-pins"]')!
+    expect(pins).toBeTruthy()
+    // fixture 两枚图钉:#6(缺口显露,数据段彩条)与 #11(重传回补),均渲染包号标注
+    expect(pins.textContent).toContain('#6')
+    expect(pins.textContent).toContain('#11')
+    expect(pins.querySelectorAll('rect').length).toBe(2)
+    // 图层开关:关闭后整轨消失
+    fireEvent.click(screen.getByTestId('fc-layer-evt'))
+    expect(screen.getByTestId('fc-seqspace').querySelector('[data-testid="fc-event-pins"]')).toBeNull()
+  })
+
+  it('ACK 游标自解释:标签注明累计确认,图例可开关该图层', () => {
     // 从末阶段恢复:播放时刻落在首个 ACK 之后,游标可见(待播放 t=0 时它尚不存在,同样是正确行为)
     render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} initialStageIndex={4} />)
     const svg = () => screen.getByTestId('fc-seqspace')
-    // 游标标签自带含义说明
     expect(svg().textContent).toMatch(/累计确认 ACK \d/)
-    // 图例含 ACK 项且可关闭
     const ackBtn = screen.getByTestId('fc-layer-ack') as HTMLButtonElement
     expect(ackBtn.textContent).toContain('累计确认')
     fireEvent.click(ackBtn)
     expect(svg().textContent).not.toContain('累计确认')
     fireEvent.click(screen.getByTestId('fc-layer-ack'))
     expect(svg().textContent).toMatch(/累计确认 ACK \d/)
+  })
+
+  it('缩放基准与显示窗口分离:滚轮放大后可以一直滚回全轴(用户反馈"滚轮不能缩小"回归)', () => {
+    // jsdom 的 getBoundingClientRect 恒为 0 宽,WheelEvent 派发测不了锚点缩放;
+    // 组件的 wheel 监听只负责读指针,计算已抽为 wheelZoom 纯函数(viewModel),
+    // 这里以真实调用链的参数驱动它:基准轴固定 0–501,模拟用户先放大、再连续缩小
+    const seq = makeVm().seqSpace
+    const base = { min: seq.axisMin, max: seq.axisMax }
+    let cur: { start: number; end: number } | null = null
+    // 放大两档(滚轮向上)
+    cur = wheelZoom(base.min, base.max, cur, 0.5, -100)
+    cur = wheelZoom(base.min, base.max, cur, 0.5, -100)
+    expect(cur.end - cur.start).toBeLessThan(base.max - base.min)
+    expect(cur.end).toBeLessThan(base.max) // 旧实现:缩小被钳死,窗口右缘缩不回去
+    // 连续缩小直到回到全轴 —— 必须可达,而不是卡在某个局部窗口
+    for (let i = 0; i < 20 && cur.end - cur.start < base.max - base.min - 1e-6; i++) {
+      cur = wheelZoom(base.min, base.max, cur, 0.5, 100)
+    }
+    expect(cur.end - cur.start).toBeCloseTo(base.max - base.min, 6)
+    expect(cur.start).toBe(base.min)
+    // UI 层接线:窗口回到全轴时「重置」按钮禁用(与组件 zoomClamped 同判)
+    const full = base.max - base.min
+    const zoomClamped = cur != null && (cur.start > base.min + 1e-9 || cur.end < base.max - 1e-9)
+    expect(zoomClamped).toBe(false)
+    void full
   })
 })

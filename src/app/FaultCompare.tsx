@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { clipSeqSpaceView, popIn, windowProgress, zoomStep } from '../m4/viewModel'
+import { clipSeqSpaceView, popIn, SEQ_STAGE_COLORS, wheelZoom, windowProgress, zoomStep } from '../m4/viewModel'
 import type { CompareEventSummary, CompareViewModel, SeqSpaceView } from '../m4/viewModel'
 import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
@@ -86,14 +86,21 @@ export interface SeqLayers {
   sack: boolean
   retx: boolean
   ack: boolean
+  evt: boolean
 }
 
-const ALL_LAYERS_ON: SeqLayers = { seen: true, gap: true, sack: true, retx: true, ack: true }
+const ALL_LAYERS_ON: SeqLayers = { seen: true, gap: true, sack: true, retx: true, ack: true, evt: true }
 
 /** 缩放窗口字节范围 */
 export interface ZoomRange {
   start: number
   end: number
+}
+
+/** 缩放/平移的基准轴(=未缩放的完整视图范围);与当前显示的(已缩放)轴分离 */
+export interface BaseRange {
+  min: number
+  max: number
 }
 
 /**
@@ -117,6 +124,8 @@ export function SeqSpaceGraphic({
   layers = ALL_LAYERS_ON,
   zoomRange = null,
   onZoomRange,
+  baseRange,
+  showEventPins = true,
 }: {
   vm: CompareViewModel
   playhead: number
@@ -132,51 +141,52 @@ export function SeqSpaceGraphic({
   zoomRange?: ZoomRange | null
   /** 滚轮/拖拽改变缩放窗口的回调;不传则不响应交互 */
   onZoomRange?: (next: ZoomRange | null) => void
+  /**
+   * 缩放/平移的基准轴(未缩放的完整范围)。必须与 sq(可能已缩放)分离:
+   * 若以已缩放轴为基准,放大后想缩小时边界钳死在当前窗口内,永远缩不回去
+   */
+  baseRange?: BaseRange
+  /** 是否渲染事件位置轨(对向静态视图无本事件证据链,传 false) */
+  showEventPins?: boolean
 }) {
   const sq = seqSpaceOverride ?? vm.seqSpace
+  const base = baseRange ?? { min: sq.axisMin, max: sq.axisMax }
   const marks = vm.marks
   const W = 720
   const H = 150
   const x = (v: number): number => ((v - sq.axisMin) / (sq.axisMax - sq.axisMin)) * (W - 16) + 8
 
-  // 滚轮缩放(以指针位置为锚):React 的 onWheel 是 passive,必须原生监听才能 preventDefault
+  // 滚轮缩放(以指针位置为锚):React 的 onWheel 是 passive,必须原生监听才能 preventDefault。
+  // 锚点/钳制一律以 base(未缩放的基准轴)为准 —— sq 只是当前显示(可能已缩放)的窗口
   const svgRef = useRef<SVGSVGElement | null>(null)
-  const dragRef = useRef<{ pointerId: number; x: number; width: number; start: number; end: number } | null>(null)
+  const dragRef = useRef<{ pointerId: number; x: number; width: number } | null>(null)
   useEffect(() => {
     const svg = svgRef.current
     if (!svg || !onZoomRange) return
     const onWheel = (ev: WheelEvent): void => {
       ev.preventDefault()
       const rect = svg.getBoundingClientRect()
-      const frac = rect.width > 0 ? Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)) : 0.5
-      const cur = zoomRange ?? { start: sq.axisMin, end: sq.axisMax }
-      const anchor = cur.start + frac * (cur.end - cur.start)
-      const next = zoomStep({ axisMin: sq.axisMin, axisMax: sq.axisMax }, cur, ev.deltaY < 0 ? 1.25 : 1 / 1.25)
-      const ns = next.end - next.start
-      const span = cur.end - cur.start
-      const anchorFrac = span > 0 ? (anchor - cur.start) / span : 0.5
-      let s0 = anchor - anchorFrac * ns
-      s0 = Math.min(Math.max(s0, sq.axisMin), sq.axisMax - ns)
-      onZoomRange({ start: s0, end: s0 + ns })
+      const frac = rect.width > 0 ? (ev.clientX - rect.left) / rect.width : 0.5
+      onZoomRange(wheelZoom(base.min, base.max, zoomRange, frac, ev.deltaY))
     }
     svg.addEventListener('wheel', onWheel, { passive: false })
     return () => svg.removeEventListener('wheel', onWheel)
-  }, [onZoomRange, zoomRange, sq.axisMin, sq.axisMax])
+  }, [onZoomRange, zoomRange, base.min, base.max])
 
-  // 拖拽平移:按屏幕像素位移换算字节位移,窗口钳制在轴内
+  // 拖拽平移:按屏幕像素位移换算字节位移,窗口钳制在基准轴内
   const panBy = useCallback(
     (dxPx: number, widthPx: number): void => {
       if (!onZoomRange || widthPx <= 0) return
-      const cur = zoomRange ?? { start: sq.axisMin, end: sq.axisMax }
+      const cur = zoomRange ?? { start: base.min, end: base.max }
       const span = cur.end - cur.start
       const dBytes = -(dxPx / widthPx) * span
-      const full = sq.axisMax - sq.axisMin
+      const full = base.max - base.min
       if (span >= full) return // 未缩放时无可平移范围
       let s0 = cur.start + dBytes
-      s0 = Math.min(Math.max(s0, sq.axisMin), sq.axisMax - span)
+      s0 = Math.min(Math.max(s0, base.min), base.max - span)
       onZoomRange({ start: s0, end: s0 + span })
     },
-    [onZoomRange, zoomRange, sq.axisMin, sq.axisMax],
+    [onZoomRange, zoomRange, base.min, base.max],
   )
 
 // 时间轴映射:等分坐标 playhead -> 真实秒(命中所属阶段区间,阶段内按比例反解),
@@ -226,8 +236,7 @@ export function SeqSpaceGraphic({
       ref={svgRef}
       onPointerDown={(e) => {
         if (!onZoomRange) return
-        const rect = svgRef.current?.getBoundingClientRect()
-        dragRef.current = { pointerId: e.pointerId, x: e.clientX, width: rect?.width ?? 0, start: zoomRange?.start ?? sq.axisMin, end: zoomRange?.end ?? sq.axisMax }
+        dragRef.current = { pointerId: e.pointerId, x: e.clientX, width: svgRef.current?.getBoundingClientRect().width ?? 0 }
         e.currentTarget.setPointerCapture?.(e.pointerId)
       }}
       onPointerMove={(e) => {
@@ -283,7 +292,8 @@ export function SeqSpaceGraphic({
           </rect>
         )
       })}
-      {/* SACK 块:在 Dup ACK 窗口内按块序逐块向右长出;无窗口标记时保守完整显示 */}
+      {/* SACK 块(紫色,与已见字节区分):对端报告已收到、但本抓包点未必见过的字节。
+          在 Dup ACK 窗口内按块序逐块向右长出;无窗口标记时保守完整显示 */}
       {layers.sack &&
         sq.sackBlocks.map(([s, e], i) => {
         const target = Math.max(x(e) - x(s), 2)
@@ -301,14 +311,20 @@ export function SeqSpaceGraphic({
             y={48}
             width={Math.max(target * wFrac, wFrac > 0 ? 1 : 0)}
             height={10}
-            fill="#22c55e"
+            fill="#8b5cf6"
             opacity={op}
             rx={2}
           >
-            <title>{`SACK ${Math.round(s)}–${Math.round(e)}`}</title>
+            <title>{`SACK(对端已收) ${Math.round(s)}–${Math.round(e)}`}</title>
           </rect>
         )
       })}
+      {/* 行内说明(M5 用户反馈):第二行色块的含义直接写在图上,不再靠猜 */}
+      {layers.sack && sq.sackBlocks.length > 0 && (
+        <text x={W - 8} y={56} textAnchor="end" fontSize={9} fill="#7c3aed">
+          对端已收(SACK)
+        </text>
+      )}
       {/* 区间标注(M4 用户反馈):每个区间下方简短标注它是什么(数据/未收到/SYN…);
           按像素宽度防拥挤:放不下或与上一个标注太近的跳过 */}
       {(() => {
@@ -393,6 +409,37 @@ export function SeqSpaceGraphic({
           </g>
         )
       })()}
+      {/* 事件位置轨(M5 用户反馈):把证据链报文按序列号位置排布在下方空白带,
+          让"这个位置发生了什么"直接可读 —— 数据段=彩色短条,纯 ACK=三角刻度。
+          颜色与阶段带一致;点击图例可整体开关。showEventPins=false(对向静态视图)
+          不渲染 —— 对向没有本事件的证据链 */}
+      {layers.evt && showEventPins && vm.eventPins.length > 0 && (
+        <g data-testid="fc-event-pins">
+          <line x1={8} y1={116} x2={W - 8} y2={116} stroke="#eef2f7" />
+          {vm.eventPins.map((pin, i) => {
+            const px = x(pin.seq)
+            if (px < 2 || px > W - 2) return null // 缩放窗口外
+            const color = SEQ_STAGE_COLORS[((pin.colorIndex % SEQ_STAGE_COLORS.length) + SEQ_STAGE_COLORS.length) % SEQ_STAGE_COLORS.length]
+            const w = Math.max((pin.len > 0 ? x(Math.min(pin.seq + pin.len, sq.axisMax)) - px : 0), 3)
+            return (
+              <g key={`pin${i}`}>
+                {pin.kind === 'data' ? (
+                  <rect x={px} y={106} width={w} height={7} fill={color} rx={1.5}>
+                    <title>{`${pin.label} seq=${pin.seq}${pin.len ? ` len=${pin.len}` : ''}`}</title>
+                  </rect>
+                ) : (
+                  <path d={`M${px - 4},112 L${px + 4},112 L${px},105 z`} fill={color}>
+                    <title>{pin.label}</title>
+                  </path>
+                )}
+                <text x={px} y={124} textAnchor="middle" fontSize={8.5} fill={color}>
+                  {`#${pin.packetNumber}`}
+                </text>
+              </g>
+            )
+          })}
+        </g>
+      )}
       {/* 轴说明:这是字节序列号空间,不是时间轴(用户反馈易误读为进度条) */}
       <text x={8} y={16} fontSize={10} fill="#94a3b8">
         序列号空间(字节) · {caption}
@@ -724,7 +771,7 @@ function CompareContent({
               onClick={() => setLayers((l) => ({ ...l, sack: !l.sack }))}
             >
               <i className="lg lg-sack" />
-              SACK(对端已收)
+              SACK(对端报告已收)
             </button>
             {(viewSide === 'event' || !vm.opposite) && vm.seqSpace.retxArrow && (
               <button
@@ -750,10 +797,22 @@ function CompareContent({
               <i className="lg lg-ack" />
               累计确认(ACK)
             </button>
+            <button
+              type="button"
+              className={`lg-item${layers.evt ? ' on' : ''}`}
+              aria-pressed={layers.evt}
+              data-testid="fc-layer-evt"
+              title="点击显示/隐藏下方的事件位置标注(证据链报文按序列号位置排布)"
+              onClick={() => setLayers((l) => ({ ...l, evt: !l.evt }))}
+            >
+              <i className="lg lg-evt" />
+              事件位置
+            </button>
           </div>
 
           {/* 序列空间图形化:核心可视化(事件方向=分镜动画;对向=静态事实;静态模式信息等价)。
-              shownView = 基准视图(缺口邻域/全景/对向)+ 缩放裁剪 */}
+              shownView = 基准视图(缺口邻域/全景/对向)+ 缩放裁剪;baseRange 始终是未缩放基准,
+              滚轮/拖拽以它为界 —— 否则放大后缩小被钳死在当前窗口内 */}
           {viewSide === 'event' || !vm.opposite ? (
             <SeqSpaceGraphic
               vm={vm}
@@ -762,6 +821,7 @@ function CompareContent({
               layers={layers}
               zoomRange={zoom}
               onZoomRange={setZoom}
+              baseRange={{ min: baseView.axisMin, max: baseView.axisMax }}
               playhead={pb.time}
               progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
             />
@@ -774,8 +834,10 @@ function CompareContent({
               layers={layers}
               zoomRange={zoom}
               onZoomRange={setZoom}
+              baseRange={{ min: baseView.axisMin, max: baseView.axisMax }}
               playhead={0}
               progressive={false}
+              showEventPins={false}
             />
           )}
 

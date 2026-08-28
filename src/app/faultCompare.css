@@ -543,7 +543,7 @@
 }
 
 .lg-sack {
-  background: #22c55e;
+  background: #8b5cf6;
   opacity: 0.75;
 }
 
@@ -555,6 +555,10 @@
 
 .lg-ack {
   background: #1d4ed8;
+}
+
+.lg-evt {
+  background: linear-gradient(90deg, #3b82f6 0 40%, #f59e0b 40% 70%, #10b981 70%);
 }
 
 /* 序列空间方向切换(事件方向/对向)+ 视图范围/缩放(M5 完整 SSV) */

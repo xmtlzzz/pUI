@@ -357,6 +357,33 @@ describe('buildCompareViewModel', () => {
     expect(JSON.stringify(buildVM(lossChain())!.panorama)).toBe(JSON.stringify(p))
   })
 
+  it('事件位置轨(M5):证据链报文按序列号位置排布,颜色下标与阶段带一致,位置去重且升序', () => {
+    const pins = vm.eventPins
+    // lossChain 证据链:缺口显露 #6(seq=201)、重传回补 #11(seq=101)、重复确认 #7-#10(ack=101)、恢复 #12(ack=501)
+    expect(pins.length).toBeGreaterThan(0)
+    // 按 seq 升序
+    for (let i = 1; i < pins.length; i++) {
+      expect(pins[i].seq).toBeGreaterThanOrEqual(pins[i - 1].seq)
+    }
+    // 缺口显露与重传回补是数据段,带长度;重复确认/恢复是 ACK 刻度
+    const reveal = pins.find((p) => p.packetNumber === 6)!
+    expect(reveal.kind).toBe('data')
+    expect(reveal.len).toBe(100)
+    const retx = pins.find((p) => p.packetNumber === 11)!
+    expect(retx.seq).toBe(101)
+    expect(retx.label).toContain('重传回补')
+    const dup = pins.find((p) => p.packetNumber === 7)!
+    expect(dup.kind).toBe('ack')
+    expect(dup.seq).toBe(101)
+    // 同位置同类型去重:4 个重复确认 ACK 都在 101 → 只保留 1 个 ack 刻度
+    const acks101 = pins.filter((p) => p.kind === 'ack' && p.seq === 101)
+    expect(acks101).toHaveLength(1)
+    // 颜色下标落在阶段范围:缺口显露 #6 属于阶段 2(下标 1)
+    expect(reveal.colorIndex).toBe(1)
+    // 确定性
+    expect(JSON.stringify(buildVM(lossChain())!.eventPins)).toBe(JSON.stringify(pins))
+  })
+
   it('clipSeqSpaceView:子轴裁剪图元、过滤 ACK 轨迹、刻度按新轴重算(确定性纯函数)', () => {
     const p = vm.panorama!
     const z = clipSeqSpaceView(p, 80, 260)

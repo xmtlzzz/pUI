@@ -49,6 +49,7 @@ function makeVm(): CompareViewModel {
     panorama: null,
     // 全量缺口(未按图形视窗裁剪)—— 证据报告按它列全,不缺报
     allGaps: [[101, 201]],
+    eventPins: [],
     degraded: { unorderableInput: false, midStream: true, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
   }

@@ -109,6 +109,11 @@ export interface CompareViewModel {
    * 证据导出必须列全,否则会少报缺失(有测试钉住)。
    */
   allGaps: Array<[number, number]>
+  /**
+   * 事件位置轨(M5 用户反馈):证据链关键报文按序列号位置的图钉,
+   * 渲染在序列空间图形下方的空白带;颜色下标与阶段带一致。
+   */
+  eventPins: SeqEventPin[]
   degraded: {
     unorderableInput: boolean
     midStream: boolean
@@ -173,6 +178,103 @@ export function windowProgress(t: number, start: number, end: number): number {
   const d = end - start
   if (d <= 1e-9) return t >= end ? 1 : 0
   return Math.min(1, Math.max(0, (t - start) / d))
+}
+
+/**
+ * 事件位置轨(M5 用户反馈):把事件证据链上的关键报文按其序列号位置排布,
+ * 供序列空间图形下方的空白带渲染 —— 让"图形中的每个位置发生了什么"一眼可读。
+ * 纯数据,由 roleBadgeOf 同源的确定性证据字段推导;带 STAGE_COLORS 的下标,
+ * 与阶段带颜色一致(播放/点选阶段时高亮联动)。
+ */
+export interface SeqEventPin {
+  /** 报文号(展示用) */
+  packetNumber: number
+  /** 序列号位置(数据段=段起点;纯 ACK=确认到的字节位置) */
+  seq: number
+  /** 展示标签,如「#7624 缺口显露」/「#7663 重复确认」 */
+  label: string
+  /** 阶段带颜色下标(与 bandStages 一致;无所属阶段为 -1) */
+  colorIndex: number
+  /** 数据段(画短条)还是纯 ACK(画刻度) */
+  kind: 'data' | 'ack'
+  /** 数据段长度(渲染短条宽度用;ack 为 0) */
+  len: number
+}
+
+/** 阶段颜色表(与 FaultCompare 组件的 STAGE_COLORS 一致;纯数据层不 import 组件) */
+export const SEQ_STAGE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981', '#ec4899', '#14b8a6', '#f97316']
+
+/** 位置轨护栏:极端证据链不拖垮 DOM */
+export const SEQ_EVENT_PINS_MAX = 24
+
+/**
+ * 从事件的证据链推导位置轨图钉。确定性纯函数;
+ * 调用方传入阶段列表(用于颜色下标)与报文表(用于查 seq/time)。
+ * 仅含事件方向的报文;按 seq 升序输出(渲染从左到右)。
+ */
+export function buildSeqEventPins(
+  event: TcpEvent,
+  stages: EventStage[],
+  packets: Packet[],
+): SeqEventPin[] {
+  const timeOf = (n: number): number | undefined => packets.find((p) => p.number === n)?.time
+  // 报文号 -> 阶段下标(与 buildCompareViewModel.keyPackets 的 stageIdx 同法)
+  const stageIndexOf = (n: number): number => {
+    const t = timeOf(n)
+    if (t == null) return -1
+    const i = stages.findIndex((s) => t >= s.startTime && t <= s.endTime)
+    return i
+  }
+
+  type Raw = { packetNumber: number; seq: number; label: string; kind: 'data' | 'ack'; len: number }
+  const raw: Raw[] = []
+
+  if (event.originalSegmentPacket != null) {
+    const p = packets.find((q) => q.number === event.originalSegmentPacket)
+    if (p?.tcpSeq != null) {
+      raw.push({ packetNumber: p.number, seq: p.tcpSeq, label: `#${p.number} 缺口显露`, kind: 'data', len: p.tcpLen ?? 0 })
+    }
+  }
+  if (event.retransmissionPacket != null) {
+    const p = packets.find((q) => q.number === event.retransmissionPacket)
+    if (p?.tcpSeq != null) {
+      const role = event.kind === 'reordering' ? '迟到补齐' : event.gap ? '重传回补' : '冗余重传'
+      raw.push({ packetNumber: p.number, seq: p.tcpSeq, label: `#${p.number} ${role}`, kind: 'data', len: p.tcpLen ?? 0 })
+    }
+  }
+  for (const n of event.duplicateAckPackets) {
+    const p = packets.find((q) => q.number === n)
+    if (p?.tcpAck != null) {
+      raw.push({ packetNumber: p.number, seq: p.tcpAck, label: `#${p.number} 重复确认`, kind: 'ack', len: 0 })
+    }
+  }
+  if (event.recoveryAckPacket != null) {
+    const p = packets.find((q) => q.number === event.recoveryAckPacket)
+    if (p?.tcpAck != null) {
+      const role = event.kind === 'possible-ack-loss-or-spurious' ? '回应确认' : '恢复确认'
+      raw.push({ packetNumber: p.number, seq: p.tcpAck, label: `#${p.number} ${role}`, kind: 'ack', len: 0 })
+    }
+  }
+
+  // 按字节位置去重(同一位置多条时保留先出现的:证据链顺序即重要度),再按位置排序
+  const seen = new Set<string>()
+  const deduped = raw.filter((r) => {
+    const k = `${r.kind}:${r.seq}`
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
+  return deduped
+    .sort((a, b) => a.seq - b.seq || a.packetNumber - b.packetNumber)
+    .slice(0, SEQ_EVENT_PINS_MAX)
+    .map((r) => ({
+      packetNumber: r.packetNumber,
+      seq: r.seq,
+      label: r.label,
+      kind: r.kind,
+      len: r.len,
+      colorIndex: stageIndexOf(r.packetNumber),
+    }))
 }
 
 /**
@@ -411,6 +513,7 @@ export function buildCompareViewModel(
     direction: event.direction,
     opposite,
     panorama,
+    eventPins: buildSeqEventPins(event, bandStages, packets),
     allGaps: facts.gaps
       .filter((g) => g.direction === event.direction)
       .map((g) => [g.start, g.end] as [number, number]),
@@ -442,6 +545,29 @@ export function zoomStep(
   const center = (c.start + c.end) / 2
   const s0 = Math.min(Math.max(center - span / 2, bMin), bMax - span)
   return { start: s0, end: s0 + span }
+}
+
+/**
+ * 指针锚点缩放(M5 完整 SSV):滚轮缩放的完整计算 —— 缩放后保持指针下的
+ * 字节位置不动,窗口钳制在基准轴 [baseMin, baseMax] 内。纯函数;
+ * SeqSpaceGraphic 的 wheel 监听只负责读指针,计算全部在这里(可单测)。
+ */
+export function wheelZoom(
+  baseMin: number,
+  baseMax: number,
+  cur: { start: number; end: number } | null,
+  anchorFrac: number,
+  deltaY: number,
+): { start: number; end: number } {
+  const c = cur ?? { start: baseMin, end: baseMax }
+  const span = c.end - c.start
+  const anchor = c.start + Math.min(1, Math.max(0, anchorFrac)) * span
+  const next = zoomStep({ axisMin: baseMin, axisMax: baseMax }, c, deltaY < 0 ? 1.25 : 1 / 1.25)
+  const ns = next.end - next.start
+  const f = span > 0 ? (anchor - c.start) / span : 0.5
+  let s0 = anchor - f * ns
+  s0 = Math.min(Math.max(s0, baseMin), baseMax - ns)
+  return { start: s0, end: s0 + ns }
 }
 
 /** SACK 块合并:重叠/相邻合并,控制渲染块数 */

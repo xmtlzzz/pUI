@@ -485,7 +485,7 @@
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.35);
 }
 
-/* 序列空间图例:图形中各颜色/纹理对应什么报文状态 */
+/* 序列空间图例 = 图层开关(M5 完整 SSV):点击切换显隐,aria-pressed 表达状态 */
 .fc-seq-legend {
   display: flex;
   flex-wrap: wrap;
@@ -494,6 +494,34 @@
   color: #475569;
   margin: 2px 0 4px;
   align-items: center;
+}
+
+.fc-seq-legend .lg-item {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fc-seq-legend .lg-item:hover {
+  border-color: #e2e8f0;
+}
+
+/* 关闭的图层:图例条目压灰,色块随之淡化 */
+.fc-seq-legend .lg-item:not(.on) {
+  color: #b6c2d2;
+  text-decoration: line-through;
+  text-decoration-color: #cbd5e1;
+}
+
+.fc-seq-legend .lg-item:not(.on) .lg {
+  opacity: 0.35;
+  filter: grayscale(1);
 }
 
 .fc-seq-legend .lg {
@@ -525,13 +553,30 @@
   height: 0;
 }
 
-/* 序列空间方向切换(事件方向/对向) */
+/* 序列空间方向切换(事件方向/对向)+ 视图范围/缩放(M5 完整 SSV) */
 .fc-dir-row {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 2px 0 4px;
   flex-wrap: wrap;
+}
+
+.fc-zoom-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* 可缩放的序列空间图形:拖拽平移手势 */
+.fc-seqsvg-zoomable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.fc-seqsvg-zoomable:active {
+  cursor: grabbing;
 }
 
 .fc-dir-note {

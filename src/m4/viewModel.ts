@@ -99,6 +99,12 @@ export interface CompareViewModel {
   /** 对向序列空间:双向流中事件方向之外那一侧的字节空间;对向无数据时为 null */
   opposite: { dir: StreamDirection; view: SeqSpaceView } | null
   /**
+   * 全景视图(M5 完整 SSV):事件方向**全部**字节范围的序列空间(轴=数据最小 seq 到
+   * 最大 seq+len,缺口并入)。与 seqSpace 同一构建机制,仅轴范围不同;
+   * 回绕流(展开跨度异常)不提供全景,为 null。
+   */
+  panorama: SeqSpaceView | null
+  /**
    * 事件方向的全部缺口(未按图形视窗裁剪)。seqSpace.gaps 只画视窗内的缺口,
    * 证据导出必须列全,否则会少报缺失(有测试钉住)。
    */
@@ -345,6 +351,8 @@ export function buildCompareViewModel(
   // ---- 序列空间图形化(案例文档核心承诺):已见字节条 + Gap hatch + SACK 块 + ACK 轨迹 ----
   const retxPkt = event.retransmissionPacket != null ? packets.find((p) => p.number === event.retransmissionPacket) : undefined
   const seqSpace = buildSeqSpaceView(facts, packets, event, retxPkt?.tcpSeq)
+  // 全景视图(M5 完整 SSV):事件方向全部字节范围;回绕流为 null(UI 隐藏入口)
+  const panorama = buildPanoramaView(facts, packets, event, retxPkt?.tcpSeq)
   // 对向视图(双向流):事件方向之外那一侧的静态字节空间
   const opposite = buildOppositeSeqSpaceView(facts, packets, event)
 
@@ -402,6 +410,7 @@ export function buildCompareViewModel(
     marks,
     direction: event.direction,
     opposite,
+    panorama,
     allGaps: facts.gaps
       .filter((g) => g.direction === event.direction)
       .map((g) => [g.start, g.end] as [number, number]),
@@ -413,6 +422,26 @@ export function buildCompareViewModel(
     },
     headline: `${kindLabelFor(event)} · ${gapPart} · ${severityZh(event.severity)}`,
   }
+}
+
+/**
+ * 缩放步进(M5 完整 SSV):以当前窗口(缺省=基准全轴)中心按 factor 缩放,
+ * 钳制在基准轴内并保住最小跨度。factor>1 放大,<1 缩小。纯函数。
+ */
+export function zoomStep(
+  base: { axisMin: number; axisMax: number },
+  cur: { start: number; end: number } | null,
+  factor: number,
+): { start: number; end: number } {
+  const bMin = base.axisMin
+  const bMax = base.axisMax
+  const full = bMax - bMin
+  const c = cur ?? { start: bMin, end: bMax }
+  const minSpan = Math.max(8, full / 1000)
+  const span = Math.min(Math.max((c.end - c.start) / factor, minSpan), full)
+  const center = (c.start + c.end) / 2
+  const s0 = Math.min(Math.max(center - span / 2, bMin), bMax - span)
+  return { start: s0, end: s0 + span }
 }
 
 /** SACK 块合并:重叠/相邻合并,控制渲染块数 */
@@ -448,13 +477,6 @@ function buildSeqSpaceView(
   event: TcpEvent,
   retxSeq: number | undefined,
 ): SeqSpaceView {
-  // 轴以事件方向的 ISN 空间为中心,因此**只画该方向**的数据:已见条/缺口按
-  // direction 过滤,SACK/ACK 游标只认 ackDir(对向数据的确认由对向报文携带)。
-  // 不过滤会把两个 ISN 空间混进同一坐标轴(对向视图已落实同一条原则)。
-  const dirMap = new Map<number, StreamDirection>()
-  for (const sg of facts.segments) dirMap.set(sg.packetNumber, sg.direction)
-  const ackDir: StreamDirection = event.direction === 'c2s' ? 's2c' : 'c2s'
-
   // 轴范围:以缺口为中心,前后各留缺口宽度的 3 倍(最小 100B)——缺口约占轴的 1/6,
   // 既醒目又能把邻域已见数据与 SACK 块(缺口后已到达的数据)一起画进来;
   // 伪重传场景无缺口,以重传 seq 为中心取固定窗口
@@ -470,8 +492,53 @@ function buildSeqSpaceView(
     a1 = a0 + 100
     pad = 300
   }
-  const axisMin = Math.max(0, a0 - pad)
-  const axisMax = a1 + pad
+  return buildSeqSpaceAxisView(facts, packets, event, Math.max(0, a0 - pad), a1 + pad, retxSeq)
+}
+
+/**
+ * 全景视图(M5 完整 SSV):事件方向全部字节范围。轴=数据最小 seq 到最大 seq+len
+ * (缺口并入);回绕流的原始 seq 展开跨度在全景轴上无意义,返回 null。
+ */
+export function buildPanoramaView(
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  event: TcpEvent,
+  retxSeq: number | undefined,
+): SeqSpaceView | null {
+  let a0 = Infinity
+  let a1 = -Infinity
+  for (const seg of facts.segments) {
+    if (seg.direction !== event.direction || seg.seqLen <= 0) continue
+    a0 = Math.min(a0, seg.seq)
+    a1 = Math.max(a1, (seg.seq + seg.seqLen) >>> 0)
+  }
+  for (const g of facts.gaps) {
+    if (g.direction !== event.direction) continue
+    a0 = Math.min(a0, g.start)
+    a1 = Math.max(a1, g.end)
+  }
+  if (!Number.isFinite(a0) || !Number.isFinite(a1) || a1 <= a0) return null
+  // 回绕守卫:32 位序号空间下,混入"未展开的外来 ISN"会让跨度爆炸,
+  // 此时全景轴没有意义(缺口邻域视图不受影响)
+  if (a1 - a0 > 0x7fffffff) return null
+  return buildSeqSpaceAxisView(facts, packets, event, a0, a1, retxSeq)
+}
+
+/** 序列空间轴构建核心:给定轴范围,方向过滤+裁剪地填充全部图元(gap 邻域与全景共用) */
+function buildSeqSpaceAxisView(
+  facts: StreamAnalysisFacts,
+  packets: Packet[],
+  event: TcpEvent,
+  axisMin: number,
+  axisMax: number,
+  retxSeq: number | undefined,
+): SeqSpaceView {
+  // 轴以事件方向的 ISN 空间为中心,因此**只画该方向**的数据:已见条/缺口按
+  // direction 过滤,SACK/ACK 游标只认 ackDir(对向数据的确认由对向报文携带)。
+  // 不过滤会把两个 ISN 空间混进同一坐标轴(对向视图已落实同一条原则)。
+  const dirMap = new Map<number, StreamDirection>()
+  for (const sg of facts.segments) dirMap.set(sg.packetNumber, sg.direction)
+  const ackDir: StreamDirection = event.direction === 'c2s' ? 's2c' : 'c2s'
 
   const clip = ([s, e]: [number, number]): [number, number] | null =>
     e <= axisMin || s >= axisMax ? null : [Math.max(s, axisMin), Math.min(e, axisMax)]
@@ -521,6 +588,34 @@ function buildSeqSpaceView(
     ackTrack,
     retxArrow: retxSeq != null ? { seq: retxSeq } : undefined,
     rangeLabels: buildRangeLabels(facts, packets, seenRuns, gaps, axisMin, axisMax, event.direction),
+  }
+}
+
+/**
+ * 缩放裁剪(M5 完整 SSV):把任意序列空间视图裁剪到 [start,end] 子轴。
+ * 纯函数、确定性;图元越界部分截断、完全越界丢弃,ACK 轨迹按值过滤,
+ * 刻度按新轴重算。start/end 会被钳制回原轴范围。
+ */
+export function clipSeqSpaceView(sq: SeqSpaceView, start: number, end: number): SeqSpaceView {
+  const s0 = Math.max(sq.axisMin, Math.min(start, end))
+  const e0 = Math.min(sq.axisMax, Math.max(start, end))
+  if (e0 <= s0) return sq
+  const clip = ([s, e]: [number, number]): [number, number] | null =>
+    e <= s0 || s >= e0 ? null : [Math.max(s, s0), Math.min(e, e0)]
+  const clamp1 = (v: number): number => Math.min(e0, Math.max(s0, v))
+  return {
+    axisMin: s0,
+    axisMax: e0,
+    ticks: ticksFor(s0, e0),
+    seenRuns: sq.seenRuns.map(clip).filter((r): r is [number, number] => r != null),
+    gaps: sq.gaps.map(clip).filter((r): r is [number, number] => r != null),
+    sackBlocks: sq.sackBlocks.map(clip).filter((r): r is [number, number] => r != null),
+    ackTrack: sq.ackTrack.filter((a) => a.ack >= s0 && a.ack <= e0),
+    retxArrow: sq.retxArrow,
+    rangeLabels: (sq.rangeLabels ?? [])
+      .map((l) => ({ ...l, start: clamp1(l.start), end: clamp1(l.end) }))
+      .filter((l) => l.end > l.start)
+      .sort((a, b) => a.start - b.start),
   }
 }
 

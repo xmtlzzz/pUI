@@ -64,6 +64,7 @@ function makeVm(overrides: Partial<CompareViewModel> = {}): CompareViewModel {
     marks: { gapRevealAt: 0.12, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.55, recoverAt: 0.9 },
     direction: 'c2s',
     opposite: null,
+    panorama: null,
     allGaps: [[101, 201]],
     degraded: { unorderableInput: false, midStream: false, lengthUnavailable: false, noEvents: false },
     headline: '疑似丢包 / 延迟到达 · 缺口 101–201(100B) · medium',
@@ -449,5 +450,88 @@ describe('FaultCompare 多事件切换器(VDI 实测:单会话大量缺口事件
     view.rerender(<FaultCompare {...props} eventKey={summaries[2].id} />)
     expect(screen.getByTestId('fc-stage-panel').textContent).toContain('阶段 1/5')
     expect(view.container.querySelector('.fc-timeband-seg.active')).toBeTruthy() // 首阶段高亮
+  })
+})
+
+describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
+  /** 全景轴 = 事件方向全部字节 [0,401];与缺口邻域轴 [0,501] 的刻度可区分(无 500) */
+  const panoView = {
+    axisMin: 0,
+    axisMax: 401,
+    ticks: [100, 200, 300, 400],
+    seenRuns: [[0, 401]] as Array<[number, number]>,
+    gaps: [[101, 201]] as Array<[number, number]>,
+    sackBlocks: [[201, 401]] as Array<[number, number]>,
+    ackTrack: [
+      { time: 0.04, ack: 101 },
+      { time: 0.26, ack: 401 },
+    ],
+    retxArrow: { seq: 101 },
+    rangeLabels: [{ start: 101, end: 201, text: '未收到', kind: 'gap' as const }],
+  }
+
+  it('视图范围切换:缺口邻域 ↔ 全景,轴说明与刻度随模式切换;切范围即复位缩放', () => {
+    const view = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const svg = () => screen.getByTestId('fc-seqspace')
+    // 缺省=缺口邻域;无全景时模式切换不渲染
+    expect(svg().textContent).toContain('聚焦缺口邻域')
+    expect(svg().textContent).toContain('500') // 邻域轴 0–501 的刻度
+    expect(view.container.querySelector('[data-testid="fc-mode-toggle"]')).toBeNull()
+    view.unmount()
+
+    // 有全景:模式切换出现,切到全景
+    const vmPano = makeVm({ panorama: panoView })
+    const view2 = render(<FaultCompare vm={vmPano} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(view2.container.querySelector('[data-testid="fc-mode-toggle"]')).toBeTruthy()
+    fireEvent.click(screen.getByTestId('fc-mode-toggle').querySelectorAll('button')[1])
+    expect(svg().textContent).toContain('全景(该方向全部字节)')
+    expect(svg().textContent).not.toContain('500') // 全景轴只到 401
+    // 全景下放大 → 刻度重算(400 消失,出现细刻度),重置可用
+    fireEvent.click(screen.getByTestId('fc-zoom-in'))
+    expect(svg().textContent).not.toContain('400')
+    const reset = screen.getByTestId('fc-zoom-reset') as HTMLButtonElement
+    expect(reset.disabled).toBe(false)
+    fireEvent.click(reset)
+    expect(svg().textContent).toContain('400')
+    expect((screen.getByTestId('fc-zoom-reset') as HTMLButtonElement).disabled).toBe(true)
+    // 切回缺口邻域:缩放已复位,邻域刻度回来
+    fireEvent.click(screen.getByTestId('fc-mode-toggle').querySelectorAll('button')[0])
+    expect(svg().textContent).toContain('500')
+  })
+
+  it('缩放控件:放大改变刻度窗口,重置恢复;未缩放时重置禁用', () => {
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const svg = () => screen.getByTestId('fc-seqspace')
+    expect(svg().textContent).toContain('500')
+    expect((screen.getByTestId('fc-zoom-reset') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByTestId('fc-zoom-in'))
+    // 邻域轴 0–501 放大 1.6 倍 → 500 不再在窗口内
+    expect(svg().textContent).not.toContain('500')
+    fireEvent.click(screen.getByTestId('fc-zoom-reset'))
+    expect(svg().textContent).toContain('500')
+    // 缩小回全轴后 500 回到窗口内
+    fireEvent.click(screen.getByTestId('fc-zoom-in'))
+    fireEvent.click(screen.getByTestId('fc-zoom-out'))
+    expect(svg().textContent).toContain('500')
+  })
+
+  it('图例即图层开关:关闭 SACK/未收到图层后图形不再渲染对应图元', () => {
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    const svg = () => screen.getByTestId('fc-seqspace')
+    expect(svg().textContent).toContain('SACK 201')
+    const sackBtn = screen.getByTestId('fc-layer-sack') as HTMLButtonElement
+    expect(sackBtn.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(sackBtn)
+    expect((screen.getByTestId('fc-layer-sack') as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false')
+    expect(svg().textContent).not.toContain('SACK 201')
+
+    // 缺口图层:缺口矩形与其「未收到」标注一起隐藏
+    expect(svg().textContent).toContain('未收到')
+    fireEvent.click(screen.getByTestId('fc-layer-gap'))
+    expect(svg().textContent).not.toContain('未收到')
+    // 已见字节图层
+    expect(svg().textContent).toContain('已见字节 0')
+    fireEvent.click(screen.getByTestId('fc-layer-seen'))
+    expect(svg().textContent).not.toContain('已见字节 0')
   })
 })

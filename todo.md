@@ -1,6 +1,6 @@
 # pUI 项目状态 TODO
 
-> 更新:2026-08-27(第 5 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
+> 更新:2026-08-28(第 6 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
 > 产品目标:把 PCAP 中分散的报文,还原为可验证的网络故障事件和证据链 —— 观察与推断分离,不过度归因。
 
 ---
@@ -9,7 +9,7 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 426 用例全绿(`npx vitest run`,57 文件) |
+| 前端测试 | 448 用例全绿(`npx vitest run`,57 文件) |
 | Rust 测试 | 17 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`) |
 | 构建 | `npm run build` 通过(bundle gzip ≈127KB,含 gsap) |
 | 技术栈 | React 19 + TS 5.8 strict + Zustand 5 + Vite 7 + Vitest 4 + Tauri 2 + tshark 4.6.6 + GSAP |
@@ -38,6 +38,8 @@
 | **M5 起步:新事件检测器** | `c316163` `2cb4a7d` | m5Events(与 M3 解耦,每项独立开关):零窗口/窗口耗尽/RST/SYN 重传,观察推断分离红线延续;tcp.window_size 字段契约三处同步(41→42 字段)+ fixture 再生成;零窗口接入会话标注与筛选(「零窗口」筛选项) |
 | **M5 第二批:测量与采集质量** | `3a2cbaf` | SYN 重传接入会话标注(与 syn-no-reply 互补);rttStats(p50/p90/max,Karn 首次发送归属,样本<5 显式 unavailable);captureQuality(截断计数/比例,采集侧信号红线);SummaryPanel「会话测量」区;perfGuard 预算并发自适应消抖动 |
 | **M5 第三批:窗口统计+Health Score** | `b3213a4` `1e13ab0` | windowStats(通告沿 min/max/变化次数/零窗口期数,接入摘要);Health Score v1(透明扣分明细:unrecovered-gap/rst/zero-window/truncated/retransmissions,仅筛选用标注,非 TCP unavailable) |
+| **对抗审查修复(文案=证据)** | `5d6be84` | 审计+红队双 subagent 确认 20+4 项:观察层只写可观测事实(全新字节填补不再称"重发")、tshark 标签条件化不虚构、伪重传硬编码 0、填补者按本事件缺口定位、序列空间主视图方向过滤(双向随机 ISN 混轴/ACK 回跳)、方向锚点与分析层统一、导出缺口清单取全量不缺报、上下文/恢复下标被 openCompare 覆盖、severity/confidence 中文化等 |
+| **M5 第四批:完整序列空间视图** | 本次 | panorama 全景视图(事件方向全字节轴,回绕流降级);clipSeqSpaceView/zoomStep 纯函数(裁剪/步进,确定性);+/−/重置按钮+滚轮指针锚点缩放+拖拽平移;图例升级为图层开关(已见/未收到/SACK/重传);切范围自动复位缩放 |
 
 ## 三、M4 已全部完成,进入 M5
 
@@ -48,16 +50,16 @@ M4 收尾状态(2026-08-27):
 M5 剩余(按优先级):
 - [x] SYN 重传/RST/零窗口接入会话标注;RTT 分位数;Capture Quality;窗口变化统计
 - [x] Health Score(health-v1 透明公式+扣分明细,仅筛选用)
-- [ ] 完整 Sequence Space View(缩放/筛选,当前仅缺口邻域+对向全景)
+- [x] 完整 Sequence Space View(缩放/筛选):全景+缺口邻域双模式,滚轮/按钮缩放、拖拽平移,图例即图层开关
 - [ ] 性能:10 万包 Worker 化解析、tshark 分批/流式、事件虚拟化
 
 ## 四、未开工(按计划 M5-M7)
 
 **M5 分析增强(非 MVP)** —— 每项可独立关闭:
 - [x] Zero/Full Window、RST、SYN 重传事件检测器(m5Events;UI 接入:零窗口已接会话标注/筛选,RST 复用既有 rst 类型)
-- [ ] RTT 分位数/variation、窗口变化、完整 Capture Quality(截断/丢包统计)
-- [ ] 完整 Sequence Space View(缩放/筛选,当前仅缺口邻域)
-- [ ] Health Score(透明版本化公式+扣分明细,仅筛选用,覆盖不足显示 unavailable)
+- [x] RTT 分位数/variation、窗口变化、Capture Quality(截断统计;丢包统计受单观察点限制不做断言)
+- [x] 完整 Sequence Space View(缩放/筛选):全景视图(panorama,回绕流降级隐藏)+ clipSeqSpaceView/zoomStep 纯函数缩放;控件 +/−/重置、滚轮以指针为锚缩放、拖拽平移;图例升级为图层开关(已见/未收到/SACK/重传)
+- [x] Health Score(透明版本化公式+扣分明细,仅筛选用,覆盖不足显示 unavailable)
 - [ ] 性能:10 万包 Worker 化解析、tshark 分批/流式、事件虚拟化
 
 **M6 业务体验关联**:

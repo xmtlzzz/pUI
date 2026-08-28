@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { popIn, windowProgress } from '../m4/viewModel'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { clipSeqSpaceView, popIn, windowProgress, zoomStep } from '../m4/viewModel'
 import type { CompareEventSummary, CompareViewModel, SeqSpaceView } from '../m4/viewModel'
 import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
@@ -79,6 +79,23 @@ const STAGE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981', '#e
 /** 恢复脉冲的持续时长(归一化时间轴占比) */
 const PING_DUR = 0.07
 
+/** 图层可见性(图例即开关):全部缺省可见 */
+export interface SeqLayers {
+  seen: boolean
+  gap: boolean
+  sack: boolean
+  retx: boolean
+  ack: boolean
+}
+
+const ALL_LAYERS_ON: SeqLayers = { seen: true, gap: true, sack: true, retx: true, ack: true }
+
+/** 缩放窗口字节范围 */
+export interface ZoomRange {
+  start: number
+  end: number
+}
+
 /**
  * 序列空间图形:SVG 渲染已见字节条/Gap/SACK/重传回补箭头/ACK 游标。
  *
@@ -86,6 +103,9 @@ const PING_DUR = 0.07
  * 每个元素的登场由 `marks` 的登场时刻 + 当前时刻**声明式**推导 —— transform/opacity,
  * 零布局回流。`progressive=false`(静态模式/reduced-motion/未开始播放)直接渲染全部元素,
  * 信息与终态完全等价,满足审批约束 #4。导出以便对动画参数做元素级测试。
+ *
+ * M5 完整 SSV:`layers` 控制图层显隐(图例即开关);`zoomRange`/`onZoomRange`
+ * 支持滚轮缩放与拖拽平移(状态归父层,本组件只发事件;无回调时忽略交互)。
  */
 export function SeqSpaceGraphic({
   vm,
@@ -94,6 +114,9 @@ export function SeqSpaceGraphic({
   seqSpaceOverride,
   label = '序列空间图形化',
   caption = '视图聚焦缺口邻域',
+  layers = ALL_LAYERS_ON,
+  zoomRange = null,
+  onZoomRange,
 }: {
   vm: CompareViewModel
   playhead: number
@@ -103,12 +126,58 @@ export function SeqSpaceGraphic({
   label?: string
   /** 轴说明后缀:事件方向=聚焦缺口邻域;对向=全景 */
   caption?: string
+  /** 图层显隐(缺省全显) */
+  layers?: SeqLayers
+  /** 当前缩放窗口(null=整个轴) */
+  zoomRange?: ZoomRange | null
+  /** 滚轮/拖拽改变缩放窗口的回调;不传则不响应交互 */
+  onZoomRange?: (next: ZoomRange | null) => void
 }) {
   const sq = seqSpaceOverride ?? vm.seqSpace
   const marks = vm.marks
   const W = 720
   const H = 150
   const x = (v: number): number => ((v - sq.axisMin) / (sq.axisMax - sq.axisMin)) * (W - 16) + 8
+
+  // 滚轮缩放(以指针位置为锚):React 的 onWheel 是 passive,必须原生监听才能 preventDefault
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const dragRef = useRef<{ pointerId: number; x: number; width: number; start: number; end: number } | null>(null)
+  useEffect(() => {
+    const svg = svgRef.current
+    if (!svg || !onZoomRange) return
+    const onWheel = (ev: WheelEvent): void => {
+      ev.preventDefault()
+      const rect = svg.getBoundingClientRect()
+      const frac = rect.width > 0 ? Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width)) : 0.5
+      const cur = zoomRange ?? { start: sq.axisMin, end: sq.axisMax }
+      const anchor = cur.start + frac * (cur.end - cur.start)
+      const next = zoomStep({ axisMin: sq.axisMin, axisMax: sq.axisMax }, cur, ev.deltaY < 0 ? 1.25 : 1 / 1.25)
+      const ns = next.end - next.start
+      const span = cur.end - cur.start
+      const anchorFrac = span > 0 ? (anchor - cur.start) / span : 0.5
+      let s0 = anchor - anchorFrac * ns
+      s0 = Math.min(Math.max(s0, sq.axisMin), sq.axisMax - ns)
+      onZoomRange({ start: s0, end: s0 + ns })
+    }
+    svg.addEventListener('wheel', onWheel, { passive: false })
+    return () => svg.removeEventListener('wheel', onWheel)
+  }, [onZoomRange, zoomRange, sq.axisMin, sq.axisMax])
+
+  // 拖拽平移:按屏幕像素位移换算字节位移,窗口钳制在轴内
+  const panBy = useCallback(
+    (dxPx: number, widthPx: number): void => {
+      if (!onZoomRange || widthPx <= 0) return
+      const cur = zoomRange ?? { start: sq.axisMin, end: sq.axisMax }
+      const span = cur.end - cur.start
+      const dBytes = -(dxPx / widthPx) * span
+      const full = sq.axisMax - sq.axisMin
+      if (span >= full) return // 未缩放时无可平移范围
+      let s0 = cur.start + dBytes
+      s0 = Math.min(Math.max(s0, sq.axisMin), sq.axisMax - span)
+      onZoomRange({ start: s0, end: s0 + span })
+    },
+    [onZoomRange, zoomRange, sq.axisMin, sq.axisMax],
+  )
 
 // 时间轴映射:等分坐标 playhead -> 真实秒(命中所属阶段区间,阶段内按比例反解),
   // 再查 ACK 轨迹。与 viewModel 的 timeToBand 互为逆映射。
@@ -148,7 +217,29 @@ export function SeqSpaceGraphic({
   const nSack = sq.sackBlocks.length
 
   return (
-    <svg className="fc-seqsvg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} data-testid="fc-seqspace">
+    <svg
+      className={`fc-seqsvg${onZoomRange ? ' fc-seqsvg-zoomable' : ''}`}
+      viewBox={`0 0 ${W} ${H}`}
+      role="img"
+      aria-label={label}
+      data-testid="fc-seqspace"
+      ref={svgRef}
+      onPointerDown={(e) => {
+        if (!onZoomRange) return
+        const rect = svgRef.current?.getBoundingClientRect()
+        dragRef.current = { pointerId: e.pointerId, x: e.clientX, width: rect?.width ?? 0, start: zoomRange?.start ?? sq.axisMin, end: zoomRange?.end ?? sq.axisMax }
+        e.currentTarget.setPointerCapture?.(e.pointerId)
+      }}
+      onPointerMove={(e) => {
+        const d = dragRef.current
+        if (!d || d.pointerId !== e.pointerId) return
+        panBy(e.clientX - d.x, d.width)
+        d.x = e.clientX
+      }}
+      onPointerUp={(e) => {
+        if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+      }}
+    >
       {/* 刻度轴(全量事实层,始终完整可见) */}
       <line x1={8} y1={H - 22} x2={W - 8} y2={H - 22} stroke="#cbd5e1" />
       {sq.ticks.map((t) => (
@@ -160,13 +251,15 @@ export function SeqSpaceGraphic({
         </g>
       ))}
       {/* 已见字节条(事实层:整个抓包看见过的字节,不做过程隐藏) */}
-      {sq.seenRuns.map(([s, e], i) => (
-        <rect key={`seen${i}`} x={x(s)} y={30} width={Math.max(x(e) - x(s), 1)} height={14} fill="#10b981" rx={2}>
-          <title>{`已见字节 ${Math.round(s)}–${Math.round(e)}`}</title>
-        </rect>
-      ))}
+      {layers.seen &&
+        sq.seenRuns.map(([s, e], i) => (
+          <rect key={`seen${i}`} x={x(s)} y={30} width={Math.max(x(e) - x(s), 1)} height={14} fill="#10b981" rx={2}>
+            <title>{`已见字节 ${Math.round(s)}–${Math.round(e)}`}</title>
+          </rect>
+        ))}
       {/* Gap hatch:在缺口显露时刻弹跳登场(缩放过冲),此前不可见 */}
-      {sq.gaps.map(([s, e], i) => {
+      {layers.gap &&
+        sq.gaps.map(([s, e], i) => {
         const gx = x(s)
         const gw = Math.max(x(e) - x(s), 2)
         const style = gapPop
@@ -191,7 +284,8 @@ export function SeqSpaceGraphic({
         )
       })}
       {/* SACK 块:在 Dup ACK 窗口内按块序逐块向右长出;无窗口标记时保守完整显示 */}
-      {sq.sackBlocks.map(([s, e], i) => {
+      {layers.sack &&
+        sq.sackBlocks.map(([s, e], i) => {
         const target = Math.max(x(e) - x(s), 2)
         let wFrac = 1
         let op = 1
@@ -223,6 +317,8 @@ export function SeqSpaceGraphic({
         // 兜底空数组:热更新/内存缓存中旧构建的视图模型没有 rangeLabels 字段
         const ordered = [...(sq.rangeLabels ?? [])].sort((a, b) => a.start - b.start)
         for (const l of ordered) {
+          if (l.kind === 'gap' && !layers.gap) continue
+          if (l.kind === 'seen' && !layers.seen) continue
           const x0 = x(l.start)
           const x1 = x(l.end)
           const w = x1 - x0
@@ -247,7 +343,7 @@ export function SeqSpaceGraphic({
         return out
       })()}
       {/* 重传回补箭头:自缺口末端向上画出(随播放推进),配标签淡入 */}
-      {sq.retxArrow && (
+      {layers.retx && sq.retxArrow && (
         <g>
           <line
             x1={x(sq.retxArrow.seq)}
@@ -265,7 +361,7 @@ export function SeqSpaceGraphic({
       )}
       {/* ACK 游标(播放持续推进)与恢复脉冲 */}
       {(() => {
-        if (!timeline || sq.ackTrack.length === 0) return null
+        if (!layers.ack || !timeline || sq.ackTrack.length === 0) return null
         const absT = timeline.toAbs()
         const ackPos = ackAt(absT)
         if (ackPos == null) return null
@@ -362,6 +458,25 @@ function CompareContent({
   const narrow = useNarrowViewport()
   const [faultTab, setFaultTab] = useState<'fault' | 'ref'>('fault')
   const [viewSide, setViewSide] = useState<'event' | 'opp'>('event')
+  // M5 完整 SSV:视图范围(缺口邻域/全景)、缩放窗口、图层显隐。
+  // 切换方向/范围时复位缩放 —— 不同基准轴下的窗口没有延续意义。
+  const [viewMode, setViewMode] = useState<'gap' | 'panorama'>('gap')
+  const [zoom, setZoom] = useState<ZoomRange | null>(null)
+  const [layers, setLayers] = useState<SeqLayers>(ALL_LAYERS_ON)
+
+  const baseView =
+    viewSide === 'opp' ? (vm.opposite?.view ?? vm.seqSpace) : viewMode === 'panorama' ? (vm.panorama ?? vm.seqSpace) : vm.seqSpace
+  const shownView = useMemo(
+    () => (zoom ? clipSeqSpaceView(baseView, zoom.start, zoom.end) : baseView),
+    [baseView, zoom],
+  )
+  const zoomClamped = zoom != null && (zoom.start > baseView.axisMin + 1e-9 || zoom.end < baseView.axisMax - 1e-9)
+  const stepZoom = (factor: number): void => {
+    const next = zoomStep({ axisMin: baseView.axisMin, axisMax: baseView.axisMax }, zoom, factor)
+    const full = baseView.axisMax - baseView.axisMin
+    setZoom(next.end - next.start >= full - 1e-9 ? null : next)
+  }
+  const caption = viewSide === 'opp' ? '对向全景' : viewMode === 'panorama' ? '全景(该方向全部字节)' : '聚焦缺口邻域'
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     switch (e.key) {
@@ -490,52 +605,164 @@ function CompareContent({
             </div>
           )}
 
-          {/* 序列空间方向切换(M4 收尾:双向流对向视图);用主界面 .seg 分段控件 */}
-          {vm.opposite && (
-            <div className="fc-dir-row">
-              <div className="seg" role="tablist" aria-label="序列空间方向" data-testid="fc-dir-toggle">
-                <button type="button" className={viewSide === 'event' ? 'on' : ''} onClick={() => setViewSide('event')}>
-                  事件方向({vm.direction})
+          {/* 序列空间方向切换(M4:双向流对向视图)+ 视图范围/缩放(M5 完整 SSV)。
+              缩放控件始终可用(缺口邻域内也可放大) */}
+          <div className="fc-dir-row">
+            {vm.opposite && (
+                <div className="seg" role="tablist" aria-label="序列空间方向" data-testid="fc-dir-toggle">
+                  <button
+                    type="button"
+                    className={viewSide === 'event' ? 'on' : ''}
+                    onClick={() => {
+                      setViewSide('event')
+                      setZoom(null)
+                    }}
+                  >
+                    事件方向({vm.direction})
+                  </button>
+                  <button
+                    type="button"
+                    className={viewSide === 'opp' ? 'on' : ''}
+                    onClick={() => {
+                      setViewSide('opp')
+                      setZoom(null)
+                    }}
+                  >
+                    对向({vm.opposite.dir})
+                  </button>
+                </div>
+              )}
+              {viewSide !== 'opp' && vm.panorama && (
+                <div className="seg" role="tablist" aria-label="视图范围" data-testid="fc-mode-toggle">
+                  <button
+                    type="button"
+                    className={viewMode === 'gap' ? 'on' : ''}
+                    onClick={() => {
+                      setViewMode('gap')
+                      setZoom(null)
+                    }}
+                  >
+                    缺口邻域
+                  </button>
+                  <button
+                    type="button"
+                    className={viewMode === 'panorama' ? 'on' : ''}
+                    onClick={() => {
+                      setViewMode('panorama')
+                      setZoom(null)
+                    }}
+                  >
+                    全景
+                  </button>
+                </div>
+              )}
+              <span className="fc-zoom-btns">
+                <button
+                  type="button"
+                  className="btn icon"
+                  data-testid="fc-zoom-in"
+                  aria-label="放大"
+                  title="放大"
+                  onClick={() => stepZoom(1.6)}
+                >
+                  ＋
                 </button>
-                <button type="button" className={viewSide === 'opp' ? 'on' : ''} onClick={() => setViewSide('opp')}>
-                  对向({vm.opposite.dir})
+                <button
+                  type="button"
+                  className="btn icon"
+                  data-testid="fc-zoom-out"
+                  aria-label="缩小"
+                  title="缩小"
+                  onClick={() => stepZoom(1 / 1.6)}
+                >
+                  －
                 </button>
-              </div>
-            </div>
-          )}
+                <button
+                  type="button"
+                  className="btn sm"
+                  data-testid="fc-zoom-reset"
+                  disabled={!zoomClamped}
+                  title="重置缩放"
+                  onClick={() => setZoom(null)}
+                >
+                  重置
+                </button>
+              </span>
+          </div>
 
-          {/* 序列空间图例:图形中各颜色/纹理的含义(用户反馈:红绿块含义要显式说明)。
+          {/* 序列空间图例即图层开关(M5 完整 SSV 筛选):点击切换显隐;
               随当前视图取值:对向视图无重传箭头,图例不得提示不存在的图元 */}
           <div className="fc-seq-legend" data-testid="fc-seq-legend">
-            <span>
-              <i className="lg lg-seen" />已见字节
-            </span>
-            <span>
-              <i className="lg lg-gap" />未收到
-            </span>
-            <span>
-              <i className="lg lg-sack" />SACK(对端已收)
-            </span>
+            <button
+              type="button"
+              className={`lg-item${layers.seen ? ' on' : ''}`}
+              aria-pressed={layers.seen}
+              data-testid="fc-layer-seen"
+              title="点击显示/隐藏已见字节"
+              onClick={() => setLayers((l) => ({ ...l, seen: !l.seen }))}
+            >
+              <i className="lg lg-seen" />
+              已见字节
+            </button>
+            <button
+              type="button"
+              className={`lg-item${layers.gap ? ' on' : ''}`}
+              aria-pressed={layers.gap}
+              data-testid="fc-layer-gap"
+              title="点击显示/隐藏未收到区间"
+              onClick={() => setLayers((l) => ({ ...l, gap: !l.gap }))}
+            >
+              <i className="lg lg-gap" />
+              未收到
+            </button>
+            <button
+              type="button"
+              className={`lg-item${layers.sack ? ' on' : ''}`}
+              aria-pressed={layers.sack}
+              data-testid="fc-layer-sack"
+              title="点击显示/隐藏 SACK"
+              onClick={() => setLayers((l) => ({ ...l, sack: !l.sack }))}
+            >
+              <i className="lg lg-sack" />
+              SACK(对端已收)
+            </button>
             {(viewSide === 'event' || !vm.opposite) && vm.seqSpace.retxArrow && (
-              <span>
-                <i className="lg lg-retx" />重传回补
-              </span>
+              <button
+                type="button"
+                className={`lg-item${layers.retx ? ' on' : ''}`}
+                aria-pressed={layers.retx}
+                data-testid="fc-layer-retx"
+                title="点击显示/隐藏重传回补箭头"
+                onClick={() => setLayers((l) => ({ ...l, retx: !l.retx }))}
+              >
+                <i className="lg lg-retx" />
+                重传回补
+              </button>
             )}
           </div>
 
-          {/* 序列空间图形化:核心可视化(事件方向=分镜动画;对向=静态事实;静态模式信息等价) */}
+          {/* 序列空间图形化:核心可视化(事件方向=分镜动画;对向=静态事实;静态模式信息等价)。
+              shownView = 基准视图(缺口邻域/全景/对向)+ 缩放裁剪 */}
           {viewSide === 'event' || !vm.opposite ? (
             <SeqSpaceGraphic
               vm={vm}
+              seqSpaceOverride={shownView}
+              caption={caption}
+              layers={layers}
+              zoomRange={zoom}
+              onZoomRange={setZoom}
               playhead={pb.time}
               progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
             />
           ) : (
             <SeqSpaceGraphic
               vm={vm}
-              seqSpaceOverride={vm.opposite.view}
+              seqSpaceOverride={shownView}
               label="对向序列空间"
-              caption="对向全景"
+              caption={caption}
+              layers={layers}
+              zoomRange={zoom}
+              onZoomRange={setZoom}
               playhead={0}
               progressive={false}
             />

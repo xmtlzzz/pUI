@@ -46,6 +46,7 @@ function makeVm(): CompareViewModel {
     marks: { gapRevealAt: 0.1, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.6, recoverAt: 0.9 },
     direction: 'c2s',
     opposite: null,
+    panorama: null,
     // 全量缺口(未按图形视窗裁剪)—— 证据报告按它列全,不缺报
     allGaps: [[101, 201]],
     degraded: { unorderableInput: false, midStream: true, lengthUnavailable: false, noEvents: false },

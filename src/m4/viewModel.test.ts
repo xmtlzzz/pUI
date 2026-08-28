@@ -6,10 +6,12 @@ import { deriveStages } from '../analysis/tcp/stages'
 import {
   buildCompareViewModel,
   buildEventSummaries,
+  clipSeqSpaceView,
   popIn,
   severityZh,
   stageAtTime,
   windowProgress,
+  zoomStep,
 } from './viewModel'
 
 /**
@@ -337,6 +339,74 @@ describe('buildCompareViewModel', () => {
 
   it('确定性:同一输入两次构建完全一致', () => {
     expect(JSON.stringify(buildVM(lossChain()))).toBe(JSON.stringify(buildVM(lossChain())))
+  })
+
+  it('全景视图(M5 完整 SSV):轴覆盖事件方向全部字节,缺口邻域之外的数据如实入图', () => {
+    const p = vm.panorama
+    expect(p).not.toBeNull()
+    // lossChain 的 c2s 数据 [0,401):缺口邻域轴只到 501 附近,全景轴 = 数据实际范围 [0,401]
+    expect(p!.axisMin).toBe(0)
+    expect(p!.axisMax).toBe(401)
+    expect(p!.seenRuns).toEqual([[0, 401]])
+    expect(p!.gaps).toEqual([[101, 201]])
+    // 缺口邻域中处于轴外的图元,在全景中如实出现(SACK [201,501] 被裁到轴内)
+    expect(p!.sackBlocks).toEqual([[201, 401]])
+    // 全景区间标注存在且只属于事件方向
+    expect(p!.rangeLabels.length).toBeGreaterThan(0)
+    // 确定性
+    expect(JSON.stringify(buildVM(lossChain())!.panorama)).toBe(JSON.stringify(p))
+  })
+
+  it('clipSeqSpaceView:子轴裁剪图元、过滤 ACK 轨迹、刻度按新轴重算(确定性纯函数)', () => {
+    const p = vm.panorama!
+    const z = clipSeqSpaceView(p, 80, 260)
+    expect(z.axisMin).toBe(80)
+    expect(z.axisMax).toBe(260)
+    // 连续已见区被截断到轴内(lossChain 的已见字节连成 [0,401) 一段)
+    expect(z.seenRuns).toEqual([[80, 260]])
+    expect(z.gaps).toEqual([[101, 201]])
+    // ACK 轨迹按值过滤到窗口内
+    for (const a of z.ackTrack) {
+      expect(a.ack).toBeGreaterThanOrEqual(80)
+      expect(a.ack).toBeLessThanOrEqual(260)
+    }
+    // 刻度落在新轴内
+    for (const t of z.ticks) {
+      expect(t).toBeGreaterThanOrEqual(80)
+      expect(t).toBeLessThanOrEqual(260)
+    }
+    // 区间标注钳制到新轴
+    for (const l of z.rangeLabels) {
+      expect(l.start).toBeGreaterThanOrEqual(80)
+      expect(l.end).toBeLessThanOrEqual(260)
+    }
+    // 完全越界的窗口被钳制回基准轴 → 原样返回(防御);
+    // start>end 按归一化处理(与 [min,max] 等价)
+    expect(clipSeqSpaceView(p, 500, 600)).toBe(p)
+    expect(clipSeqSpaceView(p, 300, 100)).toEqual(clipSeqSpaceView(p, 100, 300))
+    // 确定性
+    expect(JSON.stringify(clipSeqSpaceView(p, 80, 260))).toBe(JSON.stringify(z))
+  })
+
+  it('zoomStep:中心缩放、钳制基准轴、保住最小跨度(纯函数)', () => {
+    const base = { axisMin: 0, axisMax: 1000 }
+    // 放大:跨度减半(1.6 倍步进),中心不变
+    const zin = zoomStep(base, null, 1.6)
+    expect(zin.start).toBeGreaterThanOrEqual(0)
+    expect(zin.end).toBeLessThanOrEqual(1000)
+    expect(zin.end - zin.start).toBeCloseTo(1000 / 1.6, 6)
+    expect((zin.start + zin.end) / 2).toBeCloseTo(500, 6)
+    // 缩小超出基准轴时钳制回全轴
+    const zout = zoomStep(base, zin, 1 / 100)
+    expect(zout.start).toBe(0)
+    expect(zout.end).toBe(1000)
+    // 最小跨度:反复放大不会塌缩到 0(minSpan = max(8, full/1000) = 8)
+    let z = zoomStep(base, null, 1.6)
+    for (let i = 0; i < 100; i++) z = zoomStep(base, z, 1.6)
+    expect(z.end - z.start).toBeCloseTo(8, 6)
+    // 偏心窗口放大:中心保持在当前窗口中心
+    const z2 = zoomStep(base, { start: 800, end: 1000 }, 1.6)
+    expect((z2.start + z2.end) / 2).toBeCloseTo(900, 6)
   })
 })
 

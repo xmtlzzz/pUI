@@ -673,4 +673,16 @@ describe('FaultCompare 同期应用层关联(M6 二批)', () => {
     fireEvent.click(screen.getByTestId('fc-export-evidence'))
     expect(onExportEvidence).toHaveBeenCalledOnce()
   })
+
+  it('离线 HTML 导出按钮(M7):传入 onExportHtml 时渲染并触发;缺省不渲染', () => {
+    const onExportHtml = vi.fn()
+    const absent = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(absent.container.querySelector('[data-testid="fc-export-html"]')).toBeNull()
+    absent.unmount()
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} onExportHtml={onExportHtml} />)
+    const btn = screen.getByTestId('fc-export-html')
+    expect(btn.textContent).toContain('导出 HTML')
+    fireEvent.click(btn)
+    expect(onExportHtml).toHaveBeenCalledOnce()
+  })
 })

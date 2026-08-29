@@ -12,6 +12,7 @@ import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
 import { exportCompareReport, defaultCompareReportName } from '../export/exportCompareReport'
+import { exportEvidenceHtml, defaultEvidenceHtmlName } from '../export/evidenceHtml'
 import { buildReportModel, defaultReportName } from '../export/report/reportModel'
 import { renderReportMd } from '../export/report/renderReportMd'
 import { renderReportDocxBlob } from '../export/report/renderReportDocx'
@@ -185,6 +186,30 @@ export function AppLayout() {
         })),
       })
       await saveText(defaultCompareReportName(label, compare.eventIndex + 1), md)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }, [compare, currentPath, meta, selected])
+
+  // 离线单文件 HTML 证据(M7 最后一项):与 Markdown/JSON 同一输入口径,
+  // 零脚本零远程资源,可直接分发或用浏览器打印为 PDF
+  const onExportCompareHtml = useCallback(async () => {
+    if (!selected || !compare?.vm || compare.eventIndex < 0) return
+    try {
+      const label = `${selected.client} ↔ ${selected.server}`
+      const html = exportEvidenceHtml({
+        fileName: meta?.fileName ?? currentPath.split(/[\\/]/).pop() ?? 'capture.pcapng',
+        conversationLabel: label,
+        eventNo: compare.eventIndex + 1,
+        eventTotal: compare.summaries.length,
+        vm: compare.vm,
+        appImpacts: compare.appImpacts.map((imp) => ({
+          appSummary: imp.app.summary,
+          tcpKindLabel: imp.tcp.kindLabel,
+          statement: imp.statement,
+        })),
+      })
+      await saveText(defaultEvidenceHtmlName(label, compare.eventIndex + 1), html)
     } catch (err) {
       window.alert(err instanceof Error ? err.message : String(err))
     }
@@ -396,6 +421,7 @@ export function AppLayout() {
               initialStageIndex={pendingResume && pendingResume.conversationId === compareFor ? pendingResume.stageIndex : undefined}
               onExport={onExportCompare}
               onExportEvidence={onExportEvidence}
+              onExportHtml={onExportCompareHtml}
               appImpacts={compare?.appImpacts ?? []}
               onSelectPacket={jumpToPacket}
               onBack={exitCompare}

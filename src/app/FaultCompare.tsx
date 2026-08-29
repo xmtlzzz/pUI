@@ -44,6 +44,8 @@ interface FaultCompareProps {
   onExport?: () => void
   /** 导出当前事件为版本化 JSON 证据(schema pui-evidence,与 Markdown 报告同口径) */
   onExportEvidence?: () => void
+  /** 导出当前事件为离线单文件 HTML 证据(M7:与 Markdown/JSON 同口径,全转义无远程资源) */
+  onExportHtml?: () => void
   /**
    * 同期应用层关联(M6):当前 TCP 事件与 HTTP/DNS/TLS 事件的时间窗重叠,
    * 措辞已在 correlateImpacts 限定("同期现象,可能相关,不构成因果");
@@ -523,6 +525,7 @@ function CompareContent({
   initialStageIndex,
   onExport,
   onExportEvidence,
+  onExportHtml,
   appImpacts,
   endpoints,
 }: FaultCompareProps & { vm: CompareViewModel }) {
@@ -581,6 +584,17 @@ function CompareContent({
               title="导出当前事件为版本化 JSON 证据(pui-evidence schema,机器可读,与 Markdown 报告同口径)"
             >
               导出证据 JSON
+            </button>
+          )}
+          {onExportHtml && (
+            <button
+              type="button"
+              className="btn"
+              onClick={onExportHtml}
+              data-testid="fc-export-html"
+              title="导出当前事件为离线单文件 HTML 证据(零脚本零远程资源,可直接分发/打印,与 Markdown/JSON 同口径)"
+            >
+              导出 HTML
             </button>
           )}
         </span>

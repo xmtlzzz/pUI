@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 
-const EXAMPLES = ['http', 'dns', 'mixed', 'lossy']
+const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote']
 
 /** 报告导出格式:md=Markdown 文件;docx=Word 文档;pdf=打印预览(WebView 打印存 PDF) */
 export type ReportFormat = 'md' | 'docx' | 'pdf'

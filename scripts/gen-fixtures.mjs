@@ -108,10 +108,100 @@ const arp = [
   { tsUs: us(0.005), data: eth(C.mac, 'aa:aa:aa:aa:aa:aa', 0x0806, arpRep) },
 ]
 
+// M6 第二批演示:SSH/VNC/RDP/SMB2 各一条真实握手流(加密边界内只暴露明文握手/命令字段)
+const R1 = { ip: '192.168.1.20', mac: '00:22:33:44:55:66' } // sshd + vnc server
+const R2 = { ip: '192.168.1.30', mac: '00:33:44:55:66:77' } // rdp + smb server
+
+const pktTo = (dst, { sport, dport, seq, ack, flags, payload, t }) => ({
+  tsUs: us(t),
+  data: eth(dst.mac, C.mac, 0x0800, ip4hdr(C.ip, dst.ip, 6, tcpseg(sport, dport, seq, ack, flags, payload))),
+})
+const pktFrom = (dst, { sport, dport, seq, ack, flags, payload, t }) => ({
+  tsUs: us(t),
+  data: eth(C.mac, dst.mac, 0x0800, ip4hdr(dst.ip, C.ip, 6, tcpseg(sport, dport, seq, ack, flags, payload))),
+})
+const utf8 = (s) => Buffer.from(s, 'utf-8')
+const utf16le = (s) => Buffer.from(s, 'utf-16le')
+const handshake = (dport, sport, server, t0) => [
+  pktTo(server, { sport, dport, seq: 1000, ack: 0, flags: SYN, t: t0 }),
+  pktFrom(server, { sport: dport, dport: sport, seq: 5000, ack: 1001, flags: SYN | ACK, t: t0 + 0.001 }),
+  pktTo(server, { sport, dport, seq: 1001, ack: 5001, flags: ACK, t: t0 + 0.002 }),
+]
+const close = (server, dport, sport, seqC, seqS, t0) => [
+  pktTo(server, { sport, dport, seq: seqC, ack: seqS, flags: ACK | FIN, t: t0 }),
+  pktFrom(server, { sport: dport, dport: sport, seq: seqS, ack: seqC + 1, flags: ACK | FIN, t: t0 + 0.001 }),
+  pktTo(server, { sport, dport, seq: seqC + 1, ack: seqS + 1, flags: ACK, t: t0 + 0.002 }),
+]
+
+// SSH(22):双方版本横幅(明文)→ 此后加密(演示解密边界)
+const sshClientBanner = utf8('SSH-2.0-OpenSSH_9.6\r\n')
+const sshServerBanner = utf8('SSH-2.0-OpenSSH_8.4\r\n')
+const ssh = [
+  ...handshake(22, 52022, R1, 0.0),
+  pktTo(R1, { sport: 52022, dport: 22, seq: 1001, ack: 5001, flags: PSH | ACK, payload: [...sshClientBanner], t: 0.010 }),
+  pktFrom(R1, { sport: 22, dport: 52022, seq: 5001, ack: 1001 + sshClientBanner.length, flags: PSH | ACK, payload: [...sshServerBanner], t: 0.020 }),
+  // 横幅交换后的密钥交换载荷:对分析器是字节噪声(红线:不解密,只证明「此后密文」)
+  pktTo(R1, { sport: 52022, dport: 22, seq: 1001 + sshClientBanner.length, ack: 5001 + sshServerBanner.length, flags: PSH | ACK, payload: [0x05, 0x14, 0x7c, 0x11, 0x00, 0x00, 0x08, 0x00, 0x2f, 0x6d], t: 0.030 }),
+  ...close(R1, 22, 52022, 1011 + sshClientBanner.length, 5001 + sshServerBanner.length, 0.050),
+]
+
+// VNC(5900):RFB 版本 + 安全类型列表(1=无认证 2=VNC 密码)+ 客户端选择
+const vnc = [
+  ...handshake(5900, 51900, R1, 0.100),
+  pktFrom(R1, { sport: 5900, dport: 51900, seq: 5001, ack: 1001, flags: PSH | ACK, payload: [...utf8('RFB 003.008\n')], t: 0.110 }),
+  // 安全类型列表:数量 2,类型 1(无认证)、2(VNC 密码)
+  pktFrom(R1, { sport: 5900, dport: 51900, seq: 5001 + 12, ack: 1001, flags: PSH | ACK, payload: [0x02, 0x01, 0x02], t: 0.112 }),
+  // 客户端选择类型 1(无认证)
+  pktTo(R1, { sport: 51900, dport: 5900, seq: 1001, ack: 5001 + 15, flags: PSH | ACK, payload: [0x01], t: 0.114 }),
+  ...close(R1, 5900, 51900, 1002, 5001 + 15, 0.130),
+]
+
+// RDP(3389):X.224 连接请求/确认携带 RDP 协商(0x3=SSL+CredSSP → 0x2=CredSSP)
+const rdpCR = [0x03, 0x00, 0x00, 0x13, 0x0e, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00, 0x03, 0x00, 0x00, 0x00]
+const rdpCC = [0x03, 0x00, 0x00, 0x13, 0x0e, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x00]
+const rdp = [
+  ...handshake(3389, 51800, R2, 0.200),
+  pktTo(R2, { sport: 51800, dport: 3389, seq: 1001, ack: 5001, flags: PSH | ACK, payload: rdpCR, t: 0.210 }),
+  pktFrom(R2, { sport: 3389, dport: 51800, seq: 5001, ack: 1001 + rdpCR.length, flags: PSH | ACK, payload: rdpCC, t: 0.220 }),
+  ...close(R2, 3389, 51800, 1001 + rdpCR.length, 5001 + rdpCC.length, 0.240),
+]
+
+// SMB2(445):协商 → 树连接。SMB2 多字节字段一律小端(与 TCP 头大端相反)。
+const u16le = (n) => [n & 0xff, (n >> 8) & 0xff]
+const u32le = (n) => [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff]
+const smb2hdr = (cmd, flags, messageId, treeId = 0) => [
+  0xfe, 0x53, 0x4d, 0x42, // ProtocolId: 0xFE + 'SMB'(服务器模式标识)
+  ...u16le(64), ...u16le(0), ...u32le(0), // StructureSize=64, CreditCharge, Status
+  ...u16le(cmd), ...u16le(0), ...u32le(flags), // Command, Credits, Flags(bit0=响应)
+  ...u32le(0), // NextCommand
+  ...u32le(messageId), ...u32le(0), // MessageId(8B)
+  ...u32le(0), // Reserved/ProcessId
+  ...u32le(treeId), // TreeId
+  ...u32le(0), ...u32le(0), // SessionId(8B)
+  ...Array(16).fill(0), // Signature
+]
+const nb = (body) => [0x00, ...u32(body.length).slice(1), ...body] // NetBIOS 会话:1B 类型 + 3B 长度(大端)
+const smbNegReq = [...nb([...smb2hdr(0, 0, 0), ...u16le(36), ...u16le(2), ...u16le(1), ...u16le(0), ...u32le(0), ...Array(16).fill(0x11), ...u16le(0), ...u16le(0), ...u16le(0), ...u16le(0x0202), ...u16le(0x0210)])]
+const smbNegRsp = [...nb([...smb2hdr(0, 1, 1), ...u16le(65), ...u16le(2), ...u16le(1), ...u16le(0), ...u32le(0), ...Array(16).fill(0x22), ...u16le(0), ...u16le(0), ...u16le(0), ...u16le(0x0202), ...u16le(0x0210), ...u32le(0)])]
+const treePath = utf16le('\\\\DEMO\\share') // UNC: \\DEMO\share
+const smbTreeReq = [...nb([...smb2hdr(3, 0, 2), ...u16le(9), ...u16le(0), ...u16le(72), ...u16le(treePath.length), ...treePath])]
+const smbTreeRsp = [...nb([...smb2hdr(3, 1, 3, 1), ...u16le(16), ...u16le(0), ...u32le(0), ...u32le(0)])]
+const smb2 = [
+  ...handshake(445, 51700, R2, 0.300),
+  pktTo(R2, { sport: 51700, dport: 445, seq: 1001, ack: 5001, flags: PSH | ACK, payload: smbNegReq, t: 0.310 }),
+  pktFrom(R2, { sport: 445, dport: 51700, seq: 5001, ack: 1001 + smbNegReq.length, flags: PSH | ACK, payload: smbNegRsp, t: 0.320 }),
+  pktTo(R2, { sport: 51700, dport: 445, seq: 1001 + smbNegReq.length, ack: 5001 + smbNegRsp.length, flags: PSH | ACK, payload: smbTreeReq, t: 0.330 }),
+  pktFrom(R2, { sport: 445, dport: 51700, seq: 5001 + smbNegRsp.length, ack: 1001 + smbNegReq.length + smbTreeReq.length, flags: PSH | ACK, payload: smbTreeRsp, t: 0.340 }),
+  ...close(R2, 445, 51700, 1001 + smbNegReq.length + smbTreeReq.length, 5001 + smbNegRsp.length + smbTreeRsp.length, 0.360),
+]
+
+const remote = [...ssh, ...vnc, ...rdp, ...smb2]
+
 // 写入
 mkdirSync(join(OUT, 'examples'), { recursive: true })
 writeFileSync(join(OUT, 'examples', 'http.pcapng'), pcapng(http))
 writeFileSync(join(OUT, 'examples', 'dns.pcapng'), pcapng(dns))
 writeFileSync(join(OUT, 'examples', 'mixed.pcapng'), pcapng([...arp, ...dns, ...http]))
 writeFileSync(join(OUT, 'examples', 'lossy.pcapng'), pcapng(lossy))
-console.log('generated:', join(OUT, 'examples'), 'http/dns/mixed/lossy')
+writeFileSync(join(OUT, 'examples', 'remote.pcapng'), pcapng(remote))
+console.log('generated:', join(OUT, 'examples'), 'http/dns/mixed/lossy/remote')

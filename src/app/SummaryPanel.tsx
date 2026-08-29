@@ -162,7 +162,7 @@ export function SummaryPanel() {
           <div className="summary-grid" data-testid="summary-app">
             {appCounts.map((c) => (
               <span key={`${c.app}:${c.kind}`}>
-                {c.app.toUpperCase()} {c.kind === 'request' ? '请求' : c.kind === 'response' ? '响应' : c.kind === 'query' ? '查询' : '握手'} <b>{c.count}</b>
+                {c.app.toUpperCase()} {c.kind === 'request' ? '请求' : c.kind === 'response' ? '响应' : c.kind === 'query' ? '查询' : c.kind === 'session' ? '会话' : '握手'} <b>{c.count}</b>
               </span>
             ))}
           </div>

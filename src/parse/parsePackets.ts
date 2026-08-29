@@ -270,6 +270,10 @@ function frameToPacket(F: ReturnType<typeof makeFrameFields>, fallbackIndex: num
     if (F.get(field) != null && !analysisTags.includes(tag)) analysisTags.push(tag)
   }
   const dnsResp = first(F.get('dns.flags.response'))
+  // SMB2 响应标志三态:仅 1/true(大小写不敏感,-e 形态为 True/False)视为 true;
+  // false = 字段存在但是请求,undefined = 字段缺失 —— 分析器按 false/undefined 都当请求,
+  // 但保留三态语义避免把「字段缺失」误记成「确认为请求」
+  const smb2Resp = first(F.get('smb2.flags.response'))
   const base: Pick<Packet, 'proto' | 'tcpFlags' | 'httpMethod' | 'httpUri' | 'httpCode' | 'dnsQuery' | 'transport'> = {
     proto,
     transport,
@@ -310,6 +314,15 @@ function frameToPacket(F: ReturnType<typeof makeFrameFields>, fallbackIndex: num
     httpCode: base.httpCode,
     dnsQuery: base.dnsQuery,
     tlsType: first(F.get('tls.handshake.type')),
+    // M6 第二批:SSH/RDP/VNC/SMB 明文字段直取(first 取首值);字段缺失即 undefined,不臆造
+    sshProtocol: first(F.get('ssh.protocol')),
+    sshChannelType: first(F.get('ssh.connection_type_name')),
+    rdpNegProtocols: first(F.get('rdp.negReq.requestedProtocols')),
+    rdpClientName: first(F.get('rdp.client.name')),
+    vncProtoVer: first(F.get('vnc.server_proto_ver')),
+    smb2Cmd: first(F.get('smb2.cmd')),
+    smb2Response: smb2Resp == null ? undefined : /^(?:1|true)$/i.test(smb2Resp),
+    smb2Tree: first(F.get('smb2.tree')),
     // dns.flags.response:树形态为 "0"/"1",-e 形态为 "False"/"True",两者都识别
     info: makeInfo({ ...base, info: dnsResp === '1' || dnsResp === 'True' ? 'response' : undefined }),
     direction: 'other',

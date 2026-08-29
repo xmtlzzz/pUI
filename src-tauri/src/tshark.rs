@@ -117,6 +117,15 @@ pub const CAPTURE_FIELDS: &[&str] = &[
     "dns.qry.name",
     "dns.flags.response",
     "tls.handshake.type",
+    // M6 第二批:SSH/RDP/VNC/SMB 明文握手/命令字段(与 src/parse/captureFields.ts 逐字同序)
+    "ssh.protocol",
+    "ssh.connection_type_name",
+    "rdp.negReq.requestedProtocols",
+    "rdp.client.name",
+    "vnc.server_proto_ver",
+    "smb2.cmd",
+    "smb2.flags.response",
+    "smb2.tree",
 ];
 
 pub fn run_capture(bin: &Path, file: &str) -> Result<String, String> {

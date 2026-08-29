@@ -1,0 +1,2489 @@
+[
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "1"
+        ],
+        "frame.time_relative": [
+          "0.000000000"
+        ],
+        "frame.time_epoch": [
+          "0.000000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "52022"
+        ],
+        "tcp.dstport": [
+          "22"
+        ],
+        "tcp.flags": [
+          "0x0002"
+        ],
+        "tcp.seq_raw": [
+          "1000"
+        ],
+        "tcp.ack_raw": [
+          "0"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "0"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "2"
+        ],
+        "frame.time_relative": [
+          "0.001000000"
+        ],
+        "frame.time_epoch": [
+          "0.001000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "22"
+        ],
+        "tcp.dstport": [
+          "52022"
+        ],
+        "tcp.flags": [
+          "0x0012"
+        ],
+        "tcp.seq_raw": [
+          "5000"
+        ],
+        "tcp.ack_raw": [
+          "1001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "1"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "3"
+        ],
+        "frame.time_relative": [
+          "0.002000000"
+        ],
+        "frame.time_epoch": [
+          "0.002000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "52022"
+        ],
+        "tcp.dstport": [
+          "22"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "3"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "4"
+        ],
+        "frame.time_relative": [
+          "0.010000000"
+        ],
+        "frame.time_epoch": [
+          "0.010000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "75"
+        ],
+        "frame.cap_len": [
+          "75"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:ssh"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "52022"
+        ],
+        "tcp.dstport": [
+          "22"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "21"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "7"
+        ],
+        "ssh.protocol": [
+          "SSH-2.0-OpenSSH_9.6"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "5"
+        ],
+        "frame.time_relative": [
+          "0.020000000"
+        ],
+        "frame.time_epoch": [
+          "0.020000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "75"
+        ],
+        "frame.cap_len": [
+          "75"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:ssh"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "22"
+        ],
+        "tcp.dstport": [
+          "52022"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "5001"
+        ],
+        "tcp.ack_raw": [
+          "1022"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "21"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ],
+        "ssh.protocol": [
+          "SSH-2.0-OpenSSH_8.4"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "6"
+        ],
+        "frame.time_relative": [
+          "0.030000000"
+        ],
+        "frame.time_epoch": [
+          "0.030000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "64"
+        ],
+        "frame.cap_len": [
+          "64"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "52022"
+        ],
+        "tcp.dstport": [
+          "22"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "1022"
+        ],
+        "tcp.ack_raw": [
+          "5022"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "10"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "7"
+        ],
+        "frame.time_relative": [
+          "0.050000000"
+        ],
+        "frame.time_epoch": [
+          "0.050000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "52022"
+        ],
+        "tcp.dstport": [
+          "22"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "1032"
+        ],
+        "tcp.ack_raw": [
+          "5022"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "8"
+        ],
+        "frame.time_relative": [
+          "0.051000000"
+        ],
+        "frame.time_epoch": [
+          "0.051000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "22"
+        ],
+        "tcp.dstport": [
+          "52022"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "5022"
+        ],
+        "tcp.ack_raw": [
+          "1033"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "9"
+        ],
+        "frame.time_relative": [
+          "0.052000000"
+        ],
+        "frame.time_epoch": [
+          "0.052000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "52022"
+        ],
+        "tcp.dstport": [
+          "22"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1033"
+        ],
+        "tcp.ack_raw": [
+          "5023"
+        ],
+        "tcp.stream": [
+          "0"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "10"
+        ],
+        "frame.time_relative": [
+          "0.100000000"
+        ],
+        "frame.time_epoch": [
+          "0.100000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "51900"
+        ],
+        "tcp.dstport": [
+          "5900"
+        ],
+        "tcp.flags": [
+          "0x0002"
+        ],
+        "tcp.seq_raw": [
+          "1000"
+        ],
+        "tcp.ack_raw": [
+          "0"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "0"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "11"
+        ],
+        "frame.time_relative": [
+          "0.101000000"
+        ],
+        "frame.time_epoch": [
+          "0.101000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "5900"
+        ],
+        "tcp.dstport": [
+          "51900"
+        ],
+        "tcp.flags": [
+          "0x0012"
+        ],
+        "tcp.seq_raw": [
+          "5000"
+        ],
+        "tcp.ack_raw": [
+          "1001"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "1"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "12"
+        ],
+        "frame.time_relative": [
+          "0.102000000"
+        ],
+        "frame.time_epoch": [
+          "0.102000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "51900"
+        ],
+        "tcp.dstport": [
+          "5900"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "3"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "13"
+        ],
+        "frame.time_relative": [
+          "0.110000000"
+        ],
+        "frame.time_epoch": [
+          "0.110000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "66"
+        ],
+        "frame.cap_len": [
+          "66"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:vnc"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "5900"
+        ],
+        "tcp.dstport": [
+          "51900"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "5001"
+        ],
+        "tcp.ack_raw": [
+          "1001"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "12"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "7"
+        ],
+        "vnc.server_proto_ver": [
+          "003.008"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "14"
+        ],
+        "frame.time_relative": [
+          "0.112000000"
+        ],
+        "frame.time_epoch": [
+          "0.112000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "57"
+        ],
+        "frame.cap_len": [
+          "57"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:vnc"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "5900"
+        ],
+        "tcp.dstport": [
+          "51900"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "5013"
+        ],
+        "tcp.ack_raw": [
+          "1001"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "3"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "15"
+        ],
+        "frame.time_relative": [
+          "0.114000000"
+        ],
+        "frame.time_epoch": [
+          "0.114000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "55"
+        ],
+        "frame.cap_len": [
+          "55"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:vnc"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "51900"
+        ],
+        "tcp.dstport": [
+          "5900"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5016"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "1"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "16"
+        ],
+        "frame.time_relative": [
+          "0.130000000"
+        ],
+        "frame.time_epoch": [
+          "0.130000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "51900"
+        ],
+        "tcp.dstport": [
+          "5900"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "1002"
+        ],
+        "tcp.ack_raw": [
+          "5016"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "17"
+        ],
+        "frame.time_relative": [
+          "0.131000000"
+        ],
+        "frame.time_epoch": [
+          "0.131000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:22:33:44:55:66"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.20"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "5900"
+        ],
+        "tcp.dstport": [
+          "51900"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "5016"
+        ],
+        "tcp.ack_raw": [
+          "1003"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "18"
+        ],
+        "frame.time_relative": [
+          "0.132000000"
+        ],
+        "frame.time_epoch": [
+          "0.132000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:22:33:44:55:66"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.20"
+        ],
+        "tcp.srcport": [
+          "51900"
+        ],
+        "tcp.dstport": [
+          "5900"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1003"
+        ],
+        "tcp.ack_raw": [
+          "5017"
+        ],
+        "tcp.stream": [
+          "1"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "19"
+        ],
+        "frame.time_relative": [
+          "0.200000000"
+        ],
+        "frame.time_epoch": [
+          "0.200000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51800"
+        ],
+        "tcp.dstport": [
+          "3389"
+        ],
+        "tcp.flags": [
+          "0x0002"
+        ],
+        "tcp.seq_raw": [
+          "1000"
+        ],
+        "tcp.ack_raw": [
+          "0"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "0"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "20"
+        ],
+        "frame.time_relative": [
+          "0.201000000"
+        ],
+        "frame.time_epoch": [
+          "0.201000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "3389"
+        ],
+        "tcp.dstport": [
+          "51800"
+        ],
+        "tcp.flags": [
+          "0x0012"
+        ],
+        "tcp.seq_raw": [
+          "5000"
+        ],
+        "tcp.ack_raw": [
+          "1001"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "1"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "21"
+        ],
+        "frame.time_relative": [
+          "0.202000000"
+        ],
+        "frame.time_epoch": [
+          "0.202000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51800"
+        ],
+        "tcp.dstport": [
+          "3389"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "3"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "22"
+        ],
+        "frame.time_relative": [
+          "0.210000000"
+        ],
+        "frame.time_epoch": [
+          "0.210000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "73"
+        ],
+        "frame.cap_len": [
+          "73"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:cotp:rdp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51800"
+        ],
+        "tcp.dstport": [
+          "3389"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "19"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "7"
+        ],
+        "rdp.negReq.requestedProtocols": [
+          "0x00000003"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "23"
+        ],
+        "frame.time_relative": [
+          "0.220000000"
+        ],
+        "frame.time_epoch": [
+          "0.220000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "73"
+        ],
+        "frame.cap_len": [
+          "73"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:cotp:rdp"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "3389"
+        ],
+        "tcp.dstport": [
+          "51800"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "5001"
+        ],
+        "tcp.ack_raw": [
+          "1020"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "19"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "24"
+        ],
+        "frame.time_relative": [
+          "0.240000000"
+        ],
+        "frame.time_epoch": [
+          "0.240000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51800"
+        ],
+        "tcp.dstport": [
+          "3389"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "1020"
+        ],
+        "tcp.ack_raw": [
+          "5020"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "25"
+        ],
+        "frame.time_relative": [
+          "0.241000000"
+        ],
+        "frame.time_epoch": [
+          "0.241000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "3389"
+        ],
+        "tcp.dstport": [
+          "51800"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "5020"
+        ],
+        "tcp.ack_raw": [
+          "1021"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "26"
+        ],
+        "frame.time_relative": [
+          "0.242000000"
+        ],
+        "frame.time_epoch": [
+          "0.242000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51800"
+        ],
+        "tcp.dstport": [
+          "3389"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1021"
+        ],
+        "tcp.ack_raw": [
+          "5021"
+        ],
+        "tcp.stream": [
+          "2"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "27"
+        ],
+        "frame.time_relative": [
+          "0.300000000"
+        ],
+        "frame.time_epoch": [
+          "0.300000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51700"
+        ],
+        "tcp.dstport": [
+          "445"
+        ],
+        "tcp.flags": [
+          "0x0002"
+        ],
+        "tcp.seq_raw": [
+          "1000"
+        ],
+        "tcp.ack_raw": [
+          "0"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "0"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "28"
+        ],
+        "frame.time_relative": [
+          "0.301000000"
+        ],
+        "frame.time_epoch": [
+          "0.301000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "445"
+        ],
+        "tcp.dstport": [
+          "51700"
+        ],
+        "tcp.flags": [
+          "0x0012"
+        ],
+        "tcp.seq_raw": [
+          "5000"
+        ],
+        "tcp.ack_raw": [
+          "1001"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "1"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "29"
+        ],
+        "frame.time_relative": [
+          "0.302000000"
+        ],
+        "frame.time_epoch": [
+          "0.302000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51700"
+        ],
+        "tcp.dstport": [
+          "445"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "3"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "30"
+        ],
+        "frame.time_relative": [
+          "0.310000000"
+        ],
+        "frame.time_epoch": [
+          "0.310000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "160"
+        ],
+        "frame.cap_len": [
+          "160"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:nbss:smb2"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51700"
+        ],
+        "tcp.dstport": [
+          "445"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "1001"
+        ],
+        "tcp.ack_raw": [
+          "5001"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "106"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "7"
+        ],
+        "smb2.cmd": [
+          "0"
+        ],
+        "smb2.flags.response": [
+          "False"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "31"
+        ],
+        "frame.time_relative": [
+          "0.320000000"
+        ],
+        "frame.time_epoch": [
+          "0.320000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "164"
+        ],
+        "frame.cap_len": [
+          "164"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:nbss:smb2"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "445"
+        ],
+        "tcp.dstport": [
+          "51700"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "5001"
+        ],
+        "tcp.ack_raw": [
+          "1107"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "110"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ],
+        "smb2.cmd": [
+          "0"
+        ],
+        "smb2.flags.response": [
+          "True"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "32"
+        ],
+        "frame.time_relative": [
+          "0.330000000"
+        ],
+        "frame.time_epoch": [
+          "0.330000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "154"
+        ],
+        "frame.cap_len": [
+          "154"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:nbss:smb2"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51700"
+        ],
+        "tcp.dstport": [
+          "445"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "1107"
+        ],
+        "tcp.ack_raw": [
+          "5111"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "100"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ],
+        "smb2.cmd": [
+          "3"
+        ],
+        "smb2.flags.response": [
+          "False"
+        ],
+        "smb2.tree": [
+          "\\\\DEMO\\share"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "33"
+        ],
+        "frame.time_relative": [
+          "0.340000000"
+        ],
+        "frame.time_epoch": [
+          "0.340000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "134"
+        ],
+        "frame.cap_len": [
+          "134"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp:nbss:smb2"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "445"
+        ],
+        "tcp.dstport": [
+          "51700"
+        ],
+        "tcp.flags": [
+          "0x0018"
+        ],
+        "tcp.seq_raw": [
+          "5111"
+        ],
+        "tcp.ack_raw": [
+          "1207"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "80"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ],
+        "smb2.cmd": [
+          "3"
+        ],
+        "smb2.flags.response": [
+          "True"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "34"
+        ],
+        "frame.time_relative": [
+          "0.360000000"
+        ],
+        "frame.time_epoch": [
+          "0.360000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51700"
+        ],
+        "tcp.dstport": [
+          "445"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "1207"
+        ],
+        "tcp.ack_raw": [
+          "5191"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "15"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "35"
+        ],
+        "frame.time_relative": [
+          "0.361000000"
+        ],
+        "frame.time_epoch": [
+          "0.361000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:33:44:55:66:77"
+        ],
+        "eth.dst": [
+          "00:11:22:33:44:55"
+        ],
+        "ip.src": [
+          "192.168.1.30"
+        ],
+        "ip.dst": [
+          "192.168.1.10"
+        ],
+        "tcp.srcport": [
+          "445"
+        ],
+        "tcp.dstport": [
+          "51700"
+        ],
+        "tcp.flags": [
+          "0x0011"
+        ],
+        "tcp.seq_raw": [
+          "5191"
+        ],
+        "tcp.ack_raw": [
+          "1208"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  },
+  {
+    "_index": "packets-1970-01-01",
+    "_score": null,
+    "_source": {
+      "layers": {
+        "frame.number": [
+          "36"
+        ],
+        "frame.time_relative": [
+          "0.362000000"
+        ],
+        "frame.time_epoch": [
+          "0.362000000"
+        ],
+        "frame.interface_id": [
+          "0"
+        ],
+        "frame.len": [
+          "54"
+        ],
+        "frame.cap_len": [
+          "54"
+        ],
+        "frame.protocols": [
+          "eth:ethertype:ip:tcp"
+        ],
+        "eth.src": [
+          "00:11:22:33:44:55"
+        ],
+        "eth.dst": [
+          "00:33:44:55:66:77"
+        ],
+        "ip.src": [
+          "192.168.1.10"
+        ],
+        "ip.dst": [
+          "192.168.1.30"
+        ],
+        "tcp.srcport": [
+          "51700"
+        ],
+        "tcp.dstport": [
+          "445"
+        ],
+        "tcp.flags": [
+          "0x0010"
+        ],
+        "tcp.seq_raw": [
+          "1208"
+        ],
+        "tcp.ack_raw": [
+          "5192"
+        ],
+        "tcp.stream": [
+          "3"
+        ],
+        "tcp.len": [
+          "0"
+        ],
+        "tcp.window_size": [
+          "8192"
+        ],
+        "tcp.completeness": [
+          "31"
+        ]
+      }
+    }
+  }
+]

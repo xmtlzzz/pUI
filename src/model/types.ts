@@ -46,6 +46,25 @@ export interface Packet {
   httpCode?: string
   dnsQuery?: string
   tlsType?: string
+  // —— M6 第二批应用层分析字段(SSH/RDP/VNC/SMB)。四者多为加密协议,只投影明文握手/命令
+  // 字段,不做任何解密与重组;undefined = tshark 未取到该字段 = 分析能力缺失,不臆造。
+  /** ssh.protocol:SSH 版本横幅(如 SSH-2.0-OpenSSH_9.6)。密钥交换后全程加密,横幅是唯一明文能力信号 */
+  sshProtocol?: string
+  /** ssh.connection_type_name:SSH 通道类型名(session/exec 等)。通道打开请求为明文,通道内数据不可见 */
+  sshChannelType?: string
+  /** rdp.negReq.requestedProtocols:连接协商请求协议位掩码(tshark 输出形如 0x00000003) */
+  rdpNegProtocols?: string
+  /** rdp.client.name:RDP 客户端机器名(仅明文 X.224 cookie 场景落值) */
+  rdpClientName?: string
+  /** vnc.server_proto_ver:RFB 协议版本横幅(如 003.008;实机验证仅服务端横幅帧落值) */
+  vncProtoVer?: string
+  /** smb2.cmd:SMB2 命令号(tshark 十进制输出;0=协商 3=树连接 5=创建…) */
+  smb2Cmd?: string
+  /** smb2.flags.response:响应方向标志,三态:仅当字段存在且取 1/true(大小写不敏感)为 true;
+   *  false = 字段存在但是请求;undefined = 字段缺失。三态不可合并,方向判定依赖它 */
+  smb2Response?: boolean
+  /** smb2.tree:树连接路径(smb2.filename 为省字段数未纳入契约,摘要只到 tree 粒度) */
+  smb2Tree?: string
   info?: string // 概要,如 "HTTP GET /"、"TCP SYN-ACK"
   direction: Direction
 }

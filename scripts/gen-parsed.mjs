@@ -14,11 +14,13 @@ import { readFileSync } from 'node:fs'
 
 const TSHARK = process.env.TSHARK ?? (process.platform === 'win32' ? 'C:\\Program Files\\Wireshark\\tshark.exe' : 'tshark')
 const OUT = join(process.cwd(), 'public', 'fixtures')
-const EXAMPLES = ['http', 'dns', 'mixed', 'lossy']
+const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote']
 
-// 从 src/parse/captureFields.ts 提取字段清单(单文件无依赖,直接正则取字符串字面量)
+// 从 src/parse/captureFields.ts 提取字段清单(单文件无依赖,直接正则取字符串字面量)。
+// 字符集必须含大写字母:rdp.negReq.requestedProtocols 是 Wireshark 官方注册名(camelCase),
+// 曾因只认小写被静默漏抓;契约测试 captureFields.contract.test.ts 按集合相等钉住本正则。
 const captureFieldsSrc = readFileSync(join(process.cwd(), 'src', 'parse', 'captureFields.ts'), 'utf-8')
-const FIELDS = [...captureFieldsSrc.matchAll(/'([a-z0-9_.]+)'/g)].map((m) => m[1])
+const FIELDS = [...captureFieldsSrc.matchAll(/'([A-Za-z0-9_.]+)'/g)].map((m) => m[1])
 if (FIELDS.length < 30) throw new Error(`captureFields.ts 解析异常,仅得 ${FIELDS.length} 个字段`)
 
 const eArgs = FIELDS.flatMap((f) => ['-e', f])

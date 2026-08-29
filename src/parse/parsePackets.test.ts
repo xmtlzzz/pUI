@@ -357,4 +357,62 @@ describe('parsePackets -e 平铺形态(-T json -e 输出,大文件模式)', () =
     expect(p.tlsType).toBe('1')
     expect(p.proto).toBe('tls')
   })
+
+  it('M6 第二批:SSH/RDP/VNC/SMB 平铺字段投影', () => {
+    const [ssh] = parsePackets(flatFrame({
+      'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['66'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:ssh'],
+      'ssh.protocol': ['SSH-2.0-OpenSSH_9.6'], 'ssh.connection_type_name': ['session'],
+    }))
+    expect(ssh.sshProtocol).toBe('SSH-2.0-OpenSSH_9.6')
+    expect(ssh.sshChannelType).toBe('session')
+    const [rdp] = parsePackets(flatFrame({
+      'frame.number': ['2'], 'frame.time_relative': ['0.01'], 'frame.len': ['100'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:rdp'],
+      'rdp.negReq.requestedProtocols': ['0x00000003'], 'rdp.client.name': ['DEMO-PC'],
+    }))
+    expect(rdp.rdpNegProtocols).toBe('0x00000003')
+    expect(rdp.rdpClientName).toBe('DEMO-PC')
+    const [vnc] = parsePackets(flatFrame({
+      'frame.number': ['3'], 'frame.time_relative': ['0.02'], 'frame.len': ['50'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:vnc'],
+      'vnc.server_proto_ver': ['003.008'],
+    }))
+    expect(vnc.vncProtoVer).toBe('003.008')
+    const [resp] = parsePackets(flatFrame({
+      'frame.number': ['4'], 'frame.time_relative': ['0.03'], 'frame.len': ['130'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:smb2'],
+      'smb2.cmd': ['3'], 'smb2.flags.response': ['True'], 'smb2.tree': ['\\\\DEMO\\share'],
+    }))
+    expect(resp.smb2Cmd).toBe('3')
+    expect(resp.smb2Response).toBe(true)
+    expect(resp.smb2Tree).toBe('\\\\DEMO\\share')
+  })
+
+  it('M6 第二批:smb2.flags.response 三态(True/1→true,False/0→false,缺失→undefined)', () => {
+    // 字段存在但为请求 → false(与"字段缺失 undefined"是两种语义,分析器据此区分方向)
+    const mk = (n: number, resp?: string) => parsePackets(flatFrame({
+      'frame.number': [String(n)], 'frame.time_relative': ['0'], 'frame.len': ['120'],
+      'frame.protocols': ['eth:ethertype:ip:tcp:smb2'],
+      'smb2.cmd': ['0'],
+      ...(resp == null ? {} : { 'smb2.flags.response': [resp] }),
+    }))[0]
+    expect(mk(1, 'True').smb2Response).toBe(true)
+    expect(mk(2, '1').smb2Response).toBe(true)
+    expect(mk(3, 'False').smb2Response).toBe(false)
+    expect(mk(4, '0').smb2Response).toBe(false)
+    expect(mk(5).smb2Response).toBeUndefined()
+    // 完全无新字段的帧:全部 undefined(不臆造)
+    const [none] = parsePackets(flatFrame({
+      'frame.number': ['6'], 'frame.time_relative': ['0'], 'frame.len': ['60'],
+      'frame.protocols': ['eth:ethertype:ip:tcp'],
+    }))
+    expect(none.sshProtocol).toBeUndefined()
+    expect(none.sshChannelType).toBeUndefined()
+    expect(none.rdpNegProtocols).toBeUndefined()
+    expect(none.rdpClientName).toBeUndefined()
+    expect(none.vncProtoVer).toBeUndefined()
+    expect(none.smb2Cmd).toBeUndefined()
+    expect(none.smb2Tree).toBeUndefined()
+  })
 })

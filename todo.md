@@ -1,6 +1,6 @@
 # pUI 项目状态 TODO
 
-> 更新:2026-08-28(第 7 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
+> 更新:2026-08-29(第 8 次) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
 > 产品目标:把 PCAP 中分散的报文,还原为可验证的网络故障事件和证据链 —— 观察与推断分离,不过度归因。
 
 ---
@@ -9,7 +9,7 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 464 用例全绿(`npx vitest run`,58 文件) |
+| 前端测试 | 508 用例全绿(`npx vitest run`,63 文件) |
 | Rust 测试 | 21 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`) |
 | 构建 | `npm run build` 通过(bundle gzip ≈127KB,含 gsap) |
 | 技术栈 | React 19 + TS 5.8 strict + Zustand 5 + Vite 7 + Vitest 4 + Tauri 2 + tshark 4.6.6 + GSAP |
@@ -65,13 +65,15 @@ M5 剩余(按优先级):
 - [ ] 性能:10 万包 Worker 化解析、tshark 分批/流式、事件虚拟化
 
 **M6 业务体验关联**:
-- [ ] `ApplicationAnalyzer` 插件接口;第一批 HTTP/DNS/TLS(复用现有字段,不声明解密)
-- [ ] `ApplicationImpact`:时间窗+阶段重叠关联,措辞限定"相关/可能影响"
-- [ ] 第二批 SSH/RDP/VNC/SMB 单独审批字段与规则
+- [x] `ApplicationAnalyzer` 插件接口;第一批 HTTP/DNS/TLS(复用现有字段,不声明解密);摘要面板应用层事件区+慢响应下钻
+- [x] `ApplicationImpact`:±2s 时间窗关联(每 TCP 事件只消费一次),限定措辞"同期现象,可能相关,不构成因果";接入对照页「同期应用层事件」块(点击跳包)与 Markdown/JSON 两份导出
+- [ ] 第二批 SSH/RDP/VNC/SMB 单独审批字段与规则(需先补字段契约,待审批)
 
-**M7 证据化报告(最后)**:
-- [ ] 版本化 JSON(Evidence schema)/ 分析 Markdown / 离线单文件 HTML(全转义、无远程资源)
-- [ ] 语义一致性与确定性快照测试;恶意内容注入防护测试
+**M7 证据化报告(进行中)**:
+- [x] 分析 Markdown(exportCompareReport,M4 已落地;M6 增应用层关联节)
+- [x] 版本化 JSON 证据(schema pui-evidence/evidence-v1,evidenceReport;确定性+< 注入加固+13 测)
+- [ ] 离线单文件 HTML(全转义、无远程资源)
+- [x] 确定性快照测试(逐字节一致)与注入防护测试;语义一致性由既有 issueWording/红线测试网覆盖,HTML 导出落地时再补专项
 
 ## 五、已知问题 / 技术债
 

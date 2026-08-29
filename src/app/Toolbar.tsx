@@ -7,8 +7,10 @@ const EXAMPLES = ['http', 'dns', 'mixed', 'lossy']
 interface Props {
   zoom: number
   setZoom: (z: number) => void
-  onExport: () => void
-  onExportText: () => void
+  /** 导出 PNG 回调;缺省则不渲染该按钮(仅主视图时序场景在选中会话后提供) */
+  onExport?: () => void
+  /** 导出 Markdown 时序叙述回调;缺省则不渲染(仅主视图提供,对照页用对照报告导出) */
+  onExportText?: () => void
   hasConversation: boolean
 }
 
@@ -121,12 +123,16 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, hasConversation
             <button className="btn icon" onClick={() => setZoom(Math.min(3, zoom + 0.1))} title="放大">
               +
             </button>
-            <button className="btn primary" onClick={onExport}>
-              导出 PNG
-            </button>
-            <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
-              导出叙述
-            </button>
+            {onExport && (
+              <button className="btn primary" onClick={onExport}>
+                导出 PNG
+              </button>
+            )}
+            {onExportText && (
+              <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
+                导出叙述
+              </button>
+            )}
           </>
         )}
         <WindowControls />

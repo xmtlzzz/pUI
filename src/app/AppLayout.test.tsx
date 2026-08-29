@@ -108,10 +108,16 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(container.querySelector('.pane.filter')).toBeNull()
     expect(container.querySelector('.pane.list')).toBeNull()
     expect(container.querySelector('[data-testid="fault-compare-empty"]')).toBeTruthy()
+    // 对照页顶栏不挂主视图专属的「导出 PNG / 导出叙述」按钮——
+    // 它们绑定主视图时序图 svgRef(对照页已卸载),点了会静默空导出;
+    // 对照页的导出走 FaultCompare 的「导出报告 / 导出证据 JSON」
+    expect(container.querySelector('.toolbar')!.textContent).not.toContain('导出叙述')
+    expect(container.querySelector('.toolbar')!.textContent).not.toContain('导出 PNG')
 
-    // 返回 → 面板恢复
+    // 返回 → 面板恢复,主视图导出按钮回归
     fireEvent.click(container.querySelector('[data-testid="fc-back"]')!)
     expect(container.querySelector('.pane.filter')).toBeTruthy()
+    expect(container.querySelector('.toolbar')!.textContent).toContain('导出叙述')
     expect(useApp.getState().compareFor).toBeNull()
     vi.unstubAllGlobals()
   })

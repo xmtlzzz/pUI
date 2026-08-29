@@ -353,7 +353,10 @@ export function AppLayout() {
           顶部工具条保留(打开文件/导出仍可用),筛选/列表/时序/详情全部让位。 */}
       {compareFor ? (
         <>
-          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
+          {/* 对照页顶栏:只保留打开文件/示例等基础操作,不挂主视图专属的
+              导出 PNG(其 svgRef 在对照页指向已卸载的时序图,点它会静默空导出)
+              /导出叙述(对照页的导出走 FaultCompare 的「导出报告/证据 JSON」) */}
+          <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
           {error && <div className="err">{error}</div>}
           <ErrorBoundary name="故障分析">
             <FaultCompare

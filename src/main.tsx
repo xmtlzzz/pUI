@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { isTauri } from "./bridge/tauri";
+import { bootRemovalDelay } from "./boot/bootTiming";
 
 /** 窗口可见性(tauri.conf visible:false):React 首帧后再显示 —— WebView2 初始化
  *  与 bundle 加载期间用户看到的是「无窗口」而非白屏;index.html 的表情球加载层
@@ -23,25 +24,32 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 );
 
 // 首帧渲染后:显示窗口 + 淡出启动加载层(rAF 保证 React 已提交 DOM)。
-// 隐藏窗口会冻结 WebView2 的 rAF,因此另设 3s 定时兜底 —— 双路竞争,先到先得,
-// teardown 幂等(boot 节点已移除时为空操作)
+// 撤下时刻受最短展示时长约束:过渡动画固定展示 2 秒(bootTiming),不足则补足 ——
+// 过早就绪也不撤,避免「闪一下就没了」。隐藏窗口会冻结 WebView2 的 rAF,因此另设
+// 3s 定时兜底 —— 双路竞争,先到先得;teardown 幂等(boot 节点已移除时为空操作)。
+const BOOT_STARTED = Date.now()
 let bootGone = false
 function removeBoot(): void {
   if (bootGone) return
   bootGone = true
-  const boot = document.getElementById("boot")
-  if (!boot) return
-  boot.classList.add("bye")
-  window.setTimeout(() => {
-    // 先停 emotion-ball 引擎(内置 RAF),再移除启动层节点
-    const teardown = (window as { __puiBootTeardown?: () => void }).__puiBootTeardown
-    try {
-      teardown?.()
-    } catch {
-      /* 忽略 */
-    }
-    boot.remove()
-  }, 300)
+  const beginFade = () => {
+    const boot = document.getElementById("boot")
+    if (!boot) return
+    boot.classList.add("bye")
+    window.setTimeout(() => {
+      // 先停 emotion-ball 引擎(内置 RAF),再移除启动层节点
+      const teardown = (window as { __puiBootTeardown?: () => void }).__puiBootTeardown
+      try {
+        teardown?.()
+      } catch {
+        /* 忽略 */
+      }
+      boot.remove()
+    }, 300)
+  }
+  const delay = bootRemovalDelay(Date.now() - BOOT_STARTED)
+  if (delay > 0) window.setTimeout(beginFade, delay)
+  else beginFade()
 }
 requestAnimationFrame(() => {
   void showWindowWhenReady()

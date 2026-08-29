@@ -280,14 +280,24 @@ pub async fn fetch_hex(
 // 导出与 open_* 同为 async + spawn_blocking:rfd 阻塞式对话框禁止在主线程调用(macOS 会挂死),
 // base64 解码(≤64MB)与文件落盘也不应冻结 UI
 #[tauri::command]
-pub async fn save_text(default_name: String, content: String) -> Result<Option<String>, String> {
+pub async fn save_text(
+    default_name: String,
+    content: String,
+    // 保存对话框过滤器(名称+扩展名)参数化:md/html 等文本报告共用本命令;
+    // 缺省保持 Markdown(既有调用方零改动)
+    filter_name: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+    let filter_name = filter_name.unwrap_or_else(|| "Markdown".into());
+    let extensions = extensions.unwrap_or_else(|| vec!["md".into()]);
     tauri::async_runtime::spawn_blocking(move || {
         if content.len() > MAX_TEXT_BYTES {
             return Err("text too large".into());
         }
+        let exts: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
         let path = rfd::FileDialog::new()
             .set_file_name(&default_name)
-            .add_filter("Markdown", &["md"])
+            .add_filter(&filter_name, &exts)
             .save_file();
         if let Some(p) = path {
             std::fs::write(&p, content).map_err(|e| e.to_string())?;

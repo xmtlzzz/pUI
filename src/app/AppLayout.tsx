@@ -209,7 +209,7 @@ export function AppLayout() {
           statement: imp.statement,
         })),
       })
-      await saveText(defaultEvidenceHtmlName(label, compare.eventIndex + 1), html)
+      await saveText(defaultEvidenceHtmlName(label, compare.eventIndex + 1), html, { name: 'HTML', extensions: ['html'] })
     } catch (err) {
       window.alert(err instanceof Error ? err.message : String(err))
     }

@@ -139,7 +139,12 @@ export async function locateTshark(): Promise<string | null> {
   }
 }
 
-export async function saveText(defaultName: string, content: string): Promise<string | null> {
+export async function saveText(
+  defaultName: string,
+  content: string,
+  // 保存对话框过滤器(名称+扩展名):md/html 等文本报告共用 save_text;缺省 Markdown
+  filter?: { name: string; extensions: string[] },
+): Promise<string | null> {
   if (!isTauri()) {
     // 浏览器回退:直接触发下载
     const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown' }))
@@ -150,7 +155,12 @@ export async function saveText(defaultName: string, content: string): Promise<st
     URL.revokeObjectURL(url)
     return defaultName
   }
-  return invoke<string | null>('save_text', { defaultName, content })
+  return invoke<string | null>('save_text', {
+    defaultName,
+    content,
+    filterName: filter?.name ?? null,
+    extensions: filter?.extensions ?? null,
+  })
 }
 
 /** 二进制导出(Word/.docx 等):字节 base64 后交 Rust save_bytes,经原生保存对话框落盘。

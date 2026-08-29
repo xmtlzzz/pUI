@@ -55,6 +55,7 @@ pub fn run() {
             commands::tshark_version,
             commands::save_text,
             commands::save_png,
+            commands::save_bytes,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

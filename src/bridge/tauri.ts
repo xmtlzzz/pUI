@@ -153,6 +153,34 @@ export async function saveText(defaultName: string, content: string): Promise<st
   return invoke<string | null>('save_text', { defaultName, content })
 }
 
+/** 二进制导出(Word/.docx 等):字节 base64 后交 Rust save_bytes,经原生保存对话框落盘。
+ *  过滤器名称与扩展名由调用方给定(导出报告选格式共用本命令)。
+ *  浏览器回退:Blob 直接触发下载。 */
+export async function saveBinary(
+  defaultName: string,
+  data: Uint8Array,
+  filterName: string,
+  extensions: string[],
+): Promise<string | null> {
+  if (!isTauri()) {
+    const url = URL.createObjectURL(new Blob([data as BlobPart]))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = defaultName
+    a.click()
+    URL.revokeObjectURL(url)
+    return defaultName
+  }
+  let bin = ''
+  for (const b of data) bin += String.fromCharCode(b)
+  return invoke<string | null>('save_bytes', {
+    defaultName,
+    base64Data: btoa(bin),
+    filterName,
+    extensions,
+  })
+}
+
 export async function getTsharkVersion(): Promise<string | null> {
   if (!isTauri()) return null
   try {

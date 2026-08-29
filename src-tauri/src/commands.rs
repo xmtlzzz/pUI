@@ -324,6 +324,41 @@ pub async fn save_png(default_name: String, base64_data: String) -> Result<Optio
     .map_err(|e| format!("save_png task failed: {e}"))?
 }
 
+/// 通用二进制导出(Word/docx 等):前端把字节 base64 后传入,经保存对话框落盘。
+/// 过滤器由调用方给定(名称 + 扩展名列表),供「导出报告选格式」复用单条命令。
+#[tauri::command]
+pub async fn save_bytes(
+    default_name: String,
+    base64_data: String,
+    filter_name: String,
+    extensions: Vec<String>,
+) -> Result<Option<String>, String> {
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    if base64_data.len() > MAX_PNG_BASE64 {
+        return Err("data too large".into());
+    }
+    if extensions.is_empty() || extensions.iter().any(|e| e.is_empty() || e.len() > 10) {
+        return Err("invalid extensions".into());
+    }
+    let bytes = B64.decode(base64_data).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let exts: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+        let path = rfd::FileDialog::new()
+            .set_file_name(&default_name)
+            .add_filter(&filter_name, &exts)
+            .save_file();
+        if let Some(p) = path {
+            std::fs::write(&p, &bytes).map_err(|e| e.to_string())?;
+            Ok(Some(p.to_string_lossy().into_owned()))
+        } else {
+            Ok(None)
+        }
+    })
+    .await
+    .map_err(|e| format!("save_bytes task failed: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,13 +12,45 @@ const DIR_CN: Record<string, string> = { request: '→ 请求', response: '← �
 const MD_BS = String.fromCharCode(92) // 反斜杠
 const MD_BT = String.fromCharCode(96) // 反引号
 
-function mdCell(s: string): string {
+export function mdCell(s: string): string {
   const noAngle = s.replace(/[<>]/g, '')
   return (
     MD_BT +
     noAngle.split(MD_BT).join(MD_BS + MD_BT).split('|').join(MD_BS + '|').replace(/\r?\n/g, ' ') +
     MD_BT
   )
+}
+
+/** 时序表格行(仅表格:表头 + 分隔行 + 数据行,Markdown 转义由 mdCell 完成)。
+ *  抽为独立导出的原因:会话分析报告(src/export/report)的三、会话时序章节与叙述导出
+ *  必须同源同口径 —— 紧凑/仅异常的合并与过滤逻辑只此一份,避免两处实现漂移。
+ *  compact=true:把「方向+协议+概要+分析标记」连续相同的报文合并为区间行;
+ *  mode='anomalies':只保留带 ⚠ 分析标记的报文(丢弃纯正常握手/ACK)。
+ *  无可列报文(会话无帧 / 仅异常模式下无标记)时返回空数组,空态文案由调用方各自措辞。 */
+export function transcriptTableLines(
+  conv: Conversation,
+  compact: boolean | null = null,
+  mode: 'full' | 'anomalies' = 'full',
+): string[] {
+  const anomalyOnly = mode === 'anomalies'
+  // 待导出报文:仅异常模式过滤出带分析标记的;否则全量(紧凑则进一步合并)
+  const packets = anomalyOnly ? conv.packets.filter((p) => p.tcpAnalysis?.length) : conv.packets
+  if (packets.length === 0) return []
+  const lines: string[] = []
+  if (!compact) {
+    lines.push('| # | 时间(s) | 方向 | 协议 | 概要 | 长度 |')
+    lines.push('|---|---|---|---|---|---|')
+    for (const p of packets) {
+      lines.push(transcriptRow(p))
+    }
+  } else {
+    lines.push('| 报文区间 | 包数 | 方向 | 协议 | 概要 | 长度 |')
+    lines.push('|---|---|---|---|---|---|')
+    for (const g of groupConsecutive(packets)) {
+      lines.push(compactRow(g))
+    }
+  }
+  return lines
 }
 
 /** 时序叙述导出(Markdown):教学/周报可直接粘贴的文本版会话时间线。
@@ -45,32 +77,17 @@ export function exportTranscript(
   }
   lines.push('')
 
-  // 待导出报文:仅异常模式过滤出带分析标记的;否则全量(紧凑则进一步合并)
-  const packets = anomalyOnly ? conv.packets.filter((p) => p.tcpAnalysis?.length) : conv.packets
-  if (packets.length === 0) {
-    if (anomalyOnly) {
-      lines.push('_该会话未检出 TCP 分析标记(重传/乱序/丢失/dup-ack 等),无异常报文可列_')
-    } else {
-      lines.push('_该会话无报文帧_')
-    }
+  // 表格行复用 transcriptTableLines(与会话分析报告同源);空态文案保留本导出的既有措辞
+  const table = transcriptTableLines(conv, compact, mode)
+  if (table.length === 0) {
+    lines.push(anomalyOnly
+      ? '_该会话未检出 TCP 分析标记(重传/乱序/丢失/dup-ack 等),无异常报文可列_'
+      : '_该会话无报文帧_')
     lines.push('')
     lines.push('_由 pUI 导出_')
     return lines.join('\n')
   }
-
-  if (!compact) {
-    lines.push('| # | 时间(s) | 方向 | 协议 | 概要 | 长度 |')
-    lines.push('|---|---|---|---|---|---|')
-    for (const p of packets) {
-      lines.push(transcriptRow(p))
-    }
-  } else {
-    lines.push('| 报文区间 | 包数 | 方向 | 协议 | 概要 | 长度 |')
-    lines.push('|---|---|---|---|---|---|')
-    for (const g of groupConsecutive(packets)) {
-      lines.push(compactRow(g))
-    }
-  }
+  lines.push(...table)
   lines.push('')
   lines.push('_由 pUI 导出_')
   return lines.join('\n')

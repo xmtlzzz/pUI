@@ -11,10 +11,15 @@ import { useApp, selectSelected } from '../state/appStore'
 import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
-import { exportTranscript } from '../export/exportTranscript'
 import { exportCompareReport, defaultCompareReportName } from '../export/exportCompareReport'
+import { buildReportModel, defaultReportName } from '../export/report/reportModel'
+import { renderReportMd } from '../export/report/renderReportMd'
+import { renderReportDocxBlob } from '../export/report/renderReportDocx'
+import { renderReportHtml } from '../export/report/renderReportHtml'
 import { buildEvidenceJson, defaultEvidenceJsonName } from '../export/evidenceReport'
-import { saveText } from '../bridge/tauri'
+import { saveBinary, saveText } from '../bridge/tauri'
+import { ReportPreview } from './ReportPreview'
+import type { ReportFormat } from './Toolbar'
 import { analyzeStream } from '../analysis/tcp/streamAnalysis'
 import { detectTcpEvents } from '../analysis/tcp/events'
 import { deriveStages } from '../analysis/tcp/stages'
@@ -208,6 +213,36 @@ export function AppLayout() {
     }
   }, [compare, currentPath, meta, selected])
 
+  // 报告导出(md/word/pdf 三格式,2026-08-29 用户要求):同一份报告模型渲染三种产物。
+  // 「紧凑叙述/仅异常包」勾选作用于报告的时序章节;PDF 走打印预览(WebView 打印存 PDF,
+  // 系统字体矢量中文,免内嵌字体);md/docx 经保存对话框落盘。
+  const [reportFormat, setReportFormat] = useState<ReportFormat>('md')
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+
+  const onExportReport = async () => {
+    if (!selected) return
+    try {
+      const model = buildReportModel(selected, {
+        compact: compactTranscript ? true : null,
+        anomalies: anomaliesOnly,
+        generatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+      })
+      if (reportFormat === 'pdf') {
+        setPreviewHtml(renderReportHtml(model))
+        return
+      }
+      if (reportFormat === 'docx') {
+        const blob = await renderReportDocxBlob(model)
+        const buf = new Uint8Array(await blob.arrayBuffer())
+        await saveBinary(defaultReportName(selected, 'docx'), buf, 'Word 文档', ['docx'])
+        return
+      }
+      await saveText(defaultReportName(selected, 'md'), renderReportMd(model))
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   // 可拖拽尺寸:会话列表宽度(左/右)、报文详情高度(上/下);持久化,拖一次即记住
   const LS_LIST = 'pui:listWidth'
   const LS_DETAIL = 'pui:detailHeight'
@@ -246,22 +281,10 @@ export function AppLayout() {
     }
   }
 
-  // 「导出叙述」紧凑模式:连续相同报文合并为 #X–#Y 区间(typora 等重渲染器打开
-  // 巨大会话不卡顿)。状态在 AppLayout,导出时传给 exportTranscript。
+  // 「紧凑叙述」:报告时序章节将连续相同报文合并为 #X–#Y 区间(巨大会话文档不卡顿)
   const [compactTranscript, setCompactTranscript] = useState(false)
-  // 「仅异常包」:只导出带 TCP 分析标记(重传/乱序/丢失/dup-ack 等)的报文,适合周报
+  // 「仅异常包」:时序章节只列带 TCP 分析标记(重传/乱序/丢失/dup-ack 等)的报文,适合周报
   const [anomaliesOnly, setAnomaliesOnly] = useState(false)
-
-  const onExportText = async () => {
-    if (!selected) return
-    try {
-      const md = exportTranscript(selected, compactTranscript ? true : null, anomaliesOnly ? 'anomalies' : 'full')
-      const name = defaultPngName(selected.client, selected.server, selected.protocol).replace(/\.png$/i, '.md')
-      await saveText(name, md)
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : String(err))
-    }
-  }
 
   // 可拖拽尺寸:用 pointer capture 挂在分隔条上,拖出窗口也不泄漏监听;
   // 额外监听 window blur,失焦时兜底清理
@@ -361,11 +384,10 @@ export function AppLayout() {
         <>
           {/* 对照页顶栏:只保留打开文件/示例等基础操作,不挂主视图专属的
               导出 PNG(其 svgRef 在对照页指向已卸载的时序图,点它会静默空导出)
-              /导出叙述(对照页的导出走 FaultCompare 的「导出报告/证据 JSON」) */}
+              /导出报告(对照页的导出走 FaultCompare 的「导出报告/证据 JSON」) */}
           <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
           {error && <div className="err">{error}</div>}
-          <ErrorBoundary name="故障分析">
-            <FaultCompare
+          <ErrorBoundary name="故障分析">            <FaultCompare
               vm={compareVm}
               events={compare?.summaries}
               eventIndex={compare?.eventIndex}
@@ -383,7 +405,19 @@ export function AppLayout() {
         </>
       ) : (
         <>
-          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} compactTranscript={compactTranscript} setCompactTranscript={setCompactTranscript} anomaliesOnly={anomaliesOnly} setAnomaliesOnly={setAnomaliesOnly} hasConversation={!!selected} />
+          <Toolbar
+            zoom={zoom}
+            setZoom={setZoom}
+            onExport={onExport}
+            onExportReport={onExportReport}
+            reportFormat={reportFormat}
+            setReportFormat={setReportFormat}
+            compactTranscript={compactTranscript}
+            setCompactTranscript={setCompactTranscript}
+            anomaliesOnly={anomaliesOnly}
+            setAnomaliesOnly={setAnomaliesOnly}
+            hasConversation={!!selected}
+          />
           {error && <div className="err">{error}</div>}
           {selected && (
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>
@@ -430,6 +464,9 @@ export function AppLayout() {
         </>
       )}
       {drag && <div className="drop-zone">松开以打开抓包文件</div>}
+      {previewHtml && (
+        <ReportPreview html={previewHtml} fileName={`${selected?.client ?? '会话'} 报告`} onClose={() => setPreviewHtml(null)} />
+      )}
     </div>
   )
 }

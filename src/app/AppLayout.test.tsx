@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { render, fireEvent, waitFor, cleanup, act } from '@testing-library/react'
+import { render, fireEvent, waitFor, cleanup, act, screen } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { AppLayout } from './AppLayout'
@@ -8,6 +8,7 @@ import { useApp, selectSelected } from '../state/appStore'
 import { parsePackets } from '../parse/parsePackets'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { collectFilterOptions } from '../filter/filterConversations'
+import { displayHost } from '../model/types'
 
 afterEach(cleanup)
 
@@ -108,16 +109,16 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(container.querySelector('.pane.filter')).toBeNull()
     expect(container.querySelector('.pane.list')).toBeNull()
     expect(container.querySelector('[data-testid="fault-compare-empty"]')).toBeTruthy()
-    // 对照页顶栏不挂主视图专属的「导出 PNG / 导出叙述」按钮——
-    // 它们绑定主视图时序图 svgRef(对照页已卸载),点了会静默空导出;
+    // 对照页顶栏不挂主视图专属的「导出 PNG / 导出报告」按钮——
+    // 它们绑定主视图时序图 svgRef / 主视图会话(对照页已卸载),点了会静默空导出;
     // 对照页的导出走 FaultCompare 的「导出报告 / 导出证据 JSON」
-    expect(container.querySelector('.toolbar')!.textContent).not.toContain('导出叙述')
+    expect(container.querySelector('.toolbar')!.textContent).not.toContain('导出报告')
     expect(container.querySelector('.toolbar')!.textContent).not.toContain('导出 PNG')
 
     // 返回 → 面板恢复,主视图导出按钮回归
     fireEvent.click(container.querySelector('[data-testid="fc-back"]')!)
     expect(container.querySelector('.pane.filter')).toBeTruthy()
-    expect(container.querySelector('.toolbar')!.textContent).toContain('导出叙述')
+    expect(container.querySelector('.toolbar')!.textContent).toContain('导出报告')
     expect(useApp.getState().compareFor).toBeNull()
     vi.unstubAllGlobals()
   })
@@ -332,6 +333,85 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(container.querySelectorAll('.fc-evbtn')[1].className).toContain('active')
     expect(useApp.getState().compareResume).toBeNull()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('报告导出(格式选择 md/word/pdf,用户要求)', () => {
+  it('工具栏提供三格式选择;选 PDF 后导出打开打印预览,iframe 携带报告 HTML,可关闭', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const { packets, conversations, conv } = loadHttpFixture()
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      meta: { fileName: 'http.pcapng', packetCount: packets.length, interfaces: 1, timeStart: 0, timeEnd: 0.26, fileSize: 936 },
+      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
+      selectedId: conv.id,
+      diagramStyle: 'A',
+      compareFor: null,
+      compareEventIndex: 0,
+      compareResume: null,
+    })
+
+    const { container } = render(<AppLayout />)
+    // 格式选择器:md/docx/pdf 三选项,缺省 md
+    const sel = container.querySelector('[data-testid="report-format"]') as HTMLSelectElement
+    expect(sel).toBeTruthy()
+    expect([...sel.options].map((o) => o.value)).toEqual(['md', 'docx', 'pdf'])
+    expect(sel.value).toBe('md')
+
+    // 切到 PDF → 点击导出:打开预览遮罩,iframe srcDoc 为完整报告 HTML
+    fireEvent.change(sel, { target: { value: 'pdf' } })
+    fireEvent.click(screen.getByText('导出报告'))
+    const overlay = container.querySelector('[data-testid="report-preview"]')!
+    expect(overlay).toBeTruthy()
+    const frame = overlay.querySelector('iframe')!
+    expect(frame.getAttribute('srcdoc')).toContain('会话分析报告')
+    // 会话信息进入报告(报告概要章节;两端经 displayHost 剥端口,与叙述导出口径一致)
+    expect(frame.getAttribute('srcdoc')).toContain(displayHost(conv.client))
+
+    // 关闭 → 遮罩移除
+    fireEvent.click(overlay.querySelector('[data-testid="rp-close"]')!)
+    expect(container.querySelector('[data-testid="report-preview"]')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
+  it('md 格式导出走保存桥(浏览器回退触发 Blob 下载),不弹预览', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const { packets, conversations, conv } = loadHttpFixture()
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      meta: { fileName: 'http.pcapng', packetCount: packets.length, interfaces: 1, timeStart: 0, timeEnd: 0.26, fileSize: 936 },
+      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
+      selectedId: conv.id,
+      diagramStyle: 'A',
+      compareFor: null,
+      compareEventIndex: 0,
+      compareResume: null,
+    })
+
+    const createObjectURL = vi.fn(() => 'blob:mock')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const clickSpy = vi.fn()
+    const origCreate = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string, opts?: ElementCreationOptions) => {
+      const el = origCreate(tag, opts)
+      if (tag === 'a') (el as HTMLAnchorElement).click = clickSpy
+      return el
+    })
+
+    const { container } = render(<AppLayout />)
+    fireEvent.click(screen.getByText('导出报告')) // 默认 md
+    expect(clickSpy).toHaveBeenCalledOnce()
+    expect(createObjectURL).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="report-preview"]')).toBeNull()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 })
 

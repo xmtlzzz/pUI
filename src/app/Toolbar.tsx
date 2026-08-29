@@ -4,23 +4,30 @@ import { isTauri } from '../bridge/tauri'
 
 const EXAMPLES = ['http', 'dns', 'mixed', 'lossy']
 
+/** 报告导出格式:md=Markdown 文件;docx=Word 文档;pdf=打印预览(WebView 打印存 PDF) */
+export type ReportFormat = 'md' | 'docx' | 'pdf'
+
 interface Props {
   zoom: number
   setZoom: (z: number) => void
   /** 导出 PNG 回调;缺省则不渲染该按钮(仅主视图时序场景在选中会话后提供) */
   onExport?: () => void
-  /** 导出 Markdown 时序叙述回调;缺省则不渲染(仅主视图提供,对照页用对照报告导出) */
-  onExportText?: () => void
-  /** 「紧凑叙述」勾选:真实反映到导出内容(conflex 传给 exportTranscript 第二参) */
+  /** 导出分析报告回调(格式由 reportFormat 决定);缺省则不渲染(仅主视图提供,
+   *  对照页的导出走 FaultCompare 的「导出报告/证据 JSON」) */
+  onExportReport?: () => void
+  /** 报告格式选择(受控) */
+  reportFormat?: ReportFormat
+  setReportFormat?: (f: ReportFormat) => void
+  /** 「紧凑叙述」勾选:真实反映到报告时序章节(传给 exportTranscript 第二参) */
   compactTranscript?: boolean
   setCompactTranscript?: (v: boolean) => void
-  /** 「仅异常包」勾选:只列带 ⚠ 分析标记的报文(第三参传给 exportTranscript) */
+  /** 「仅异常包」勾选:时序章节只列带 ⚠ 分析标记的报文 */
   anomaliesOnly?: boolean
   setAnomaliesOnly?: (v: boolean) => void
   hasConversation: boolean
 }
 
-export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscript = false, setCompactTranscript, anomaliesOnly = false, setAnomaliesOnly, hasConversation }: Props) {
+export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat = 'md', setReportFormat, compactTranscript = false, setCompactTranscript, anomaliesOnly = false, setAnomaliesOnly, hasConversation }: Props) {
   const meta = useApp((s) => s.meta)
   const openFile = useApp((s) => s.openFile)
   const openExample = useApp((s) => s.openExample)
@@ -134,9 +141,9 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscri
                 导出 PNG
               </button>
             )}
-            {onExportText && (
+            {onExportReport && (
               <span className="toolbar-export">
-                <label className="mini-check" title="连续相同报文合并为 #X–#Y 区间,大幅减少重复行(typora 等打开巨大会话不卡顿)">
+                <label className="mini-check" title="报告时序章节:连续相同报文合并为 #X–#Y 区间,大幅减少重复行">
                   <input
                     type="checkbox"
                     checked={compactTranscript}
@@ -144,7 +151,7 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscri
                   />
                   紧凑叙述
                 </label>
-                <label className="mini-check" title="只列带 ⚠ 分析标记(重传/乱序/丢失/dup-ack 等)的报文,丢掉正常握手/ACK,适合周报">
+                <label className="mini-check" title="报告时序章节:只列带 ⚠ 分析标记(重传/乱序/丢失/dup-ack 等)的报文,适合周报">
                   <input
                     type="checkbox"
                     checked={anomaliesOnly}
@@ -152,8 +159,19 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscri
                   />
                   仅异常包
                 </label>
-                <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
-                  导出叙述
+                <select
+                  className="btn"
+                  value={reportFormat}
+                  onChange={(e) => setReportFormat?.(e.target.value as ReportFormat)}
+                  title="选择报告格式:Markdown / Word / PDF"
+                  data-testid="report-format"
+                >
+                  <option value="md">Markdown (.md)</option>
+                  <option value="docx">Word (.docx)</option>
+                  <option value="pdf">PDF(打印预览)</option>
+                </select>
+                <button className="btn" onClick={onExportReport} title="导出当前会话的分析报告(概要/异常与发现/时序/证据口径)">
+                  导出报告
                 </button>
               </span>
             )}

@@ -3,7 +3,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, cleanup } from '@testing-library/react'
 import { wheelZoom, type CompareEventSummary, type CompareViewModel } from '../m4/viewModel'
 import type { AppImpact } from '../analysis/app/impact'
-import { FaultCompare, SeqSpaceGraphic } from './FaultCompare'
+import { FaultCompare } from './FaultCompare'
 
 afterEach(cleanup) // 无 globals 钩子,组件残留会让 getByTestId 跨用例重复命中
 
@@ -174,28 +174,22 @@ describe('FaultCompare 对照页(整页板块)', () => {
     fireEvent.click(chip)
     expect(onSel).toHaveBeenCalledWith(11, { eventIndex: 0, stageIndex: 3 })
 
-    // 恢复挂载:initialStageIndex=3 → 播放游标位于该阶段起点(t0>0),面板直接显示阶段 4
+    // 恢复挂载:initialStageIndex=3 → 面板直接显示阶段 4,对应阶段段高亮
     view.unmount()
     const restored = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} initialStageIndex={3} onBack={vi.fn()} />)
     expect(screen.getByTestId('fc-stage-panel').textContent).toContain('阶段 4/5')
-    const cursor = restored.container.querySelector('.fc-timeband-cursor') as HTMLElement | null
-    expect(cursor).toBeTruthy()
-    expect(Number.parseFloat(cursor!.style.left)).toBeGreaterThan(0) // 不再是起点 0
+    expect(restored.container.querySelectorAll('.fc-timeband-seg')[3].className).toContain('active')
   })
 
-  it('键盘/静态模式:jsdom 无 matchMedia 时进入静态模式并给出解释;阶段卡照常可点(遍历无动画)', () => {
-    const { container } = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
-    const wrap = container.querySelector('.fc-page') as HTMLElement
-    expect(wrap).toBeTruthy()
-    // 静态解释可见(不允许静默失败)
-    expect(screen.getByText(/减少动效/)).toBeTruthy()
-    // 静态下点击阶段卡 → 面板切换
+  it('无播放控件:静态终态直接呈现,阶段卡照常点选(播放功能已按用户要求移除)', () => {
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(screen.queryByTestId('fc-playpause')).toBeNull()
+    expect(screen.queryByTestId('fc-enable-animation')).toBeNull()
+    expect(screen.queryByText(/减少动效/)).toBeNull()
+    // 静态下点击阶段卡 → 面板切换(信息获取不依赖任何动画)
     const card = screen.getAllByRole('button').find((b) => b.className.includes('fc-stage-card') && b.textContent?.includes('恢复'))
     fireEvent.click(card!)
     expect(screen.getByTestId('fc-stage-panel').textContent).toContain('恢复')
-    // Space = 用户显式选择 → 覆盖静态开始播放(解释消失)
-    fireEvent.keyDown(wrap, { key: ' ' })
-    expect(screen.queryByText(/减少动效/)).toBeNull()
   })
 
   it('阶段带内嵌阶段名标注(常驻,非 hover):宽段显示「序号. 阶段名」,窄段退化为序号', () => {
@@ -323,50 +317,20 @@ describe('FaultCompare 对照页(整页板块)', () => {
     expect(onBack).toHaveBeenCalledOnce()
   })
 
-  it('静态模式(reduced-motion):分镜元素不经动画直接完整呈现,信息与终态等价', () => {
-    // jsdom 无 matchMedia → usePlayback 恒为 static → progressive=false
+  it('静态终态:所有元素不经动画直接完整呈现,ACK 游标停在最终累计确认位置(信息与播放终态等价)', () => {
     render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
     const svg = screen.getByTestId('fc-seqspace')
     const gap = svg.querySelector('[data-testid="fc-gap-0"]')!
-    expect(gap.getAttribute('opacity')).toBe('1') // Gap 无淡入直接可见
+    expect(gap.getAttribute('opacity')).toBeNull() // 不再有淡入属性:默认全量可见
     expect(gap.getAttribute('width')).not.toBe('0')
     // SACK 完整宽度(无增长裁剪)
     const sack = svg.querySelector('rect[fill="#8b5cf6"]') as SVGRectElement | null
     expect(sack).toBeTruthy()
-    expect(Number(sack!.getAttribute('opacity'))).toBe(1)
     // 重传箭头完整画出(y2 顶到 46)
     const retxLine = [...svg.querySelectorAll('line')].find((l) => l.getAttribute('stroke') === '#ef4444')!
     expect(retxLine.getAttribute('y2')).toBe('46')
-    // ACK 游标图层结构存在(t=0 时游标本体尚未出现——首个 ACK 在 0.04s,见恢复态用例)
-    expect(svg.textContent).not.toContain('累计确认')
-  })
-
-  it('progressive 播放态下元素按登场时刻显隐(GSAP 只补间时间,元素状态声明式)', () => {
-    // progressive=true 时,时刻 0 尚未到 gapRevealAt:Gap 应不可见(opacity=0)
-    const vm = makeVm({ marks: { gapRevealAt: 0.12, dupAckWindow: [0.2, 0.5], retxDrawAt: 0.55, recoverAt: 0.9 } })
-    const view = render(<SeqSpaceGraphic vm={vm} playhead={0} progressive />)
-    let gap = view.container.querySelector('[data-testid="fc-gap-0"]')!
-    expect(gap.getAttribute('opacity')).toBe('0')
-    // 越过登场时刻后完全可见
-    const mid = render(<SeqSpaceGraphic vm={vm} playhead={0.5} progressive />)
-    gap = mid.container.querySelector('[data-testid="fc-gap-0"]')!
-    expect(Number(gap.getAttribute('opacity'))).toBeCloseTo(1, 1)
-    // SACK 在窗口中点应有部分进度、窗口后满宽
-    const sackAtMid = Number(
-      render(<SeqSpaceGraphic vm={vm} playhead={0.35} progressive />).container.querySelector('rect[fill="#8b5cf6"]')?.getAttribute('width'),
-    )
-    const sackAtEnd = Number(mid.container.querySelector('rect[fill="#8b5cf6"]')?.getAttribute('width'))
-    expect(sackAtMid).toBeGreaterThan(0)
-    expect(sackAtMid).toBeLessThan(sackAtEnd)
-    // 恢复脉冲在 recoverAt 后出现(「缺口闭合」提示),脉冲窗与终态都消失
-    expect(mid.container.textContent).not.toContain('缺口闭合') // t=0.5 早于 recoverAt=0.9
-    cleanup()
-    const duringPing = render(<SeqSpaceGraphic vm={vm} playhead={0.93} progressive />)
-    expect(duringPing.container.textContent).toContain('缺口闭合')
-    const after = render(<SeqSpaceGraphic vm={vm} playhead={0.99} progressive />)
-    expect(after.container.textContent).not.toContain('缺口闭合')
-    // 但 ACK 游标在终态仍然驻留(信息不随动画消失)
-    expect(after.container.textContent).toMatch(/ACK \d/)
+    // ACK 游标终态驻留:停在最终累计确认位置(makeVm ackTrack 末点 ack=501)
+    expect(svg.textContent).toContain('累计确认 ACK 501')
   })
 
   it('降级横幅按需显示', () => {
@@ -448,7 +412,7 @@ describe('FaultCompare 多事件切换器(VDI 实测:单会话大量缺口事件
     expect(single.container.querySelector('[data-testid="fc-event-list"]')).not.toBeNull()
   })
 
-  it('eventKey 变化重挂载内容区:阶段选中与播放进度复位到初始态', () => {
+  it('eventKey 变化重挂载内容区:阶段选中复位到初始态', () => {
     const props = {
       vm: makeVm(),
       events: summaries,
@@ -627,9 +591,8 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
     expect(screen.getByTestId('fc-event-list').querySelectorAll('.fc-evbtn')).toHaveLength(10)
   })
 
-  it('ACK 游标自解释:标签注明累计确认,图例可开关该图层', () => {
-    // 从末阶段恢复:播放时刻落在首个 ACK 之后,游标可见(待播放 t=0 时它尚不存在,同样是正确行为)
-    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} initialStageIndex={4} />)
+  it('ACK 游标自解释:静态终态驻留于最终累计确认位置,图例可开关该图层', () => {
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
     const svg = () => screen.getByTestId('fc-seqspace')
     expect(svg().textContent).toMatch(/累计确认 ACK \d/)
     const ackBtn = screen.getByTestId('fc-layer-ack') as HTMLButtonElement

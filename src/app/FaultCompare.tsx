@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { clipSeqSpaceView, popIn, SEQ_STAGE_COLORS, wheelZoom, windowProgress, zoomStep } from '../m4/viewModel'
+import { clipSeqSpaceView, SEQ_STAGE_COLORS, wheelZoom, zoomStep } from '../m4/viewModel'
 import type { AppImpact } from '../analysis/app/impact'
 import type { CompareEventSummary, CompareViewModel, SeqSpaceView } from '../m4/viewModel'
-import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
 
 /**
  * M4 故障/正常对照页(整页板块)。
  *
- * 布局(用户审批反馈 2026-08-26 第二轮):
+ * 布局(用户审批反馈 2026-08-26 第二轮;2026-08-29 按用户要求移除播放功能):
  * - 整页切换:进入故障分析时工具的整个工作区切换到本板块,可返回;
  * - 左栏核心是**序列空间图形化**(已见字节条 + Gap hatch + SACK 绿块 + 重传回补箭头 +
  *   ACK 游标),不是逐报文列表 —— VDI 抓包数千报文的列表不可用;
+ * - 序列空间一律**静态终态呈现**:所有元素一次性完整可见,ACK 游标停在最终累计确认
+ *   位置 —— 与播放终态信息等价且更直接,阶段浏览靠阶段卡/阶段带点选;
  * - 左栏顶部为**事件切换器**:VDI 实测一个会话常有大量缺口事件,只看 events[0] 不可用;
- *   切换事件由父层重算视图模型,本组件以 eventKey 重挂载来复位播放状态;
- * - 阶段带为时间进度条形态(DSH duration 式):彩色阶段段 + 当前位置游标 + 刻度,
+ *   切换事件由父层重算视图模型,本组件以 eventKey 重挂载来复位视图状态;
+ * - 阶段带为时间进度条形态(DSH duration 式):彩色阶段段 + 刻度,
  *   当前阶段信息面板固定展示;
  * - 关键报文链只含证据链报文(点击跳回原报文)。
  */
@@ -33,7 +34,7 @@ interface FaultCompareProps {
   events?: CompareEventSummary[]
   /** 当前选中事件下标 */
   eventIndex?: number
-  /** 切换事件回调;eventKey 变化时内容区整体重挂载(播放复位) */
+  /** 切换事件回调;eventKey 变化时内容区整体重挂载(视图状态复位) */
   onSelectEvent?: (i: number) => void
   /** 当前事件的稳定 id,作为内容区 remount key */
   eventKey?: string
@@ -54,21 +55,6 @@ interface FaultCompareProps {
    * + 箭头标注数据方向,替代 c2s/s2c 黑话;不传时退化为事件方向/对向
    */
   endpoints?: { client: string; server: string }
-}
-
-function phaseLabel(p: PlaybackPhase): string {
-  switch (p) {
-    case 'playing':
-      return '播放中'
-    case 'paused':
-      return '已暂停'
-    case 'done':
-      return '终态'
-    case 'static':
-      return '静态模式'
-    default:
-      return '待播放'
-  }
 }
 
 /** 事件切换器虚拟化阈值:低于此值直接全渲染(常规会话 <100 事件,虚拟化反增复杂度) */
@@ -184,9 +170,6 @@ function endpointLabel(ep: string, max = 22): string {
   return `${ep.slice(0, Math.max(6, max - 1))}…`
 }
 
-/** 恢复脉冲的持续时长(归一化时间轴占比) */
-const PING_DUR = 0.07
-
 /** 图层可见性(图例即开关):全部缺省可见 */
 export interface SeqLayers {
   seen: boolean
@@ -214,18 +197,15 @@ export interface BaseRange {
 /**
  * 序列空间图形:SVG 渲染已见字节条/Gap/SACK/重传回补箭头/ACK 游标。
  *
- * 元素级分镜动画(plan M4「过程感」):GSAP 只补间播放时刻这一个数字(usePlayback),
- * 每个元素的登场由 `marks` 的登场时刻 + 当前时刻**声明式**推导 —— transform/opacity,
- * 零布局回流。`progressive=false`(静态模式/reduced-motion/未开始播放)直接渲染全部元素,
- * 信息与终态完全等价,满足审批约束 #4。导出以便对动画参数做元素级测试。
+ * 静态终态呈现(2026-08-29 用户要求移除播放功能):所有元素一次性完整渲染 ——
+ * Gap hatch/SACK/重传箭头均为满量终态,ACK 游标停在最终累计确认位置
+ * (它是核心诊断信号:游标卡在缺口前 = 丢包定位)。信息与原播放终态完全等价。
  *
  * M5 完整 SSV:`layers` 控制图层显隐(图例即开关);`zoomRange`/`onZoomRange`
  * 支持滚轮缩放与拖拽平移(状态归父层,本组件只发事件;无回调时忽略交互)。
  */
 export function SeqSpaceGraphic({
   vm,
-  playhead,
-  progressive,
   seqSpaceOverride,
   label = '序列空间图形化',
   caption = '视图聚焦缺口邻域',
@@ -237,9 +217,7 @@ export function SeqSpaceGraphic({
   onSelectPacket,
 }: {
   vm: CompareViewModel
-  playhead: number
-  progressive: boolean
-  /** 对向视图:用另一份序列空间数据渲染(无 marks/无动画,progressive=false) */
+  /** 对向视图:用另一份序列空间数据渲染(无事件证据链,静态事实视图) */
   seqSpaceOverride?: SeqSpaceView
   label?: string
   /** 轴说明后缀:事件方向=聚焦缺口邻域;对向=全景 */
@@ -262,7 +240,6 @@ export function SeqSpaceGraphic({
 }) {
   const sq = seqSpaceOverride ?? vm.seqSpace
   const base = baseRange ?? { min: sq.axisMin, max: sq.axisMax }
-  const marks = vm.marks
   const W = 720
   const H = 150
   const x = (v: number): number => ((v - sq.axisMin) / (sq.axisMax - sq.axisMin)) * (W - 16) + 8
@@ -300,42 +277,18 @@ export function SeqSpaceGraphic({
     [onZoomRange, zoomRange, base.min, base.max],
   )
 
-// 时间轴映射:等分坐标 playhead -> 真实秒(命中所属阶段区间,阶段内按比例反解),
-  // 再查 ACK 轨迹。与 viewModel 的 timeToBand 互为逆映射。
-  const timeline = useMemo(() => {
-    const st = vm.stages
-    if (st.length === 0) return null
-    return {
-      toAbs: (): number => {
-        const idx = Math.min(st.length - 1, Math.max(0, Math.floor(playhead * st.length)))
-        const seg = st[Math.min(idx, st.length - 1)]
-        const segSpan = seg.t1 - seg.t0
-        const frac = segSpan > 0 ? (playhead - seg.t0) / segSpan : 0
-        return seg.startTime + Math.min(1, Math.max(0, frac)) * (seg.endTime - seg.startTime)
-      },
+  // ACK 游标停在最终累计确认位置:取末阶段结束时刻,查 ACK 轨迹中最后一个不超过它的 ack
+  // (与 viewModel 的 timeToBand 同一绝对秒坐标系)。
+  const finalAck = useMemo(() => {
+    const last = vm.stages[vm.stages.length - 1]
+    const absT = last ? last.endTime : 0
+    let lastAck: number | null = null
+    for (const pt of sq.ackTrack) {
+      if (pt.time <= absT) lastAck = pt.ack
+      else break
     }
-  }, [playhead, vm.stages])
-  const ackAt = useCallback(
-    (absT: number): number | null => {
-      let last: number | null = null
-      for (const pt of sq.ackTrack) {
-        if (pt.time <= absT) last = pt.ack
-        else break
-      }
-      return last
-    },
-    [sq.ackTrack],
-  )
-
-  // 某元素的登场进度:无标记 / 非 progressive 时恒为完整可见
-  // ---- 各元素动画参数 ----
-  const gapPop = progressive && marks.gapRevealAt != null ? popIn(playhead, marks.gapRevealAt) : null
-  const win = progressive ? marks.dupAckWindow : undefined
-  const retxAt = progressive ? marks.retxDrawAt : undefined
-  const retxP = retxAt != null ? windowProgress(playhead, retxAt, retxAt + 0.06) : 1
-  const pingD = progressive && marks.recoverAt != null ? playhead - marks.recoverAt : Infinity
-
-  const nSack = sq.sackBlocks.length
+    return lastAck
+  }, [sq.ackTrack, vm.stages])
 
   return (
     <svg
@@ -377,14 +330,11 @@ export function SeqSpaceGraphic({
             <title>{`已见字节 ${Math.round(s)}–${Math.round(e)}`}</title>
           </rect>
         ))}
-      {/* Gap hatch:在缺口显露时刻弹跳登场(缩放过冲),此前不可见 */}
+      {/* Gap hatch:红色斜纹,静态满量可见 */}
       {layers.gap &&
         sq.gaps.map(([s, e], i) => {
         const gx = x(s)
         const gw = Math.max(x(e) - x(s), 2)
-        const style = gapPop
-          ? ({ transform: `scale(${gapPop.scale})`, transformBox: 'fill-box', transformOrigin: 'center' } as React.CSSProperties)
-          : undefined
         return (
           <rect
             key={`gap${i}`}
@@ -396,34 +346,23 @@ export function SeqSpaceGraphic({
             fill="url(#fc-hatch)"
             stroke="#ef4444"
             strokeDasharray="3 2"
-            opacity={gapPop ? gapPop.opacity : 1}
-            style={style}
           >
             <title>{`未收到 ${Math.round(s)}–${Math.round(e)}`}</title>
           </rect>
         )
       })}
       {/* SACK 块(紫色,与已见字节区分):对端报告已收到、但本抓包点未必见过的字节。
-          在 Dup ACK 窗口内按块序逐块向右长出;无窗口标记时保守完整显示 */}
+          静态终态:全部块按完整宽度直接呈现 */}
       {layers.sack &&
         sq.sackBlocks.map(([s, e], i) => {
-        const target = Math.max(x(e) - x(s), 2)
-        let wFrac = 1
-        let op = 1
-        if (win && nSack > 0) {
-          const slice = (win[1] - win[0]) / nSack
-          wFrac = windowProgress(playhead, win[0] + slice * i, win[0] + slice * i + slice * 0.7)
-          op = 0.5 + 0.5 * wFrac
-        }
         return (
           <rect
             key={`sack${i}`}
             x={x(s)}
             y={48}
-            width={Math.max(target * wFrac, wFrac > 0 ? 1 : 0)}
+            width={Math.max(x(e) - x(s), 2)}
             height={10}
             fill="#8b5cf6"
-            opacity={op}
             rx={2}
           >
             <title>{`SACK(对端已收) ${Math.round(s)}–${Math.round(e)}`}</title>
@@ -469,53 +408,34 @@ export function SeqSpaceGraphic({
         }
         return out
       })()}
-      {/* 重传回补箭头:自缺口末端向上画出(随播放推进),配标签淡入 */}
+      {/* 重传回补箭头:自缺口末端向上完整画出,配标签 */}
       {layers.retx && sq.retxArrow && (
         <g>
           <line
             x1={x(sq.retxArrow.seq)}
             y1={70}
             x2={x(sq.retxArrow.seq)}
-            y2={70 - 24 * retxP}
+            y2={70 - 24}
             stroke="#ef4444"
             strokeWidth={2}
             markerEnd="url(#fc-arr)"
           />
-          <text x={x(sq.retxArrow.seq) + 4} y={70} fontSize={10} fill="#ef4444" opacity={retxP}>
+          <text x={x(sq.retxArrow.seq) + 4} y={70} fontSize={10} fill="#ef4444">
             重传回补
           </text>
         </g>
       )}
-      {/* ACK 游标(播放持续推进)与恢复脉冲 */}
+      {/* ACK 游标(最终累计确认位置,静态驻留):它是核心诊断信号 ——
+          游标停在缺口之前 = 对端卡在缺口,数据没被确认 */}
       {(() => {
-        if (!layers.ack || !timeline || sq.ackTrack.length === 0) return null
-        const absT = timeline.toAbs()
-        const ackPos = ackAt(absT)
-        if (ackPos == null) return null
-        const cx = x(ackPos)
-        const showPing = Number.isFinite(pingD) && pingD >= 0 && pingD <= PING_DUR
+        if (!layers.ack || finalAck == null) return null
+        const cx = x(finalAck)
         return (
           <g>
             <line x1={cx} y1={92} x2={cx} y2={H - 22} stroke="#1d4ed8" strokeWidth={1.5} strokeDasharray="4 3" />
             <circle cx={cx} cy={92} r={5} fill="#1d4ed8" />
-            {showPing && (
-              <>
-                <circle
-                  cx={cx}
-                  cy={92}
-                  r={6 + 26 * (pingD / PING_DUR)}
-                  fill="none"
-                  stroke="#059669"
-                  strokeWidth={2}
-                  opacity={(1 - pingD / PING_DUR) * 0.8}
-                />
-                <text x={cx} y={84} textAnchor="middle" fontSize={10} fill="#059669" opacity={1 - pingD / PING_DUR}>
-                  缺口闭合
-                </text>
-              </>
-            )}
-            <text x={cx} y={showPing ? 76 : 88} textAnchor="middle" fontSize={10} fill="#1d4ed8">
-              累计确认 ACK {ackPos}
+            <text x={cx} y={88} textAnchor="middle" fontSize={10} fill="#1d4ed8">
+              累计确认 ACK {finalAck}
             </text>
           </g>
         )
@@ -573,7 +493,7 @@ export function SeqSpaceGraphic({
   )
 }
 
-/** 外壳:空态判定 + 以 eventKey 重挂载内容区(切换事件即复位播放/阶段选中) */
+/** 外壳:空态判定 + 以 eventKey 重挂载内容区(切换事件即复位阶段选中/缩放/图层) */
 export function FaultCompare(props: FaultCompareProps) {
   const { vm } = props
   if (!vm) {
@@ -606,20 +526,9 @@ function CompareContent({
   appImpacts,
   endpoints,
 }: FaultCompareProps & { vm: CompareViewModel }) {
-  const stageAt = useMemo(
-    () => (t: number): number => {
-      if (!vm || vm.stages.length === 0) return -1
-      for (let i = vm.stages.length - 1; i >= 0; i--) {
-        if (t >= vm.stages[i].t0) return i
-      }
-      return -1
-    },
-    [vm],
-  )
-  // 恢复位置:初始阶段下标 -> 阶段起点时刻(usePlayback 仅在挂载时读取一次)
-  const initialTime = initialStageIndex != null ? (vm.stages[initialStageIndex]?.t0 ?? 0) : 0
-  const pb = usePlayback(vm.stages, stageAt, initialTime)
-  const [selectedStage, setSelectedStage] = useState<number | null>(null)
+  // 活动阶段:静态浏览靠点选(阶段卡/阶段带),缺省高亮阶段 1;
+  // 跳包返回恢复时以 initialStageIndex 初始化(AppLayout 传入,仅挂载时生效)
+  const [selectedStage, setSelectedStage] = useState<number>(initialStageIndex ?? 0)
   // 窄窗双标签与序列空间方向切换(事件切换单键重挂载,状态随之复位)
   const narrow = useNarrowViewport()
   const [faultTab, setFaultTab] = useState<'fault' | 'ref'>('fault')
@@ -644,47 +553,19 @@ function CompareContent({
   }
   const caption = viewSide === 'opp' ? '对向全景' : viewMode === 'panorama' ? '全景(该方向全部字节)' : '聚焦缺口邻域'
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    switch (e.key) {
-      case ' ':
-        e.preventDefault()
-        if (pb.phase === 'playing') pb.pause()
-        else if (pb.phase === 'static') pb.overrideOnce()
-        else pb.play()
-        break
-      case 'ArrowRight':
-        e.preventDefault()
-        pb.stepForward()
-        break
-      case 'ArrowLeft':
-        e.preventDefault()
-        pb.stepBack()
-        break
-      case 'Escape':
-        e.preventDefault()
-        pb.stop()
-        break
-      default:
-        break
-    }
-  }
-
-  const activeIdx = selectedStage ?? pb.activeStageIndex
-  const active = activeIdx >= 0 ? vm.stages[activeIdx] : null
+  const activeIdx = selectedStage
+  const active = vm.stages[activeIdx] ?? null
   const showSwitcher = !!events && events.length > 0 && !!onSelectEvent
   // 跳包随行上下文:当前事件 + 活动阶段(阶段粒度恢复,案例 openQuestion 裁定)
   const jumpCtx = (): JumpContext => ({ eventIndex, stageIndex: activeIdx })
 
   return (
-    <div className="fc-page" data-testid="fault-compare" tabIndex={0} onKeyDown={onKeyDown}>
+    <div className="fc-page" data-testid="fault-compare">
       <div className="fc-toolbar">
         <button type="button" className="btn" onClick={onBack} data-testid="fc-back">
           ← 返回时序视图
         </button>
         <span className="fc-headline">{vm.headline}</span>
-        <span className="fc-phase">
-          {phaseLabel(pb.phase)} {pb.phase === 'playing' || pb.phase === 'paused' ? `(${Math.round(pb.time * 100)}%)` : ''}
-        </span>
         <span className="fc-controls">
           {onExport && (
             <button type="button" className="btn" onClick={onExport} data-testid="fc-export" title="导出当前事件为 Markdown 证据报告(不含正常参考示意)">
@@ -703,27 +584,6 @@ function CompareContent({
             </button>
           )}
         </span>
-        {pb.phase !== 'static' && (
-          <span className="fc-controls">
-            <button type="button" className="btn primary" onClick={pb.phase === 'playing' ? pb.pause : pb.play} data-testid="fc-playpause">
-              {pb.phase === 'playing' ? '⏸ 暂停' : '▶ 播放'}
-            </button>
-            <button type="button" className="btn icon" onClick={pb.stepBack} aria-label="上一阶段">
-              |◀
-            </button>
-            <button type="button" className="btn icon" onClick={pb.stepForward} aria-label="下一阶段">
-              ▶|
-            </button>
-          </span>
-        )}
-        {pb.phase === 'static' && (
-          <span className="fc-static-note" role="status">
-            系统已开启「减少动效」,动画停用;可点选阶段或用单步遍历。
-            <button type="button" className="btn" data-testid="fc-enable-animation" onClick={pb.overrideOnce}>
-              仍要播放一次
-            </button>
-          </span>
-        )}
       </div>
 
       {(vm.degraded.midStream || vm.degraded.unorderableInput || vm.degraded.lengthUnavailable) && (
@@ -928,7 +788,7 @@ function CompareContent({
             </button>
           </div>
 
-          {/* 序列空间图形化:核心可视化(事件方向=分镜动画;对向=静态事实;静态模式信息等价)。
+          {/* 序列空间图形化:核心可视化(事件方向=含事件证据链;对向=静态事实)。
               shownView = 基准视图(缺口邻域/全景/对向)+ 缩放裁剪;baseRange 始终是未缩放基准,
               滚轮/拖拽以它为界 —— 否则放大后缩小被钳死在当前窗口内 */}
           {viewSide === 'event' || !vm.opposite ? (
@@ -941,8 +801,6 @@ function CompareContent({
               onZoomRange={setZoom}
               baseRange={{ min: baseView.axisMin, max: baseView.axisMax }}
               onSelectPacket={onSelectPacket ? (n) => onSelectPacket(n, jumpCtx()) : undefined}
-              playhead={pb.time}
-              progressive={pb.phase === 'playing' || pb.phase === 'paused' || pb.phase === 'done'}
             />
           ) : (
             <SeqSpaceGraphic
@@ -954,8 +812,6 @@ function CompareContent({
               zoomRange={zoom}
               onZoomRange={setZoom}
               baseRange={{ min: baseView.axisMin, max: baseView.axisMax }}
-              playhead={0}
-              progressive={false}
               showEventPins={false}
             />
           )}
@@ -973,11 +829,11 @@ function CompareContent({
                 <p>{active.summary}</p>
               </>
             ) : (
-              <p>按「播放」或单步查看各故障阶段;阶段条上每个阶段始终可见。</p>
+              <p>点击阶段卡或上方阶段带查看该阶段详情。</p>
             )}
           </div>
 
-          {/* 阶段带:上为 DSH duration 式总览条(彩色段+播放游标),下为阶段卡片
+          {/* 阶段带:上为 DSH duration 式总览条(彩色阶段段),下为阶段卡片
               (审批要求:每阶段的名称/起止包号/时刻/信息要点常驻可见,不藏在 hover 里) */}
           <div className="fc-timeband" data-testid="fc-stageband" role="list" aria-label="故障阶段时间带">
             <div className="fc-timeband-track">
@@ -1007,8 +863,6 @@ function CompareContent({
                   </div>
                 )
               })}
-              {/* 游标=当前位置信息:idle(未开始)之外一律可见,静态模式同样信息等价 */}
-              {pb.phase !== 'idle' && <div className="fc-timeband-cursor" style={{ left: `${pb.time * 100}%` }} />}
             </div>
             <div className="fc-stage-cards" data-testid="fc-stage-cards">
               {vm.stages.map((s, i) => (
@@ -1068,7 +922,7 @@ function CompareContent({
                 <button
                   key={m.packetNumber}
                   type="button"
-                  className={`fc-keypkt ${m.stageIndex === activeIdx && (pb.phase !== 'idle' || selectedStage != null) ? 'now' : ''}`}
+                  className={`fc-keypkt ${m.stageIndex === activeIdx ? 'now' : ''}`}
                   onClick={() => onSelectPacket(m.packetNumber, jumpCtx())}
                   title={m.label}
                 >

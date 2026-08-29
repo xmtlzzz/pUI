@@ -247,7 +247,7 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     expect(resumeState.conversationId).toBe(conv.id)
     expect(resumeState.stageIndex).toBe(2)
 
-    // 主视图出现「返回故障分析(事件 1 · 阶段 3)」按钮;点击后事件、阶段、播放位置全部还原
+    // 主视图出现「返回故障分析(事件 1 · 阶段 3)」按钮;点击后事件、阶段还原
     const resumeBtn = container.querySelector('[data-testid="fault-analyze-resume"]') as HTMLButtonElement
     expect(resumeBtn.textContent).toContain('事件 1 · 阶段 3')
     act(() => {
@@ -255,10 +255,10 @@ describe('M4 故障分析整页板块(用户要求:整页切换,非右侧局部�
     })
     expect(container.querySelector('[data-testid="fault-compare"]')).toBeTruthy()
     expect((container.querySelector('[data-testid="fc-stage-panel"]') as HTMLElement).textContent).toContain('阶段 3/')
-    // resume 消费即清除;播放游标停在所恢复阶段起点(t0>0)
+    // resume 消费即清除;恢复阶段(重复确认)处于高亮态
     expect(useApp.getState().compareResume).toBeNull()
-    const cursor = container.querySelector('.fc-timeband-cursor') as HTMLElement
-    expect(Number.parseFloat(cursor.style.left)).toBeGreaterThan(0)
+    const activeCard = container.querySelectorAll('.fc-stage-card')[2] as HTMLElement
+    expect(activeCard.className).toContain('active')
     vi.unstubAllGlobals()
   })
 

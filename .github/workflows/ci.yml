@@ -1,0 +1,31 @@
+name: CI
+
+# 全部门槛与本地一致:前端全量测试 + tsc/vite 构建 + Rust 测试。
+# perfGuard 的真实 tshark 端到端在无 tshark 环境自动跳过(与本地无 tshark 时行为一致)。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # 选 windows:src-tauri(Tauri 2)在 Windows 无需系统级 webkit 依赖即可 cargo test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install dependencies
+        run: npm ci
+      - name: Frontend tests (vitest)
+        run: npx vitest run
+      - name: Build (tsc strict + vite)
+        run: npm run build
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml

@@ -1,0 +1,13 @@
+#!/bin/sh
+# 本地 pre-push 门槛,与 .github/workflows/ci.yml 同源:失败即中止推送。
+# 启用(一次性):git config core.hooksPath .githooks
+set -e
+
+echo "[pui pre-push] 前端全量测试 (vitest)"
+npx vitest run
+
+echo "[pui pre-push] 类型检查 + 构建 (tsc strict + vite)"
+npm run build
+
+echo "[pui pre-push] Rust 测试 (cargo test)"
+cargo test --manifest-path src-tauri/Cargo.toml

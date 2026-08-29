@@ -246,10 +246,14 @@ export function AppLayout() {
     }
   }
 
+  // 「导出叙述」紧凑模式:连续相同报文合并为 #X–#Y 区间(typora 等重渲染器打开
+  // 巨大会话不卡顿)。状态在 AppLayout,导出时传给 exportTranscript。
+  const [compactTranscript, setCompactTranscript] = useState(false)
+
   const onExportText = async () => {
     if (!selected) return
     try {
-      const md = exportTranscript(selected)
+      const md = exportTranscript(selected, compactTranscript ? true : null)
       const name = defaultPngName(selected.client, selected.server, selected.protocol).replace(/\.png$/i, '.md')
       await saveText(name, md)
     } catch (err) {
@@ -377,7 +381,7 @@ export function AppLayout() {
         </>
       ) : (
         <>
-          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} hasConversation={!!selected} />
+          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} compactTranscript={compactTranscript} setCompactTranscript={setCompactTranscript} hasConversation={!!selected} />
           {error && <div className="err">{error}</div>}
           {selected && (
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>

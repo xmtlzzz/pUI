@@ -11,10 +11,13 @@ interface Props {
   onExport?: () => void
   /** 导出 Markdown 时序叙述回调;缺省则不渲染(仅主视图提供,对照页用对照报告导出) */
   onExportText?: () => void
+  /** 「紧凑叙述」勾选:真实反映到导出内容(conflex 传给 exportTranscript 第二参) */
+  compactTranscript?: boolean
+  setCompactTranscript?: (v: boolean) => void
   hasConversation: boolean
 }
 
-export function Toolbar({ zoom, setZoom, onExport, onExportText, hasConversation }: Props) {
+export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscript = false, setCompactTranscript, hasConversation }: Props) {
   const meta = useApp((s) => s.meta)
   const openFile = useApp((s) => s.openFile)
   const openExample = useApp((s) => s.openExample)
@@ -129,9 +132,19 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, hasConversation
               </button>
             )}
             {onExportText && (
-              <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
-                导出叙述
-              </button>
+              <span className="toolbar-export">
+                <label className="mini-check" title="连续相同报文合并为 #X–#Y 区间,大幅减少重复行(typora 等打开巨大会话不卡顿)">
+                  <input
+                    type="checkbox"
+                    checked={compactTranscript}
+                    onChange={(e) => setCompactTranscript?.(e.target.checked)}
+                  />
+                  紧凑叙述
+                </label>
+                <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
+                  导出叙述
+                </button>
+              </span>
             )}
           </>
         )}

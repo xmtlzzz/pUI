@@ -283,3 +283,23 @@ table.list .time-col { color: #94a3b8; }
   flex-direction: row;
   gap: 10px;
 }
+
+/* 「导出叙述」紧凑模式:勾选框 + 按钮同行 */
+.toolbar-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mini-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mini-check input {
+  accent-color: #2563eb;
+  cursor: pointer;
+}

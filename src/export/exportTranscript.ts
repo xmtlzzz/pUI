@@ -22,13 +22,15 @@ function mdCell(s: string): string {
 }
 
 /** 时序叙述导出(Markdown):教学/周报可直接粘贴的文本版会话时间线。
- *  compact=true(派发给 typora 等重渲染器时):把「方向+协议+概要+长度+分析标记」
- *  连续相同的报文合并为一行区间 `#X–#Y · N 包 · ...`,大幅减少重复 ACK/PSH 的行数,
- *  避免巨大会话在 docx/typora 里打开卡顿;区间内部各项仍可读。
- *  默认 null = 逐行完整导出(旧行为)。 */
+ *  compact=true:把「方向+协议+概要+分析标记」连续相同的报文合并为一行区间
+ *  `#X–#Y · N 包 · ...`,大幅减少重复 ACK/PSH 行数,避免巨大会话在 docx/typora 打开卡顿。
+ *  mode='anomalies'(周报):只保留带 ⚠ 分析标记(重传/乱序/丢失/dup-ack 等)的报文,
+ *  丢掉纯正常握手/ACK;仅异常模式恒走紧凑合并(异常包足够少,合并更易读)。
+ *  默认 full 逐行完整导出(旧行为);null/undefined 兼容。 */
 export function exportTranscript(
   conv: Conversation,
   compact: boolean | null = null,
+  mode: 'full' | 'anomalies' = 'full',
 ): string {
   const lines: string[] = []
   lines.push('# 会话时序叙述')
@@ -36,21 +38,36 @@ export function exportTranscript(
   lines.push('- 客户端: `' + displayHost(conv.client) + '`')
   lines.push('- 服务端: `' + displayHost(conv.server) + '`')
   lines.push('- 协议: ' + conv.protocol + ' · ' + conv.packetCount + ' 包 · ' + fmtBytes(conv.bytes) + ' · ' + conv.start.toFixed(3) + '~' + conv.end.toFixed(3) + 's')
+  const anomalyOnly = mode === 'anomalies'
+  if (anomalyOnly) lines.push('- 模式: 仅异常包(只列带 ⚠ 分析标记的报文,正常握手/ACK 已省略)')
   if (conv.issues.length) {
     lines.push('- ⚠ 异常: ' + conv.issues.map((i) => i.message).join('; '))
   }
   lines.push('')
+
+  // 待导出报文:仅异常模式过滤出带分析标记的;否则全量(紧凑则进一步合并)
+  const packets = anomalyOnly ? conv.packets.filter((p) => p.tcpAnalysis?.length) : conv.packets
+  if (packets.length === 0) {
+    if (anomalyOnly) {
+      lines.push('_该会话未检出 TCP 分析标记(重传/乱序/丢失/dup-ack 等),无异常报文可列_')
+    } else {
+      lines.push('_该会话无报文帧_')
+    }
+    lines.push('')
+    lines.push('_由 pUI 导出_')
+    return lines.join('\n')
+  }
+
   if (!compact) {
     lines.push('| # | 时间(s) | 方向 | 协议 | 概要 | 长度 |')
     lines.push('|---|---|---|---|---|---|')
-    for (const p of conv.packets) {
+    for (const p of packets) {
       lines.push(transcriptRow(p))
     }
   } else {
     lines.push('| 报文区间 | 包数 | 方向 | 协议 | 概要 | 长度 |')
     lines.push('|---|---|---|---|---|---|')
-    // 按连续相同的「方向+协议+概要(+分析标记)」分组;长度差异独立列,不并入分组键
-    for (const g of groupConsecutive(conv.packets)) {
+    for (const g of groupConsecutive(packets)) {
       lines.push(compactRow(g))
     }
   }

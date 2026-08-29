@@ -249,11 +249,13 @@ export function AppLayout() {
   // 「导出叙述」紧凑模式:连续相同报文合并为 #X–#Y 区间(typora 等重渲染器打开
   // 巨大会话不卡顿)。状态在 AppLayout,导出时传给 exportTranscript。
   const [compactTranscript, setCompactTranscript] = useState(false)
+  // 「仅异常包」:只导出带 TCP 分析标记(重传/乱序/丢失/dup-ack 等)的报文,适合周报
+  const [anomaliesOnly, setAnomaliesOnly] = useState(false)
 
   const onExportText = async () => {
     if (!selected) return
     try {
-      const md = exportTranscript(selected, compactTranscript ? true : null)
+      const md = exportTranscript(selected, compactTranscript ? true : null, anomaliesOnly ? 'anomalies' : 'full')
       const name = defaultPngName(selected.client, selected.server, selected.protocol).replace(/\.png$/i, '.md')
       await saveText(name, md)
     } catch (err) {
@@ -381,7 +383,7 @@ export function AppLayout() {
         </>
       ) : (
         <>
-          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} compactTranscript={compactTranscript} setCompactTranscript={setCompactTranscript} hasConversation={!!selected} />
+          <Toolbar zoom={zoom} setZoom={setZoom} onExport={onExport} onExportText={onExportText} compactTranscript={compactTranscript} setCompactTranscript={setCompactTranscript} anomaliesOnly={anomaliesOnly} setAnomaliesOnly={setAnomaliesOnly} hasConversation={!!selected} />
           {error && <div className="err">{error}</div>}
           {selected && (
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>

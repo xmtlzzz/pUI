@@ -14,10 +14,13 @@ interface Props {
   /** 「紧凑叙述」勾选:真实反映到导出内容(conflex 传给 exportTranscript 第二参) */
   compactTranscript?: boolean
   setCompactTranscript?: (v: boolean) => void
+  /** 「仅异常包」勾选:只列带 ⚠ 分析标记的报文(第三参传给 exportTranscript) */
+  anomaliesOnly?: boolean
+  setAnomaliesOnly?: (v: boolean) => void
   hasConversation: boolean
 }
 
-export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscript = false, setCompactTranscript, hasConversation }: Props) {
+export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscript = false, setCompactTranscript, anomaliesOnly = false, setAnomaliesOnly, hasConversation }: Props) {
   const meta = useApp((s) => s.meta)
   const openFile = useApp((s) => s.openFile)
   const openExample = useApp((s) => s.openExample)
@@ -140,6 +143,14 @@ export function Toolbar({ zoom, setZoom, onExport, onExportText, compactTranscri
                     onChange={(e) => setCompactTranscript?.(e.target.checked)}
                   />
                   紧凑叙述
+                </label>
+                <label className="mini-check" title="只列带 ⚠ 分析标记(重传/乱序/丢失/dup-ack 等)的报文,丢掉正常握手/ACK,适合周报">
+                  <input
+                    type="checkbox"
+                    checked={anomaliesOnly}
+                    onChange={(e) => setAnomaliesOnly?.(e.target.checked)}
+                  />
+                  仅异常包
                 </label>
                 <button className="btn" onClick={onExportText} title="导出当前会话的 Markdown 时序叙述(可直接粘贴进文档/周报)">
                   导出叙述

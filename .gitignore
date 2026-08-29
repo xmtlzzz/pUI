@@ -25,3 +25,6 @@ Thumbs.db
 # bundled tshark binary (not committed)
 src-tauri/resources/tshark
 src-tauri/resources/tshark.exe
+
+todo.md
+AGENTS.md

@@ -2,6 +2,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, cleanup } from '@testing-library/react'
 import { wheelZoom, type CompareEventSummary, type CompareViewModel } from '../m4/viewModel'
+import type { AppImpact } from '../analysis/app/impact'
 import { FaultCompare, SeqSpaceGraphic } from './FaultCompare'
 
 afterEach(cleanup) // 无 globals 钩子,组件残留会让 getByTestId 跨用例重复命中
@@ -662,5 +663,51 @@ describe('FaultCompare 完整序列空间视图(M5:缩放/筛选)', () => {
     const zoomClamped = cur != null && (cur.start > base.min + 1e-9 || cur.end < base.max - 1e-9)
     expect(zoomClamped).toBe(false)
     void full
+  })
+})
+
+describe('FaultCompare 同期应用层关联(M6 二批)', () => {
+  const impacts: AppImpact[] = [
+    {
+      app: {
+        id: 'http:response:12',
+        app: 'http',
+        kind: 'response',
+        packetNumber: 12,
+        time: 0.26,
+        summary: 'HTTP 响应 200',
+        durationSeconds: 0.2,
+      },
+      tcp: { id: '0:c2s:x:101', kindLabel: '疑似丢包 / 延迟到达', startTime: 0.05, endTime: 0.25 },
+      statement: '「HTTP 响应 200」与 疑似丢包 / 延迟到达 时间窗重叠(±2s):同期现象,可能相关,不构成因果',
+    },
+  ]
+
+  it('传入 appImpacts 时渲染「同期应用层事件」块,点击条目跳到应用层报文', () => {
+    const onSelectPacket = vi.fn()
+    render(<FaultCompare vm={makeVm()} onSelectPacket={onSelectPacket} onBack={vi.fn()} appImpacts={impacts} />)
+    const block = screen.getByTestId('fc-app-impacts')
+    expect(block.textContent).toContain('同期应用层事件')
+    expect(block.textContent).toContain('HTTP 响应 200')
+    // 限定措辞原样可见
+    expect(block.textContent).toContain('可能相关,不构成因果')
+    // 点击 → 跳到应用层报文 #12
+    fireEvent.click(block.querySelector('button')!)
+    expect(onSelectPacket).toHaveBeenCalledWith(12, expect.objectContaining({ eventIndex: 0 }))
+  })
+
+  it('缺省/空数组不渲染关联块(无关联不占位)', () => {
+    const a = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} />)
+    expect(a.container.querySelector('[data-testid="fc-app-impacts"]')).toBeNull()
+    a.unmount()
+    const b = render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} appImpacts={[]} />)
+    expect(b.container.querySelector('[data-testid="fc-app-impacts"]')).toBeNull()
+  })
+
+  it('证据 JSON 导出按钮存在且可触发(onExportEvidence)', () => {
+    const onExportEvidence = vi.fn()
+    render(<FaultCompare vm={makeVm()} onSelectPacket={vi.fn()} onBack={vi.fn()} onExportEvidence={onExportEvidence} />)
+    fireEvent.click(screen.getByTestId('fc-export-evidence'))
+    expect(onExportEvidence).toHaveBeenCalledOnce()
   })
 })

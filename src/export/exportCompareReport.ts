@@ -22,6 +22,15 @@ function mdText(s: string): string {
   return s.replace(/[<>]/g, '').replace(/\r?\n/g, ' ')
 }
 
+export interface CompareAppImpact {
+  /** 应用事件摘要,如「HTTP GET /api」 */
+  appSummary: string
+  /** 关联的 TCP 事件类型标签 */
+  tcpKindLabel: string
+  /** 完整关联陈述(含限定措辞,来自 correlateImpacts) */
+  statement: string
+}
+
 export interface CompareReportInput {
   /** 抓包文件名(报告溯源) */
   fileName: string
@@ -31,6 +40,8 @@ export interface CompareReportInput {
   eventNo: number
   eventTotal: number
   vm: CompareViewModel
+  /** 可选:同期应用层关联(M6);不传/空则该节整体省略 */
+  appImpacts?: CompareAppImpact[]
 }
 
 export function exportCompareReport(input: CompareReportInput): string {
@@ -108,6 +119,16 @@ export function exportCompareReport(input: CompareReportInput): string {
     if (vm.degraded.midStream) L.push('- 抓包从连接中途开始:流起始处的缺失不构成丢包证据')
     if (vm.degraded.lengthUnavailable) L.push('- 载荷长度不可用:相关字节数省略显示(绝不以 0 冒充)')
     if (vm.degraded.unorderableInput) L.push('- 序列空间存在无法定位的输入:分析仅供参考')
+    L.push('')
+  }
+
+  // M6:同期应用层关联(可选;措辞来自 correlateImpacts,已含"可能相关,不构成因果"限定)
+  if (input.appImpacts && input.appImpacts.length > 0) {
+    L.push('## 同期应用层事件(时间窗关联)')
+    L.push('')
+    for (const imp of input.appImpacts) {
+      L.push(`- ${mdText(imp.statement)}`)
+    }
     L.push('')
   }
 

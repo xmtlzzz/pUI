@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clipSeqSpaceView, popIn, SEQ_STAGE_COLORS, wheelZoom, windowProgress, zoomStep } from '../m4/viewModel'
+import type { AppImpact } from '../analysis/app/impact'
 import type { CompareEventSummary, CompareViewModel, SeqSpaceView } from '../m4/viewModel'
 import { usePlayback, type PlaybackPhase } from '../m4/usePlayback'
 import './faultCompare.css'
@@ -40,6 +41,14 @@ interface FaultCompareProps {
   initialStageIndex?: number
   /** 导出当前事件为 Markdown 证据报告(实际故障侧;正常参考不导出) */
   onExport?: () => void
+  /** 导出当前事件为版本化 JSON 证据(schema pui-evidence,与 Markdown 报告同口径) */
+  onExportEvidence?: () => void
+  /**
+   * 同期应用层关联(M6):当前 TCP 事件与 HTTP/DNS/TLS 事件的时间窗重叠,
+   * 措辞已在 correlateImpacts 限定("同期现象,可能相关,不构成因果");
+   * 点击条目跳到对应应用层报文。空/缺省不渲染该区。
+   */
+  appImpacts?: AppImpact[]
   /**
    * 会话两端身份(可选,「客户端 → 服务端」展示):传入后方向切换器用端点身份
    * + 箭头标注数据方向,替代 c2s/s2c 黑话;不传时退化为事件方向/对向
@@ -593,6 +602,8 @@ function CompareContent({
   onSelectEvent,
   initialStageIndex,
   onExport,
+  onExportEvidence,
+  appImpacts,
   endpoints,
 }: FaultCompareProps & { vm: CompareViewModel }) {
   const stageAt = useMemo(
@@ -678,6 +689,17 @@ function CompareContent({
           {onExport && (
             <button type="button" className="btn" onClick={onExport} data-testid="fc-export" title="导出当前事件为 Markdown 证据报告(不含正常参考示意)">
               导出报告
+            </button>
+          )}
+          {onExportEvidence && (
+            <button
+              type="button"
+              className="btn"
+              onClick={onExportEvidence}
+              data-testid="fc-export-evidence"
+              title="导出当前事件为版本化 JSON 证据(pui-evidence schema,机器可读,与 Markdown 报告同口径)"
+            >
+              导出证据 JSON
             </button>
           )}
         </span>
@@ -1055,6 +1077,26 @@ function CompareContent({
               ))}
             </div>
           </div>
+
+          {/* M6:同期应用层关联(时间窗重叠,限定措辞由 impact 层统一给出)。
+              属实际故障侧观察,可跳到应用层报文;无关联(或未传)不渲染 */}
+          {appImpacts != null && appImpacts.length > 0 && (
+            <div className="fc-app-impacts" data-testid="fc-app-impacts">
+              <h4>同期应用层事件(M6 时间窗关联)</h4>
+              {appImpacts.map((imp) => (
+                <button
+                  key={`${imp.app.id}-${imp.tcp.id}`}
+                  type="button"
+                  className="fc-app-impact"
+                  title={`${imp.app.summary} · #${imp.app.packetNumber}(点击跳到该报文)`}
+                  onClick={() => onSelectPacket(imp.app.packetNumber, jumpCtx())}
+                >
+                  <span className="fc-app-impact-summary">{imp.app.summary}</span>
+                  <small>{imp.statement}</small>
+                </button>
+              ))}
+            </div>
+          )}
         </section>
         )}
 

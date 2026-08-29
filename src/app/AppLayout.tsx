@@ -13,10 +13,13 @@ import { isTauri } from '../bridge/tauri'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
 import { exportTranscript } from '../export/exportTranscript'
 import { exportCompareReport, defaultCompareReportName } from '../export/exportCompareReport'
+import { buildEvidenceJson, defaultEvidenceJsonName } from '../export/evidenceReport'
 import { saveText } from '../bridge/tauri'
 import { analyzeStream } from '../analysis/tcp/streamAnalysis'
 import { detectTcpEvents } from '../analysis/tcp/events'
 import { deriveStages } from '../analysis/tcp/stages'
+import { runApplicationAnalyzers } from '../analysis/app/analyzers'
+import { correlateImpacts } from '../analysis/app/impact'
 import { buildCompareViewModel, buildEventSummaries, type CompareViewModel } from '../m4/viewModel'
 import type { TcpEvent } from '../analysis/tcp/events'
 
@@ -59,6 +62,7 @@ export function AppLayout() {
     events: TcpEvent[]
     summaries: ReturnType<typeof buildEventSummaries>
     vmCache: Map<string, CompareViewModel | null>
+    appEvents: ReturnType<typeof runApplicationAnalyzers>
   } | null>(null)
   const compare = useMemo(() => {
     if (!compareFor || !selected || selected.id !== compareFor) return null
@@ -71,10 +75,18 @@ export function AppLayout() {
     if (!base || base.id !== selected.id || base.fingerprint !== fingerprint) {
       const facts = analyzeStream(selected.packets)
       const events: TcpEvent[] = detectTcpEvents(facts, selected.packets)
-      base = { id: selected.id, fingerprint, facts, events, summaries: buildEventSummaries(events), vmCache: new Map() }
+      base = {
+        id: selected.id,
+        fingerprint,
+        facts,
+        events,
+        summaries: buildEventSummaries(events),
+        vmCache: new Map(),
+        appEvents: runApplicationAnalyzers(selected.packets),
+      }
       compareCacheRef.current = base
     }
-    if (base.events.length === 0) return { summaries: base.summaries, eventIndex: -1, vm: null }
+    if (base.events.length === 0) return { summaries: base.summaries, eventIndex: -1, vm: null, appImpacts: [] }
     const idx = Math.min(Math.max(compareEventIndex, 0), base.events.length - 1)
     const eid = base.events[idx].id
     if (!base.vmCache.has(eid)) {
@@ -83,7 +95,10 @@ export function AppLayout() {
       const stages = deriveStages(base.events[idx], base.facts, selected.packets)
       base.vmCache.set(eid, buildCompareViewModel(selected.packets, base.facts, base.events[idx], stages))
     }
-    return { summaries: base.summaries, eventIndex: idx, vm: base.vmCache.get(eid)! }
+    // M6 二批:当前 TCP 事件与同期应用层事件的时间窗关联(±2s,限定措辞);
+    // appEvents 已随会话缓存,这里只做轻量窗口匹配
+    const appImpacts = correlateImpacts([base.events[idx]], base.appEvents)
+    return { summaries: base.summaries, eventIndex: idx, vm: base.vmCache.get(eid)!, appImpacts }
   }, [compareFor, selected, compareEventIndex])
   const compareVm = compare?.vm ?? null
 
@@ -146,7 +161,8 @@ export function AppLayout() {
     if (found > 0) setCompareEventIndex(found) // 下标 0 为默认值,无需设置
   }, [openCompare, selected, setCompareEventIndex])
 
-  // 对照页证据导出(口径:实际故障侧=证据;正常参考示意永不进入导出)
+  // 对照页证据导出(口径:实际故障侧=证据;正常参考示意永不进入导出)。
+  // 应用层关联(M6)随事件传入两份导出:Markdown 报告与版本化 JSON 证据同口径
   const onExportCompare = useCallback(async () => {
     if (!selected || !compare?.vm || compare.eventIndex < 0) return
     try {
@@ -157,8 +173,36 @@ export function AppLayout() {
         eventNo: compare.eventIndex + 1,
         eventTotal: compare.summaries.length,
         vm: compare.vm,
+        appImpacts: compare.appImpacts.map((imp) => ({
+          appSummary: imp.app.summary,
+          tcpKindLabel: imp.tcp.kindLabel,
+          statement: imp.statement,
+        })),
       })
       await saveText(defaultCompareReportName(label, compare.eventIndex + 1), md)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }, [compare, currentPath, meta, selected])
+
+  // 版本化 JSON 证据导出(M7):schema pui-evidence,确定性输出(无时间戳)
+  const onExportEvidence = useCallback(async () => {
+    if (!selected || !compare?.vm || compare.eventIndex < 0) return
+    try {
+      const label = `${selected.client} ↔ ${selected.server}`
+      const json = buildEvidenceJson({
+        fileName: meta?.fileName ?? currentPath.split(/[\\/]/).pop() ?? 'capture.pcapng',
+        conversationLabel: label,
+        eventNo: compare.eventIndex + 1,
+        eventTotal: compare.summaries.length,
+        vm: compare.vm,
+        appImpacts: compare.appImpacts.map((imp) => ({
+          appSummary: imp.app.summary,
+          tcpKindLabel: imp.tcp.kindLabel,
+          statement: imp.statement,
+        })),
+      })
+      await saveText(defaultEvidenceJsonName(label, compare.eventIndex + 1), json)
     } catch (err) {
       window.alert(err instanceof Error ? err.message : String(err))
     }
@@ -320,6 +364,8 @@ export function AppLayout() {
               eventKey={compare?.eventIndex != null && compare.eventIndex >= 0 ? compare.summaries[compare.eventIndex]?.id : undefined}
               initialStageIndex={pendingResume && pendingResume.conversationId === compareFor ? pendingResume.stageIndex : undefined}
               onExport={onExportCompare}
+              onExportEvidence={onExportEvidence}
+              appImpacts={compare?.appImpacts ?? []}
               onSelectPacket={jumpToPacket}
               onBack={exitCompare}
               endpoints={selected ? { client: selected.client, server: selected.server } : undefined}

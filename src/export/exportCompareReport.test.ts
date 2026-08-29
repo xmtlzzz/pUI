@@ -132,3 +132,33 @@ describe('exportCompareReport — 对照页证据导出', () => {
     expect(defaultCompareReportName('中文会话 <>:1', 1)).not.toMatch(/[\u4e00-\u9fff<>]/)
   })
 })
+
+describe('应用层关联节(M6 二批,可选)', () => {
+  const baseInput = () => ({
+    fileName: 'VDI_202608.pcapng',
+    conversationLabel: '10.0.0.1:1234 ↔ 93.184.216.34:443',
+    eventNo: 2,
+    eventTotal: 5,
+    vm: makeVm(),
+  })
+
+  it('传入 appImpacts 时输出关联节,限定措辞原样导出', () => {
+    const md = exportCompareReport({
+      ...baseInput(),
+      appImpacts: [
+        {
+          appSummary: 'HTTP 响应 200',
+          tcpKindLabel: '疑似丢包 / 延迟到达',
+          statement: '「HTTP 响应 200」与 疑似丢包 / 延迟到达 时间窗重叠(±2s):同期现象,可能相关,不构成因果',
+        },
+      ],
+    })
+    expect(md).toContain('## 同期应用层事件(时间窗关联)')
+    expect(md).toContain('同期现象,可能相关,不构成因果')
+  })
+
+  it('不传/空数组时节整体省略', () => {
+    expect(exportCompareReport(baseInput())).not.toContain('同期应用层事件')
+    expect(exportCompareReport({ ...baseInput(), appImpacts: [] })).not.toContain('同期应用层事件')
+  })
+})

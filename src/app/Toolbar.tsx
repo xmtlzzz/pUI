@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useApp } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
 
-const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote']
+const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote', 'dual-a', 'dual-b']
 
 /** 抓包文件打开过滤器:与 tshark -r 实际支持的常见现网格式对齐(tshark 4.6.6 实测)。
  *  识别机制:tshark 按内容魔数识别格式,与扩展名无关(实测 .5vw 后缀的 5views

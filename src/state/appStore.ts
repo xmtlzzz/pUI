@@ -115,6 +115,21 @@ export interface AppState {
   /** 取走并清空 resume(读改一体,避免双渲染竞态);无则返回 null */
   consumeCompareResume: () => CompareResume | null
   clearCompareResume: () => void
+  /** 双点对照:副抓包(B 侧)元信息;null = 未加载 */
+  dualMeta: CaptureMeta | null
+  /** 副抓包报文;null = 未加载(与空数组区分:空数组是合法的空抓包) */
+  dualPackets: Packet[] | null
+  /** 副抓包路径/示例名(对照编排缓存键的一部分) */
+  dualPath: string
+  dualLoading: boolean
+  /** 副抓包流式解析进度(仅 dualLoading 期间有意义) */
+  dualLoadingFrames: number
+  dualError: string | null
+  /** 副抓包加载序号:独立于主 loadSeq —— 两侧加载互不干扰,各自防过期 */
+  dualLoadSeq: number
+  openDualFile: (path: string) => Promise<void>
+  openDualExample: (name: string) => Promise<void>
+  clearDual: () => void
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -144,6 +159,13 @@ export const useApp = create<AppState>((set, get) => ({
   compareFor: null,
   compareEventIndex: 0,
   compareResume: null,
+  dualMeta: null,
+  dualPackets: null,
+  dualPath: '',
+  dualLoading: false,
+  dualLoadingFrames: 0,
+  dualError: null,
+  dualLoadSeq: 0,
 
   openCompare: (conversationId) => set({ compareFor: conversationId, compareEventIndex: 0 }),
   closeCompare: () => set({ compareFor: null }),
@@ -155,6 +177,47 @@ export const useApp = create<AppState>((set, get) => ({
     return r
   },
   clearCompareResume: () => set({ compareResume: null }),
+
+  // ---- 双点对照:副抓包加载。模式与主抓包完全同构(独立 seq 防过期、流式进度),
+  //      但不触碰主视图任何状态 —— 两侧是两个平行的观察点,加载互不干扰 ----
+  async openDualFile(path) {
+    const seq = get().dualLoadSeq + 1
+    set({ dualLoading: true, dualLoadingFrames: 0, dualError: null, dualLoadSeq: seq })
+    try {
+      const { meta, packets, path: realPath } = await openCapture(path, (frames) => {
+        if (get().dualLoadSeq === seq) set({ dualLoadingFrames: frames })
+      })
+      if (get().dualLoadSeq !== seq) return // 已被更新的副抓包加载覆盖
+      set({
+        dualMeta: { ...meta, parseMs: undefined },
+        dualPackets: packets,
+        dualPath: realPath,
+        dualLoading: false,
+      })
+    } catch (e) {
+      if (get().dualLoadSeq !== seq) return
+      set({ dualLoading: false, dualError: String(e) })
+    }
+  },
+
+  async openDualExample(name) {
+    const seq = get().dualLoadSeq + 1
+    set({ dualLoading: true, dualLoadingFrames: 0, dualError: null, dualLoadSeq: seq })
+    try {
+      const { meta, packets, path } = await openSample(name, (frames) => {
+        if (get().dualLoadSeq === seq) set({ dualLoadingFrames: frames })
+      })
+      if (get().dualLoadSeq !== seq) return
+      set({ dualMeta: meta, dualPackets: packets, dualPath: path, dualLoading: false })
+    } catch (e) {
+      if (get().dualLoadSeq !== seq) return
+      set({ dualLoading: false, dualError: String(e) })
+    }
+  },
+
+  clearDual() {
+    set({ dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null })
+  },
 
   async openFile(path) {
     const seq = get().loadSeq + 1
@@ -174,6 +237,8 @@ export const useApp = create<AppState>((set, get) => ({
         currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
         // 换文件后旧对照上下文全部失效
         compareFor: null, compareEventIndex: 0, compareResume: null,
+        // 主抓包更换 → 副抓包必须重新提供(两侧必须同源同批,旧 B 侧与新 A 侧无可比性)
+        dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -197,6 +262,8 @@ export const useApp = create<AppState>((set, get) => ({
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
         currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
         compareFor: null, compareEventIndex: 0, compareResume: null,
+        // 示例同样替换主抓包:同源同批约束与 openFile 一致
+        dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return

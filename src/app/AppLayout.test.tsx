@@ -436,3 +436,52 @@ describe('解析遮罩(emotion-ball 官方球,emotion 32 处理中忙碌)', () =
     vi.unstubAllGlobals()
   })
 })
+
+describe('双点对照入口(dual-entry)整页板块', () => {
+  it('选中会话时渲染 dual-entry;点击整页切换到双点对照;返回恢复主视图', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const raw = readFileSync(resolve(process.cwd(), 'public/fixtures/examples/parsed/http.json'), 'utf-8')
+    const packets = parsePackets(raw)
+    const conversations = aggregateConversations(packets)
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      selectedId: conversations[0].id,
+      compareFor: null,
+      dualMeta: null,
+      dualPackets: null,
+      dualPath: '',
+      dualLoading: false,
+      dualLoadingFrames: 0,
+      dualError: null,
+    })
+
+    const { container } = render(<AppLayout />)
+    // 主视图:入口按钮存在(与 fault-analyze-entry 并排)
+    const entry = container.querySelector('[data-testid="dual-entry"]')
+    expect(entry).toBeTruthy()
+
+    // 点击 → 整页切换:主视图面板让位,双点对照空态出现
+    fireEvent.click(entry!)
+    expect(container.querySelector('.pane.filter')).toBeNull()
+    expect(container.querySelector('.pane.list')).toBeNull()
+    expect(container.querySelector('[data-testid="dc-empty"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="dc-back"]')).toBeTruthy()
+
+    // 返回 → 主视图恢复,入口仍在
+    fireEvent.click(container.querySelector('[data-testid="dc-back"]')!)
+    expect(container.querySelector('.pane.filter')).toBeTruthy()
+    expect(container.querySelector('[data-testid="dual-entry"]')).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('未选中会话时不渲染 dual-entry(无 A 侧无从对照)', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    useApp.setState({ selectedId: null, conversations: [], filtered: [] })
+    const { container } = render(<AppLayout />)
+    expect(container.querySelector('[data-testid="dual-entry"]')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+})

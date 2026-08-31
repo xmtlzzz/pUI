@@ -24,6 +24,14 @@
 - **Application analyzers**: HTTP / DNS / TLS / **SSH / RDP / VNC / SMB2** as pluggable analyzers — encrypted protocols are observed only through plaintext handshake/command fields; no reassembly, no decryption
 - **Performance**: Rust-side frame-boundary streaming for large files (frontend parses per batch with live frame-count progress); worker-pooled JSON parsing on the frontend (pool = min(4, CPU cores)); a 5000-retransmission storm (~15k packets) analyzes in <3s
 
+### Dual-probe comparison
+
+- **Scenario**: A talks to B, and you and a colleague each capture one side — load both captures, the tool independently analyzes each, auto-pairs conversations by 5-tuple, aligns timelines on absolute time (`frame.time_epoch`, clock offset readable), and diffs per conversation
+- **Diff presentation**: packet/byte deltas, event diffs (only in A / only in B / both), merged timeline (each row labeled seen-by-A / seen-by-B / seen-by-both)
+- **Verdict aid**: when only one side observes a loss-type event, the tool hints the loss likely sits on the path segment between the two probes (observation-limited wording: not an assertion; packet loss on the other side's own capture produces the same shape)
+- **Red line**: each side runs the full analysis chain independently; only conclusions are aligned and compared — bytes are never merged across sides nor sequence spaces reassembled (clock skew and per-side capture loss would corrupt merged conclusions)
+- **Export**: comparison report as Markdown / offline HTML, same style as the evidence reports (escaped, deterministic)
+
 ### Reports & evidence
 
 - **Session reports in three formats**: Markdown / Word (.docx, standard progressive headings) / PDF (print preview via the WebView's native print-to-PDF, vector CJK text with system fonts); "compact transcript" merges consecutive identical packets, "anomalies only" lists flagged packets for week reports

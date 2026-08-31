@@ -7,6 +7,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 import { SequenceDiagram } from '../render/SequenceDiagram'
 import { PacketDetail } from '../detail/PacketDetail'
 import { FaultCompare } from './FaultCompare'
+import { DualComparePanel } from './DualComparePanel'
 import { useApp, selectSelected } from '../state/appStore'
 import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
@@ -53,6 +54,9 @@ export function AppLayout() {
   const consumeCompareResume = useApp((s) => s.consumeCompareResume)
   const openCompare = useApp((s) => s.openCompare)
   const closeCompare = useApp((s) => s.closeCompare)
+  // 双点对照整页板块:本地 UI 状态(不入 store —— 板块开关是导航态,与 compareFor
+  // 同级但更轻;进入新文件时该 state 保留无妨,面板自身按 store 数据空态渲染)
+  const [showDualBoard, setShowDualBoard] = useState(false)
   const [drag, setDrag] = useState(false)
   const [zoom, setZoom] = useState(1)
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -429,6 +433,16 @@ export function AppLayout() {
             />
           </ErrorBoundary>
         </>
+      ) : showDualBoard ? (
+        <>
+          {/* 双点对照整页板块:优先级低于 compareFor(compareFor 分支在前);
+              工具条只保留主工具条(打开文件仍可用),工作区让位给对照面板 */}
+          <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
+          {error && <div className="err">{error}</div>}
+          <ErrorBoundary name="双点对照">
+            <DualComparePanel onClose={() => setShowDualBoard(false)} />
+          </ErrorBoundary>
+        </>
       ) : (
         <>
           <Toolbar
@@ -449,6 +463,10 @@ export function AppLayout() {
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>
               <button type="button" className="btn" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">
                 ⚠ 故障分析(对照正常参考)
+              </button>
+              {/* 双点对照入口:主抓包(A 侧)已就绪即可进入;B 侧在面板内加载 */}
+              <button type="button" className="btn" data-testid="dual-entry" onClick={() => setShowDualBoard(true)}>
+                ⇄ 双点对照
               </button>
               {/* 跳包后的返回入口:恢复离开时的事件与阶段(分镜粒度) */}
               {compareResume && compareResume.conversationId === selected.id && (

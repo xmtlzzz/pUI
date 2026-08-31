@@ -5,9 +5,10 @@ vi.mock('../bridge/tauri', () => ({
   openCapture: vi.fn(),
   openSample: vi.fn(),
   fetchHex: vi.fn(),
+  getTsharkVersion: vi.fn(),
 }))
 
-import { openCapture, fetchHex } from '../bridge/tauri'
+import { openCapture, openSample, fetchHex } from '../bridge/tauri'
 import { useApp } from './appStore'
 import type { Packet } from '../model/types'
 
@@ -193,5 +194,94 @@ describe('M4 对照页导航状态', () => {
     useApp.setState({ compareResume: R })
     useApp.getState().clearCompareResume()
     expect(useApp.getState().compareResume).toBeNull()
+  })
+})
+
+describe('双点对照 store(副抓包状态)', () => {
+  beforeEach(() => {
+    useApp.setState({
+      meta: null, packets: [], conversations: [], filtered: [], currentPath: '', loadSeq: 0,
+      dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null, dualLoadSeq: 0,
+    })
+  })
+
+  it('openDualExample 成功载入 dualPackets 与 dualMeta', async () => {
+    const dualPackets: Packet[] = [
+      { number: 1, time: 1.5, timeEpoch: 1700000001.5, len: 60, transport: 'tcp', proto: 'tcp', srcIp: '10.0.0.8', dstIp: '10.0.0.9', srcPort: 61000, dstPort: 8080, direction: 'request' },
+    ]
+    vi.mocked(openSample).mockImplementation(() =>
+      Promise.resolve({ meta: meta('dual-b.pcapng'), packets: dualPackets, path: 'dual-b' }),
+    )
+    await useApp.getState().openDualExample('dual-b')
+    const s = useApp.getState()
+    expect(s.dualPackets).toEqual(dualPackets)
+    expect(s.dualMeta?.fileName).toBe('dual-b.pcapng')
+    expect(s.dualPath).toBe('dual-b')
+    expect(s.dualLoading).toBe(false)
+    expect(s.dualError).toBeNull()
+  })
+
+  it('openDualExample 失败时写 dualError 且不清空旧数据', async () => {
+    vi.mocked(openSample).mockImplementation(() => Promise.reject(new Error('missing example: nope')))
+    await useApp.getState().openDualExample('nope')
+    const s = useApp.getState()
+    expect(s.dualError).toContain('missing example: nope')
+    expect(s.dualLoading).toBe(false)
+    expect(s.dualPackets).toBeNull()
+  })
+
+  it('openDualExample 过期加载(loadSeq 已被更新)不写入状态', async () => {
+    let resolveSlow!: (v: { meta: ReturnType<typeof meta>; packets: Packet[]; path: string }) => void
+    vi.mocked(openSample).mockImplementation(
+      () => new Promise((r) => { resolveSlow = r }),
+    )
+    const slow = useApp.getState().openDualExample('slow-b')
+    // 期间又发起一次 dual 加载(dualLoadSeq 递增),先让它立即完成
+    vi.mocked(openSample).mockImplementation(() =>
+      Promise.resolve({ meta: meta('fast-b.pcapng'), packets: [], path: 'fast-b' }),
+    )
+    await useApp.getState().openDualExample('fast-b')
+    resolveSlow({ meta: meta('slow-b.pcapng'), packets: [], path: 'slow-b' })
+    await slow
+    // 慢加载的结果被丢弃,仍是快加载的
+    expect(useApp.getState().dualPath).toBe('fast-b')
+  })
+
+  it('openFile(主抓包)清空 dual 状态:两侧必须同源同批', async () => {
+    // 先装上 dual 状态
+    useApp.setState({
+      dualMeta: meta('dual-b.pcapng'),
+      dualPackets: [],
+      dualPath: 'dual-b',
+      dualError: 'stale',
+    })
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)], path: p }),
+    )
+    await useApp.getState().openFile('new-main.pcap')
+    const s = useApp.getState()
+    expect(s.dualMeta).toBeNull()
+    expect(s.dualPackets).toBeNull()
+    expect(s.dualPath).toBe('')
+    expect(s.dualError).toBeNull()
+  })
+
+  it('clearDual 清空副抓包状态', async () => {
+    useApp.setState({ dualMeta: meta('dual-b.pcapng'), dualPackets: [], dualPath: 'dual-b', dualError: 'x' })
+    useApp.getState().clearDual()
+    const s = useApp.getState()
+    expect(s.dualMeta).toBeNull()
+    expect(s.dualPackets).toBeNull()
+    expect(s.dualPath).toBe('')
+    expect(s.dualError).toBeNull()
+  })
+
+  it('openDualExample 流式进度写入 dualLoadingFrames', async () => {
+    vi.mocked(openSample).mockImplementation((_n: string, onProgress?: (f: number) => void) => {
+      onProgress?.(123)
+      return Promise.resolve({ meta: meta('dual-b.pcapng'), packets: [], path: 'dual-b' })
+    })
+    await useApp.getState().openDualExample('dual-b')
+    expect(useApp.getState().dualLoadingFrames).toBe(123)
   })
 })

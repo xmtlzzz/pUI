@@ -1,6 +1,6 @@
 # pUI 项目状态 TODO
 
-> 更新:2026-08-29(第 10 次,M6 收官) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
+> 更新:2026-08-31(第 11 次,可选项清零 + 格式扩展) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
 > 产品目标:把 PCAP 中分散的报文,还原为可验证的网络故障事件和证据链 —— 观察与推断分离,不过度归因。
 
 ---
@@ -9,9 +9,10 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 586 用例全绿(`npx vitest run`,70 文件) |
-| Rust 测试 | 21 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`) |
+| 前端测试 | 593 用例全绿(`npx vitest run`,70 文件) |
+| Rust 测试 | 25 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`,含真实 tshark e2e) |
 | 示例抓包 | http/dns/mixed/lossy/**remote**(remote=SSH/VNC/RDP/SMB2 四协议演示,gen-fixtures 可复现) |
+| 打开格式 | pcap/pcapng/cap/dmp/gz(透明解压)/5views/NetMon/nettl/snoop/CommView/Sniffer/ERF/btsnoop 等(tshark 按内容魔数识别,实测锚点 e2eFlat) |
 | 构建 | `npm run build` 通过(主 chunk gzip ≈117KB;docx 为懒加载 chunk ≈119KB gzip,仅导出 Word 时加载) |
 | 技术栈 | React 19 + TS 5.8 strict + Zustand 5 + Vite 7 + Vitest 4 + Tauri 2 + tshark 4.6.6(GSAP 已随播放功能移除) |
 | 性能护栏 | 5000 段重传风暴(~1.5 万包/100 缺口)分析 <3s(`perfGuard.test.ts`) |
@@ -43,6 +44,7 @@
 | **2026-08-29 交互收尾** | `75888dc` `9332e49` | 启动过渡动画固定展示 2 秒(bootTiming);故障对照页播放功能按用户要求整体移除(删 usePlayback/GSAP 依赖,序列空间改静态终态:Gap/SACK/重传箭头满量直出,ACK 游标驻留最终累计确认位置),阶段浏览靠阶段卡点选,跳包恢复不变 |
 | **报告导出 md/word/pdf** | `5046b27` | 会话级报告同一模型三格式(export/report/:reportModel 纯函数 + renderReportMd/Html/Docx);工具栏「格式选择+导出报告」替代导出叙述,紧凑叙述/仅异常包透传时序章节;PDF 走 ReportPreview 打印预览(WebView 原生打印存 PDF,系统字体矢量中文);Word 用 docx 动态 import;Rust 新增 save_bytes 通用二进制导出;报告模块由 subagent TDD 构建(51 用例) |
 | **M7 最后一项:离线 HTML + CI** | `16a5db3` `63251cc` | evidenceHtml 事件级离线单文件报告(与 MD/JSON 同口径,全实体转义,零脚本零远程资源,打印 CSS,13 测,subagent 构建);FaultCompare「导出 HTML」按钮;CI 补位(GitHub Actions windows + .githooks/pre-push,已启用 core.hooksPath) |
+| **可选项清零 + .cap 格式扩展** | `2044975` `5b7bc99` `d9c1b2b` `2d0be6e` | 打开格式全清单(.cap/.cap.gz 实测 e2e 三例一致,tshark 按魔数识别与扩展名无关);fetch_hex 流式化(run_hex_streaming+共享读循环,hex 上限 32MB→4MB,真实 tshark e2e);Worker 池化(并发解析,池=min(4,availableParallelism),requestId 关联防串扰,崩溃回落+重建);FaultCompare 拆出 StageBand/EventCard(919 行,44 断言零修改全绿) |
 | **M6 第二批:SSH/RDP/VNC/SMB** | `038023c` | 8 字段契约三处同步(实测 tshark 4.6.6 核实;gen-parsed 正则大写感知,camelCase 注册名不再漏抓);4 分析器插件(SSH 横幅/通道、RDP 协商位掩码 0x1SSL/0x2CredSSP/0x4RDSTLS/0x8CredSSP扩展、VNC RFB 版本、SMB2 命令+请求响应+树路径);加密边界红线:只观察明文握手/命令;演示抓包 remote.pcapng;SummaryPanel 会话类别显示 |
 | **M5 第四批:完整序列空间视图** | 本次 | panorama 全景视图(事件方向全字节轴,回绕流降级);clipSeqSpaceView/zoomStep 纯函数(裁剪/步进,确定性);+/−/重置按钮+滚轮指针锚点缩放+拖拽平移;图例升级为图层开关(已见/未收到/SACK/重传);切范围自动复位缩放 |
 
@@ -58,7 +60,7 @@ M5 剩余(按优先级):
 - [x] 完整 Sequence Space View(缩放/筛选):全景+缺口邻域双模式,滚轮/按钮缩放、拖拽平移,图例即图层开关
 - [x] 性能(第一批):10 万包主线程卡顿的根因(JSON.parse+字段投影)Worker 化 —— parseWorker+parseAsync 调度层(<1MB 主线程直解/≥1MB 走 Worker/失败回落),bridge 三入口接入;方向控件端点箭头化+事件轨图钉点击定位报文;SACK 紫色区分;ACK 游标自解释
 - [x] 性能(第二批):tshark 流式分批 —— Rust run_capture_stream 按帧边界切批(~4MB/批)经 tauri ipc::Channel 增量回传,open_capture/open_capture_data 返回不再含整段 JSON;前端逐批投影(parsePacketsBatchPush,帧号跨批累计),解析期间工具条实时显示已解析帧数;事件切换器列表虚拟化(>60 事件只渲染可视区,数千事件不再全量挂载)
-- [ ] 性能(可选收尾):fetch_hex 流式化(低频,收益小);Worker 池化(单只常驻已够)
+- [x] 性能(可选收尾,2026-08-31 启用):fetch_hex 流式化(run_hex_streaming,4MB 上限);Worker 池化(并发解析,min(4,availableParallelism))
 
 ## 四、未开工(按计划 M5-M7)
 
@@ -83,7 +85,7 @@ M5 剩余(按优先级):
 ## 五、已知问题 / 技术债
 
 - [x] **bundle 体积**:gsap 已随播放功能移除删除(主 chunk ~127KB→~117KB gzip);新增 docx 为动态 import 懒加载 chunk,仅导出 Word 时加载,不进首屏
-- [ ] **FaultCompare 单文件偏大**(~500 行):已拆出外壳/内容区与可测试的 SeqSpaceGraphic;StageBand/EventCard 子组件化可继续
+- [x] **FaultCompare 单文件偏大**:已拆出 SeqSpaceGraphic/StageBand/EventCard 子组件(919 行,编排聚焦)
 - [x] **CI 缺位**:GitHub Actions(win: vitest+build+cargo test)+ .githooks/pre-push(同源门槛,已启用 core.hooksPath)
 - [x] **解析主线程**:`parseAsync` 调度层已落地(<1MB 主线程直解,≥1MB 走 parseWorker,失败自动回落);Rust 侧 tshark 分批/流式仍在第二批
 - [ ] seqSpace 的 `ackTrack` 每次 build 全量扫描 packets(单会话 O(n),VDI 规模无感;Worker 化后自然消解)
@@ -98,7 +100,7 @@ cargo test --manifest-path src-tauri/Cargo.toml       # Rust 侧
 npx vitest run src/analysis/tcp/perfGuard.test.ts    # 性能护栏(无 tshark 时自动跳过 e2e)
 ```
 
-桌面冒烟:2026-08-29 已实机走通(打开示例→选会话→故障分析→阶段卡点选→关键报文跳包→详情→「返回故障分析」事件+阶段还原→返回时序视图;PDF 打印预览)。播放/暂停/单步已随播放功能移除,不再适用。路线图 M0-M7 全部落地:M6 第二批已实现(演示示例 remote 覆盖 SSH/VNC/RDP/SMB2);可选低收益项(fetch_hex 流式化、Worker 池化、FaultCompare 继续子组件化)保持待办不阻塞。
+桌面冒烟:2026-08-29 已实机走通(打开示例→选会话→故障分析→阶段卡点选→关键报文跳包→详情→「返回故障分析」事件+阶段还原→返回时序视图;PDF 打印预览)。播放/暂停/单步已随播放功能移除,不再适用。路线图 M0-M7 全部落地:M6 第二批已实现(演示示例 remote 覆盖 SSH/VNC/RDP/SMB2);可选项(fetch_hex 流式化/Worker 池化/FaultCompare 拆分)已于 2026-08-31 全部启用;打开格式扩展至现网常见全清单(.cap 等,按内容识别)。
 
 ## 七、关键设计约束(实现时不可违背)
 

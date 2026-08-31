@@ -35,8 +35,9 @@ import './dualCompare.css'
 const AUTO_BUDGET = 30000
 
 /** 示例清单:Toolbar 的 EXAMPLES 未导出(不动它的导出区),此处复制一份。
- *  dual-b 是双点对照的 B 侧演示数据(与 dual-a 同一条流、时钟快 1.5s)。 */
-const DUAL_EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote']
+ *  dual-b 是双点对照的 B 侧演示数据(与 dual-a 同一条流、时钟快 1.5s);
+ *  dual-a 也在列:便于从 B 侧视角反向对照(面板不限制两侧示例身份)。 */
+const DUAL_EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote', 'dual-a', 'dual-b']
 
 /** 单侧分析产物(事件三源合并 + facts)。
  *  事件元素类型用引擎窄接口的组合:detectTcpEvents/detect*M5Events/runApplicationAnalyzers

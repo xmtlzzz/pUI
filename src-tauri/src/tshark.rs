@@ -14,7 +14,15 @@ use crate::commands::AppState;
 /// 等效可开约 75-85MB 抓包(约 6.5-8 万包);DNS 等非 TCP 流量增幅仅 5% 左右
 pub const MAX_CAPTURE_JSON: u64 = 128 * 1024 * 1024;
 /// 单帧 hex 文本上限(正常 <1MB;恶意巨型帧由该上限兜底,防全量缓冲 OOM)
-const MAX_HEX_TEXT: u64 = 32 * 1024 * 1024;
+///
+/// 为什么是 4MB:fetch_hex 的输入是 `tshark -x` 的单帧 hex 转储,
+/// 体积上界 = 帧长 × 5(两列 hex+ASCII)≈ 字节长 × 6.25(含偏移列)。
+/// 现网最大常态帧是巨帧级 jumbo(≤10KB,VDI 场景实测 <2KB)→ 单帧 hex <70KB;
+/// 就算放大到理论极限:单帧被 tshark 重组/解密放大若干倍,也远低于 1MB
+/// (Rust 侧注释与前端同口径)。4MB = 正常态(<1MB)的 4 倍余量,
+/// 同时把恶意巨型帧的最坏缓冲从 32MB 压到 4MB,以 8 倍收紧兜底面。
+/// 流式化(run_hex_streaming)后,这里的上限只是回调字节预算,不再是单块内存峰值。
+const MAX_HEX_TEXT: u64 = 4 * 1024 * 1024;
 /// 子进程墙钟超时:超时 kill 并返回可读错误,防止挂死的 tshark 永久占线
 pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 /// stdout 已 EOF 但子进程未退出时的收尾宽限,超宽限 kill
@@ -155,6 +163,46 @@ fn run_stream(bin: &Path, args: &[&str], max_stdout: u64) -> Result<String, Stri
     run_stream_with_timeout(bin, args, max_stdout, COMMAND_TIMEOUT)
 }
 
+/// 共享的 stdout 读循环(run_stream_with_timeout 与 run_hex_streaming 复用,
+/// 不复制粘贴):读一块 → 交 `on_read` 处理(消费或缓冲,由调用方定);
+/// `on_read` 返回 Err(含输出超限)即中止读取。读到 EOF 返回 Ok。
+/// 守护语义与 run_capture_stream 读侧一致:有进展即重置墙钟(无进展才累计超时)。
+/// 注意:read 阻塞期间本函数无法感知墙钟 —— 「零输出挂死」的子进程由
+/// run_stream_with_timeout 的编排轮询兜底,本循环的 deadline 只约束「有输出但缓慢」。
+fn read_stdout_chunks<R: Read>(
+    mut stdout: R,
+    max_stdout: u64,
+    timeout: Duration,
+    mut on_read: impl FnMut(&[u8]) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut chunk = [0u8; 65536];
+    let mut total: u64 = 0;
+    // 墙钟截止:首个读循环内立即被「有进展即重置」覆盖,初值在此无读取路径
+    #[allow(unused_assignments)]
+    let mut deadline = Instant::now() + timeout;
+    loop {
+        match stdout.read(&mut chunk) {
+            Ok(0) => return Ok(()), // EOF
+            Ok(n) => {
+                total += n as u64;
+                if total > max_stdout {
+                    return Err(format!(
+                        "抓包解析输出超过 {}MB 上限:请先用显示过滤器缩小范围,或用 editcap/traceshark 分割后打开",
+                        max_stdout / 1024 / 1024
+                    ));
+                }
+                on_read(&chunk[..n])?;
+                // 有进展则重置墙钟(长时间大输出不应被总时长误杀;无进展才累计超时)
+                deadline = Instant::now() + timeout;
+            }
+            Err(e) => return Err(format!("tshark stdout: {e}")),
+        }
+        if Instant::now() >= deadline {
+            return Err("tshark timed out".into());
+        }
+    }
+}
+
 fn run_stream_with_timeout(
     bin: &Path,
     args: &[&str],
@@ -169,55 +217,18 @@ fn run_stream_with_timeout(
     let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
 
     // stderr 由专用线程并发排空,带字节上限(超限丢弃式排空防死锁),内容仅用于错误诊断
-    let stderr_thread = child.stderr.take().map(|mut stderr| {
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let mut chunk = [0u8; 8192];
-            let mut total = 0usize;
-            loop {
-                match stderr.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if total < MAX_STDERR {
-                            let take = n.min(MAX_STDERR - total);
-                            let _ = s.push_str(&String::from_utf8_lossy(&chunk[..take]));
-                            total += take;
-                        }
-                        // 超限:继续读但不追加,维持管道排空
-                    }
-                    Err(_) => break,
-                }
-            }
-            s
-        })
-    });
+    let stderr_thread = spawn_stderr_drainer(child.stderr.take());
 
-    // stdout 由专用线程分块读取并设字节上限
+    // stdout 由专用线程跑共享读循环(攒进缓冲);主线程轮询完成/退出/墙钟,
+    // 保住「零输出挂死子进程也会被 kill」的守护(读阻塞时只有这里能感知超时)
     let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
     let reader = std::thread::spawn(move || {
         let mut buf: Vec<u8> = Vec::new();
-        let mut total: u64 = 0;
-        let mut chunk = [0u8; 65536];
-        loop {
-            let n = match stdout.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(e) => {
-                    let _ = tx.send(Err(format!("tshark stdout: {e}")));
-                    return;
-                }
-            };
-            total += n as u64;
-            if total > max_stdout {
-                let _ = tx.send(Err(format!(
-                    "抓包解析输出超过 {}MB 上限:请先用显示过滤器缩小范围,或用 editcap/traceshark 分割后打开",
-                    max_stdout / 1024 / 1024
-                )));
-                return;
-            }
-            buf.extend_from_slice(&chunk[..n]);
-        }
-        let _ = tx.send(Ok(buf));
+        let r = read_stdout_chunks(&mut stdout, max_stdout, timeout, |c| {
+            buf.extend_from_slice(c);
+            Ok(())
+        });
+        let _ = tx.send(r.map(|_| buf));
     });
 
     let deadline = Instant::now() + timeout;
@@ -262,19 +273,10 @@ fn run_stream_with_timeout(
         return result.map(|b| String::from_utf8_lossy(&b).to_string());
     }
     // stdout 已 EOF 但子进程未退出:宽限等待,超宽限 kill
-    if status.is_none() {
-        let grace = Instant::now() + EXIT_GRACE;
-        while status.is_none() && Instant::now() < grace {
-            if let Ok(Some(st)) = child.try_wait() {
-                status = Some(st);
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        if status.is_none() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
+    let status = match status {
+        Some(st) => Some(st),
+        None => wait_with_grace(&mut child),
+    };
     let _ = reader.join();
     let err = truncate_err(&stderr_thread.and_then(|h| h.join().ok()).unwrap_or_default());
     if let Some(st) = status {
@@ -283,6 +285,49 @@ fn run_stream_with_timeout(
         }
     }
     Ok(String::from_utf8_lossy(&result.unwrap()).to_string())
+}
+
+/// stderr 并发排空线程(各子进程执行路径共用):带字节上限,超限丢弃式继续排空
+/// (防子进程阻塞在写 stderr 上死锁),内容仅用于错误诊断
+fn spawn_stderr_drainer(
+    stderr: Option<std::process::ChildStderr>,
+) -> Option<std::thread::JoinHandle<String>> {
+    stderr.map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            let mut chunk = [0u8; 8192];
+            let mut total = 0usize;
+            loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if total < MAX_STDERR {
+                            let take = n.min(MAX_STDERR - total);
+                            let _ = s.push_str(&String::from_utf8_lossy(&chunk[..take]));
+                            total += take;
+                        }
+                        // 超限:继续读但不追加,维持管道排空
+                    }
+                    Err(_) => break,
+                }
+            }
+            s
+        })
+    })
+}
+
+/// stdout 已 EOF 但子进程未退出时的收尾:宽限等待退出码,超宽限 kill 后返回 None
+fn wait_with_grace(child: &mut std::process::Child) -> Option<std::process::ExitStatus> {
+    let grace = Instant::now() + EXIT_GRACE;
+    while Instant::now() < grace {
+        if let Ok(Some(st)) = child.try_wait() {
+            return Some(st);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    None
 }
 
 /// 错误信息截断:完整 stderr 可达 MB 级,IPC 回传前裁到 MAX_ERR_MSG
@@ -311,13 +356,60 @@ pub fn tshark_version(bin: &Path) -> Option<String> {
     out.lines().find_map(parse_version_line)
 }
 
-pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
+/// 单帧 hex 转储(流式,M6 性能项):不把整段 hex 攒进内存再回传,
+/// 而是读到 stdout 块即回调 on_chunk(与 run_capture_stream 相同的排空语义:
+/// 边读边消费,回调出错立即中止,子进程不失控输出)。
+/// 守护与 run_stream 完全一致(字节上限 MAX_HEX_TEXT / 墙钟超时 / stderr 并发排空 /
+/// 退出宽限 kill),区别仅在 stdout 不整段缓冲而是逐块交付。
+pub fn run_hex_streaming<F: FnMut(&str) -> Result<(), String>>(
+    bin: &Path,
+    file: &str,
+    number: u32,
+    mut on_chunk: F,
+) -> Result<(), String> {
     if file.starts_with('-') {
         return Err("invalid capture path".into());
     }
     let filter = format!("frame.number=={number}");
-    // 复用流式读取 + 上限:单帧 hex 通常 <1MB,恶意巨型帧由 MAX_HEX_TEXT 兜底
-    run_stream(bin, &["-r", file, "-Y", &filter, "-x"], MAX_HEX_TEXT)
+    let mut cmd = Command::new(bin);
+    hide_console(&mut cmd);
+    cmd.args(["-r", file, "-Y", &filter, "-x"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("failed to run tshark: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
+
+    let stderr_thread = spawn_stderr_drainer(child.stderr.take());
+
+    // 读到块即回调:UTF-8 损失转换(lossy)与整段路径语义一致(tshark hex 输出恒为 ASCII)
+    let read_result = read_stdout_chunks(&mut stdout, MAX_HEX_TEXT, COMMAND_TIMEOUT, |c| {
+        on_chunk(&String::from_utf8_lossy(c))
+    });
+    let status = wait_with_grace(&mut child);
+    let _ = stdout;
+    read_result.map_err(|e| {
+        let _ = child.kill();
+        let _ = child.wait();
+        e
+    })?;
+    let err = truncate_err(&stderr_thread.map(|h| h.join().ok()).unwrap_or_default().unwrap_or_default());
+    if let Some(st) = status {
+        if !st.success() {
+            return Err(err.trim().to_string());
+        }
+    }
+    Ok(())
+}
+
+/// 单帧 hex 转储(整段形态,薄包装):内部走 run_hex_streaming 攒块拼接,
+/// 兼容既有调用与测试;真正的内存收益在流式调用方(块级消费,峰值不积整段)
+pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
+    let mut out = String::new();
+    run_hex_streaming(bin, file, number, |chunk| {
+        out.push_str(chunk);
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 /// 流式抓包解析(M5 性能第二批):不把整段 JSON 缓冲进内存再回传,

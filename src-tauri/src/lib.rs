@@ -1,6 +1,9 @@
 pub mod commands;
 pub mod tshark;
 
+#[cfg(test)]
+mod hex_stream_tests;
+
 use std::sync::Arc;
 
 use tauri::Manager;

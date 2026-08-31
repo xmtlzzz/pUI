@@ -94,6 +94,10 @@ fn check_capture_path(path: &str) -> Result<u64, String> {
         ));
     }
     Ok(size)
+    // 格式说明:tshark -r 按内容魔数识别抓包格式,与扩展名无关(tshark 4.6.6 实测:
+    // pcap/pcapng/纳秒 pcap/5views/NetMon/nettl/snoop/CommView/Sniffer 等;
+    // .gz 由 tshark 透明解压)。因此这里不做扩展名白名单 —— 现网 .cap 等任意
+    // 常见后缀直达 tshark,坏内容由 tshark 自身的「无法识别格式」报错兜底。
 }
 
 fn open_capture_blocking(
@@ -271,7 +275,15 @@ pub async fn fetch_hex(
         // 与 open_capture 同一道闸门:FIFO/设备路径会让 `-r` 空转占线,超大文件不受限
         check_capture_path(&path)?;
         let bin = tshark::resolve_cached(&app, &state).ok_or("tshark not found: set its path in settings")?;
-        tshark::run_hex(&bin, &path, frame_number)
+        // 单帧 hex 走流式内核攒块(与流式解析同一条读代码路径):
+        // 本命令无 Channel,仍整串返回 —— 峰值不变(<4MB 上限);
+        // 收益在上限收紧(32MB → 4MB)与未来需要真正分块回传时的复用面
+        let mut hex = String::new();
+        tshark::run_hex_streaming(&bin, &path, frame_number, |chunk| {
+            hex.push_str(chunk);
+            Ok(())
+        })?;
+        Ok(hex)
     })
     .await
     .map_err(|e| format!("fetch_hex task failed: {e}"))?

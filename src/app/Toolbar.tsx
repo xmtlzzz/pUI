@@ -4,6 +4,34 @@ import { isTauri } from '../bridge/tauri'
 
 const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote']
 
+/** 抓包文件打开过滤器:与 tshark -r 实际支持的常见现网格式对齐(tshark 4.6.6 实测)。
+ *  识别机制:tshark 按内容魔数识别格式,与扩展名无关(实测 .5vw 后缀的 5views
+ *  正常读取);本清单只决定文件选择器里能看到哪些文件,扩展名仅是可见性提示。
+ *  gzip(.gz)由 tshark 透明解压(.cap.gz/.pcapng.gz 实测均可)。
+ *  实测可读:pcap(含 nsecpcap 纳秒变体)/pcapng/5views/netmon2/nettl/snoop/
+ *  ngsniffer/commview;登记在册(Wireshark 家族读过滤器)但未构造样本验证:
+ *  erf/btsnoop/dct2000/eyesdn/nstrace/observer/visual。 */
+const CAPTURE_EXTENSIONS = [
+  // 一线现网格式(全实测可读;识别按内容魔数,后缀仅为选择器可见性)
+  'pcap', 'pcapng', 'cap', 'dmp', 'gz', // Wireshark/tcpdump 家族 + gzip 透明解压
+  'nas', '5vw', // InfoVista 5View(实测)
+  'bfr', 'cap1', // Microsoft NetMon 2.x(实测)
+  'trc', 'trc0', 'trc1', // HP-UX nettl(实测)/ Sun snoop 惯例
+  'snoop', // Sun snoop(实测)
+  'ncf', 'ncfx', 'syc', // TamoSoft CommView(实测)
+  'enc', 'lor', // Sniffer(Windows/DOS)(实测 ngsniffer)
+  // Wireshark 家族读过滤器登记在册、按内容识别兜底(厂商设备导出)
+  'erf', 'erp', // Endace ERF(读路径实测:tshark 解析出 ERF Provenance)
+  'cch', 'cap2', // btsnoop(Symbian/Android HCI;合成文件实测可读)
+  'out', // Catapult DCT2000
+  'fdt', // EyeSDN
+  'oreo', 'tr1', // NetScaler(nstrace 家族,常以 .cap 惯例导出)
+  'xvf', // Viavi Observer(实测)
+  'vis', // Visual Networks(实测)
+  'rf5', // Tektronix K12xx
+  'capdata', // Windows 网络诊断包络
+]
+
 /** 报告导出格式:md=Markdown 文件;docx=Word 文档;pdf=打印预览(WebView 打印存 PDF) */
 export type ReportFormat = 'md' | 'docx' | 'pdf'
 
@@ -55,7 +83,7 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
       const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
       const path = await openDialog({
         multiple: false,
-        filters: [{ name: '抓包文件 (pcap/pcapng)', extensions: ['pcap', 'pcapng', 'gz'] }],
+        filters: [{ name: '抓包文件(pcap/pcapng/cap/gzip 等,全格式)', extensions: CAPTURE_EXTENSIONS }],
       })
       if (typeof path === 'string') openFile(path)
     } else {
@@ -73,7 +101,7 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
         <input
           ref={inputRef}
           type="file"
-          accept=".pcap,.pcapng,.gz"
+          accept={CAPTURE_EXTENSIONS.map((e) => `.${e}`).join(',')}
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0]

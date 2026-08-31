@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "pUI - packet flow sequence analyzer"
 authors = ["xmtlz"]
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "pui_lib"

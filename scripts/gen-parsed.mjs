@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 
 const TSHARK = process.env.TSHARK ?? (process.platform === 'win32' ? 'C:\\Program Files\\Wireshark\\tshark.exe' : 'tshark')
 const OUT = join(process.cwd(), 'public', 'fixtures')
-const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote']
+const EXAMPLES = ['http', 'dns', 'mixed', 'lossy', 'remote', 'dual-a', 'dual-b']
 
 // 从 src/parse/captureFields.ts 提取字段清单(单文件无依赖,直接正则取字符串字面量)。
 // 字符集必须含大写字母:rdp.negReq.requestedProtocols 是 Wireshark 官方注册名(camelCase),

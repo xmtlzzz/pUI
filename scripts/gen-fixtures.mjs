@@ -197,6 +197,71 @@ const smb2 = [
 
 const remote = [...ssh, ...vnc, ...rdp, ...smb2]
 
+// 双观测点对照示例:同一条 TCP 流在 A(客户端侧)与 B(服务端侧)各抓一份。
+// 端点对与 http 示例一致(C=192.168.1.10 → S=93.184.216.34:80 语义,此处独立编址),
+// 两侧 IP 必须一致 —— 对齐引擎按五元组归一匹配,IP 不同就配不上对。
+const CD = { ip: '10.0.0.8', mac: '00:44:55:66:77:88' } // 客户端(在 A 侧本机,B 侧经路径看到)
+const SD = { ip: '10.0.0.9', mac: '00:55:66:77:88:99' } // 服务端(在 B 侧本机)
+const OFFSET_B = 1.5 // B 侧时钟偏移(秒)
+
+// A 侧构造复用 pktTo/pktFrom 但以 CD/SD 为端点;B 侧同端点、时钟 +OFFSET_B
+const pktDualA = (o) => ({
+  tsUs: us(o.t),
+  data: eth(SD.mac, CD.mac, 0x0800, ip4hdr(CD.ip, SD.ip, 6, tcpseg(o.sport, o.dport, o.seq, o.ack, o.flags, o.payload))),
+})
+const pktDualARev = (o) => ({
+  tsUs: us(o.t),
+  data: eth(CD.mac, SD.mac, 0x0800, ip4hdr(SD.ip, CD.ip, 6, tcpseg(o.sport, o.dport, o.seq, o.ack, o.flags, o.payload))),
+})
+
+const seg1 = Buffer.from('PUSH-1:' + 'a'.repeat(20))
+const seg2 = Buffer.from('PUSH-2:' + 'b'.repeat(20))
+const seg3 = Buffer.from('PUSH-3:' + 'c'.repeat(20))
+const ackLine = Buffer.from('OK-ALL\r\n')
+
+// A 侧(客户端抓包):发出 3 段,seg2 超时后重传,收到最终 ACK
+const dualA = [
+  pktDualA({ sport: 61000, dport: 8080, seq: 1000, ack: 0, flags: SYN, t: 0.000 }),
+  pktDualARev({ sport: 8080, dport: 61000, seq: 7000, ack: 1001, flags: SYN | ACK, t: 0.001 }),
+  pktDualA({ sport: 61000, dport: 8080, seq: 1001, ack: 7001, flags: ACK, t: 0.002 }),
+  // 3 个数据段连续发出(客户端视角 seq 推进)
+  pktDualA({ sport: 61000, dport: 8080, seq: 1001, ack: 7001, flags: PSH | ACK, payload: [...seg1], t: 0.010 }),
+  pktDualA({ sport: 61000, dport: 8080, seq: 1001 + seg1.length, ack: 7001, flags: PSH | ACK, payload: [...seg2], t: 0.012 }),
+  pktDualA({ sport: 61000, dport: 8080, seq: 1001 + seg1.length + seg2.length, ack: 7001, flags: PSH | ACK, payload: [...seg3], t: 0.014 }),
+  // seg2 丢失:服务端回 DupACK(两侧都能见到)
+  pktDualARev({ sport: 8080, dport: 61000, seq: 7001, ack: 1001 + seg1.length, flags: ACK, t: 0.030 }),
+  // 超时重传 seg2(A 侧证据:同 seq 重发)
+  pktDualA({ sport: 61000, dport: 8080, seq: 1001 + seg1.length, ack: 7001, flags: PSH | ACK, payload: [...seg2], t: 0.400 }),
+  // 服务端补齐后 ACK 前进
+  pktDualARev({ sport: 8080, dport: 61000, seq: 7001, ack: 1001 + seg1.length + seg2.length + seg3.length, flags: ACK, t: 0.420 }),
+  pktDualARev({ sport: 8080, dport: 61000, seq: 7001, ack: 1001 + seg1.length + seg2.length + seg3.length, flags: PSH | ACK, payload: [...ackLine], t: 0.430 }),
+  ...close(SD, 8080, 61000, 1001 + seg1.length + seg2.length + seg3.length, 7001 + ackLine.length, 0.500),
+]
+
+// B 侧(服务端抓包):时钟快 1.5s;见到 SYN/ACK 之后的:seg1 到达、seg2 缺失
+// (DupACK 催)、seg3 到达(SACK 缺口后数据)、重传 seg2 回补、最终 ACK。
+// 注意 B 侧见不到 A 侧「发出」的第一次 seg2(在 A→B 路径上丢了)。
+const tsB = (t) => t + OFFSET_B
+const pktBTo = (o) => ({ tsUs: us(tsB(o.t)), data: eth(SD.mac, CD.mac, 0x0800, ip4hdr(CD.ip, SD.ip, 6, tcpseg(o.sport, o.dport, o.seq, o.ack, o.flags, o.payload))) })
+const pktBFrom = (o) => ({ tsUs: us(tsB(o.t)), data: eth(CD.mac, SD.mac, 0x0800, ip4hdr(SD.ip, CD.ip, 6, tcpseg(o.sport, o.dport, o.seq, o.ack, o.flags, o.payload))) })
+const dualB = [
+  pktBTo({ sport: 61000, dport: 8080, seq: 1000, ack: 0, flags: SYN, t: 0.000 }),
+  pktBFrom({ sport: 8080, dport: 61000, seq: 7000, ack: 1001, flags: SYN | ACK, t: 0.001 }),
+  pktBTo({ sport: 61000, dport: 8080, seq: 1001, ack: 7001, flags: ACK, t: 0.002 }),
+  pktBTo({ sport: 61000, dport: 8080, seq: 1001, ack: 7001, flags: PSH | ACK, payload: [...seg1], t: 0.010 }),
+  // seg2 缺失:A→B 路径丢包,B 侧直接观察到缺口
+  pktBTo({ sport: 61000, dport: 8080, seq: 1001 + seg1.length + seg2.length, ack: 7001, flags: PSH | ACK, payload: [...seg3], t: 0.014 }),
+  // DupACK 催缺失数据
+  pktBFrom({ sport: 8080, dport: 61000, seq: 7001, ack: 1001 + seg1.length, flags: ACK, t: 0.030 }),
+  // 重传 seg2 到达(B 侧证据:缺口回补)
+  pktBTo({ sport: 61000, dport: 8080, seq: 1001 + seg1.length, ack: 7001, flags: PSH | ACK, payload: [...seg2], t: 0.400 }),
+  pktBFrom({ sport: 8080, dport: 61000, seq: 7001, ack: 1001 + seg1.length + seg2.length + seg3.length, flags: ACK, t: 0.420 }),
+  pktBFrom({ sport: 8080, dport: 61000, seq: 7001, ack: 1001 + seg1.length + seg2.length + seg3.length, flags: PSH | ACK, payload: [...ackLine], t: 0.430 }),
+  ...close(SD, 8080, 61000, 1001 + seg1.length + seg2.length + seg3.length, 7001 + ackLine.length, 0.500).map((p) => ({ tsUs: p.tsUs + us(OFFSET_B), data: p.data })),
+]
+
+const dual = { sideA: dualA, sideB: dualB }
+
 // 写入
 mkdirSync(join(OUT, 'examples'), { recursive: true })
 writeFileSync(join(OUT, 'examples', 'http.pcapng'), pcapng(http))
@@ -204,4 +269,7 @@ writeFileSync(join(OUT, 'examples', 'dns.pcapng'), pcapng(dns))
 writeFileSync(join(OUT, 'examples', 'mixed.pcapng'), pcapng([...arp, ...dns, ...http]))
 writeFileSync(join(OUT, 'examples', 'lossy.pcapng'), pcapng(lossy))
 writeFileSync(join(OUT, 'examples', 'remote.pcapng'), pcapng(remote))
-console.log('generated:', join(OUT, 'examples'), 'http/dns/mixed/lossy/remote')
+// 双点对照:A/B 两侧各自一份抓包(同一条流,不同观测点)
+writeFileSync(join(OUT, 'examples', 'dual-a.pcapng'), pcapng(dual.sideA))
+writeFileSync(join(OUT, 'examples', 'dual-b.pcapng'), pcapng(dual.sideB))
+console.log('generated:', join(OUT, 'examples'), 'http/dns/mixed/lossy/remote/dual-a/dual-b')

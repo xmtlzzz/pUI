@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { clipSeqSpaceView, SEQ_STAGE_COLORS, wheelZoom, zoomStep } from '../m4/viewModel'
+import { EventCard, StageBand, STAGE_COLORS as StageColors } from './faultCompareParts'
 import type { AppImpact } from '../analysis/app/impact'
 import type { CompareEventSummary, CompareViewModel, SeqSpaceView } from '../m4/viewModel'
 import './faultCompare.css'
@@ -163,8 +164,6 @@ function useNarrowViewport(breakpoint = 900): boolean {
   }, [breakpoint])
   return narrow
 }
-
-const STAGE_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981', '#ec4899', '#14b8a6', '#f97316']
 
 /** 端点展示:截断过长的地址(host:port),中间省略 */
 function endpointLabel(ep: string, max = 22): string {
@@ -834,7 +833,7 @@ function CompareContent({
           <div className="fc-stage-panel" data-testid="fc-stage-panel" role="region" aria-label="当前阶段信息">
             {active ? (
               <>
-                <strong style={{ color: STAGE_COLORS[activeIdx % STAGE_COLORS.length] }}>
+                <strong style={{ color: StageColors[activeIdx % StageColors.length] }}>
                   阶段 {activeIdx + 1}/{vm.stages.length}:{active.label}
                 </strong>
                 <span>
@@ -847,86 +846,11 @@ function CompareContent({
             )}
           </div>
 
-          {/* 阶段带:上为 DSH duration 式总览条(彩色阶段段),下为阶段卡片
-              (审批要求:每阶段的名称/起止包号/时刻/信息要点常驻可见,不藏在 hover 里) */}
-          <div className="fc-timeband" data-testid="fc-stageband" role="list" aria-label="故障阶段时间带">
-            <div className="fc-timeband-track">
-              {vm.stages.map((s, i) => {
-                const w = s.t1 - s.t0
-                // 带内标注(常驻,不藏 hover):宽段显示「序号. 阶段名」,窄段退化为序号;
-                // 完整信息(起止包号/时刻/要点)仍在下方阶段卡常驻
-                const tag = w >= 0.12 ? `${i + 1}. ${s.label}` : w >= 0.03 ? `${i + 1}` : null
-                return (
-                  <div
-                    key={`${s.label}-${s.fromPacket}`}
-                    role="listitem"
-                    tabIndex={0}
-                    title={`阶段 ${i + 1}:${s.label}(#${s.fromPacket}–#${s.toPacket})`}
-                    onClick={() => setSelectedStage(i)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') setSelectedStage(i)
-                    }}
-                    className={`fc-timeband-seg ${i === activeIdx ? 'active' : ''}`}
-                    style={{
-                      left: `${s.t0 * 100}%`,
-                      width: `${Math.max(w * 100, 1.5)}%`,
-                      background: STAGE_COLORS[i % STAGE_COLORS.length],
-                    }}
-                  >
-                    {tag && <span className="fc-seg-tag">{tag}</span>}
-                  </div>
-                )
-              })}
-            </div>
-            <div className="fc-stage-cards" data-testid="fc-stage-cards">
-              {vm.stages.map((s, i) => (
-                <button
-                  key={`card-${s.label}-${i}`}
-                  type="button"
-                  className={`fc-stage-card ${i === activeIdx ? 'active' : ''}`}
-                  onClick={() => setSelectedStage(i)}
-                >
-                  <span className="fc-stage-idx" style={{ background: STAGE_COLORS[i % STAGE_COLORS.length] }}>
-                    {i + 1}
-                  </span>
-                  <span className="fc-stage-name">{s.label}</span>
-                  <span className="fc-stage-pkt">
-                    #{s.fromPacket}–#{s.toPacket} · {s.startTime.toFixed(3)}–{s.endTime.toFixed(3)}s
-                  </span>
-                  <p className="fc-stage-summary">{s.summary}</p>
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* 阶段带(子组件,faultCompareParts):总览条 + 阶段卡片 */}
+          <StageBand stages={vm.stages} activeIdx={activeIdx} onSelect={setSelectedStage} />
 
-          {/* 事件卡:观察/推断/限制三层 */}
-          <div className="fc-card">
-            <div className="fc-card-sec">
-              <h4>观察 Observed</h4>
-              <ul>
-                {vm.card.observations.map((o, i) => (
-                  <li key={i}>
-                    <button type="button" className="fc-pkt-chip" onClick={() => onSelectPacket(o.packetNumber, jumpCtx())} title="查看报文详情">
-                      #{o.packetNumber}
-                    </button>
-                    {o.statement}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="fc-card-sec">
-              <h4>推断 Inference · 置信度 {vm.card.inference.confidence}</h4>
-              <p>{vm.card.inference.statement}</p>
-            </div>
-            <div className="fc-card-sec fc-limitations">
-              <h4>限制 Limitation</h4>
-              <ul>
-                {vm.card.limitations.map((l, i) => (
-                  <li key={i}>{l}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
+          {/* 事件卡(子组件,faultCompareParts):观察/推断/限制三层 */}
+          <EventCard card={vm.card} onSelectPacket={(n) => onSelectPacket(n, jumpCtx())} />
 
           {/* 关键报文链(仅证据链报文) */}
           <div className="fc-keypkts" data-testid="fc-messages">

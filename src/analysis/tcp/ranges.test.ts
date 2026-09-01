@@ -261,4 +261,34 @@ describe('gapsWithAbs:跨回绕的绝对坐标空洞', () => {
     const r = build(SEGS)
     expect(r.gaps()).toEqual(r.gapsWithAbs().map((g) => [g.start, g.end]))
   })
+
+  it('totalBytes() 恒等于区间长度求和(增量维护与逐区间求和一致)', () => {
+    // 乱序插入/重叠/相邻合并混合,验证增量计数不被合并逻辑算错
+    const r = new SeqRanges()
+    const expectSum = (r: SeqRanges): number => r.toArray().reduce((acc, [s, e]) => acc + (e - s), 0)
+    r.add(1000, 2000)
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(3000, 4000) // 不相邻
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(2000, 3000) // 桥接合并两段
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(500, 1200) // 左侧重叠
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(3500, 4500) // 右侧重叠
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(1500, 1600) // 纯重复(零新增)
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(0, 0) // 零长度忽略
+    expect(r.totalBytes()).toBe(expectSum(r))
+    r.add(2000, 2500) // 落在已见区间内部
+    expect(r.totalBytes()).toBe(expectSum(r))
+  })
+
+  it('大数据量下 totalBytes() 仍 O(1) 语义(结果与全求和一致)', () => {
+    const r = new SeqRanges()
+    for (let i = 0; i < 10000; i++) r.add(i * 10, i * 10 + 10)
+    const sum = r.toArray().reduce((acc, [s, e]) => acc + (e - s), 0)
+    expect(r.totalBytes()).toBe(sum)
+    expect(sum).toBe(100000)
+  })
 })

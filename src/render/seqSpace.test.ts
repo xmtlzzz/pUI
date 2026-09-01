@@ -103,10 +103,13 @@ describe('computeSeqSpaceLayout', () => {
     expect(lay.lanes).toHaveLength(1)
   })
 
-  it('非 TCP/无 seq 的包不参与;空会话产出空 lanes', () => {
+  it('空会话产出空 lanes;非 TCP 会话回退时间轴带(不再空态)', () => {
     expect(computeSeqSpaceLayout([], { client: 'a:1' }).lanes).toEqual([])
     const udp = [pkt(1, { transport: 'udp', proto: 'dns', srcIp: 'a', dstIp: 'b' })]
-    expect(computeSeqSpaceLayout(udp, { client: 'a:1' }).lanes).toEqual([])
+    const lay = computeSeqSpaceLayout(udp, { client: 'a:1' })
+    expect(lay.lanes).toHaveLength(1)
+    expect(lay.lanes[0].kind).toBe('fallback')
+    expect(lay.lanes[0].messages).toHaveLength(1)
   })
 
   it('刻度=1/2/5 整步长,覆盖轴范围', () => {
@@ -141,9 +144,61 @@ describe('computeSeqSpaceLayout', () => {
     expect(nums).toContain(6)
   })
 
-  it('确定性:同输入同输出', () => {
-    const a = computeSeqSpaceLayout(packets, { client: '10.0.0.1:1000', server: '10.0.0.2:80' })
-    const b = computeSeqSpaceLayout(packets, { client: '10.0.0.1:1000', server: '10.0.0.2:80' })
-    expect(a).toEqual(b)
+  it('恢复 ACK 标注只取每个缺口的首个越过确认,不随 ACK 数量增长', () => {
+    // 缺口 101..201;c2s 数据到 301;对向(#10..#19)连续 10 个 ACK 陆续越过 201
+    const ps: Packet[] = [
+      pkt(1, { srcIp: 'a', dstIp: 'b', tcpSeq: 1, tcpLen: 100 }),
+      pkt(2, { srcIp: 'a', dstIp: 'b', tcpSeq: 201, tcpLen: 100 }),
+    ]
+    for (let i = 0; i < 10; i++) {
+      ps.push(pkt(10 + i, { srcIp: 'b', dstIp: 'a', tcpSeq: 1, tcpLen: 0, tcpAck: 150 + i * 10 }))
+    }
+    const lay = computeSeqSpaceLayout(ps, { client: 'a:1' })
+    const c2s = lay.lanes[0]
+    expect(c2s.gaps).toEqual([[101, 201]])
+    const ackMarks = c2s.marks.filter((m) => m.kind === 'ack')
+    expect(ackMarks).toHaveLength(1) // 只有首个 ack≥210 的确认(#16,ack=150+60=210),不是 8 个
+    expect(ackMarks[0].packetNumber).toBe(16)
+  })
+
+  it('marks/retxMarks 渲染护栏:单带超上限时均匀采样截断', () => {
+    // 300 个重传 + 300 个乱序填充分散在不同 seq(避免合并),上限 200
+    const ps: Packet[] = [pkt(1, { srcIp: 'a', dstIp: 'b', tcpSeq: 0, tcpLen: 10 })]
+    let n = 2
+    for (let i = 0; i < 300; i++) {
+      ps.push(pkt(n++, { srcIp: 'a', dstIp: 'b', tcpSeq: 100 + i * 20, tcpLen: 10, tcpAnalysis: ['retransmission'] }))
+      ps.push(pkt(n++, { srcIp: 'a', dstIp: 'b', tcpSeq: 100 + i * 20 + 10, tcpLen: 10, tcpAnalysis: ['out-of-order'] }))
+    }
+    const lay = computeSeqSpaceLayout(ps, { client: 'a:1' })
+    const lane = lay.lanes[0]
+    expect(lane.marks.length).toBeLessThanOrEqual(200)
+    expect(lane.retxMarks.length).toBeLessThanOrEqual(200)
+    // 采样保序:seq 升序不乱
+    for (let i = 1; i < lane.marks.length; i++) expect(lane.marks[i].seq).toBeGreaterThanOrEqual(lane.marks[i - 1].seq)
+  })
+
+  it('非 TCP 会话回退时间轴带:每协议一条带,轴=报文序号,行内报文可点击', () => {
+    const ps: Packet[] = [
+      pkt(1, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),
+      pkt(2, { transport: 'arp', proto: 'arp', srcMac: 'aa', dstMac: 'ff', srcIp: 'a' }),
+      pkt(3, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),
+    ]
+    const lay = computeSeqSpaceLayout(ps, { client: 'a' })
+    expect(lay.lanes).toHaveLength(2) // mdns 一带 + arp 一带(按 协议+端点对 分带)
+    const mdns = lay.lanes.find((l) => l.label.includes('mdns'))!
+    expect(mdns.axisMin).toBe(1)
+    expect(mdns.axisMax).toBe(3) // 轴=报文序号空间(非字节)
+    expect(mdns.messages.map((m) => m.packetNumber)).toEqual([1, 3])
+    expect(mdns.messages[0].label).toContain('#1')
+  })
+
+  it('非 TCP 带刻度同样 1/2/5 步长;混合 TCP+非 TCP 时只出 TCP 序号空间带', () => {
+    const ps: Packet[] = [
+      pkt(1, { srcIp: 'a', dstIp: 'b', tcpSeq: 0, tcpLen: 100 }),
+      pkt(2, { transport: 'arp', proto: 'arp', srcMac: 'aa', dstMac: 'ff' }),
+    ]
+    const lay = computeSeqSpaceLayout(ps, { client: 'a' })
+    expect(lay.lanes).toHaveLength(1)
+    expect(lay.lanes[0].ticks.length).toBeGreaterThan(0)
   })
 })

@@ -6,18 +6,22 @@ import { analyzeStream, type StreamAnalysisFacts, type StreamDirection } from '.
  * 的横排报文交互,要 FaultCompare 序列空间条带图那种读法 —— 一条横向字节轴,
  * 绿色已收数据条 / 红斜纹缺口 / 紫 SACK / 蓝色累计 ACK 游标 / 红色重传标记)。
  *
- * 一个 TCP 会话有两个方向的 ISN 空间,混在一个轴上没有意义(m4 viewModel
- * 同一条原则),因此布局产出**每方向一条带**:c2s 在上、s2c 在下,每条带
- * 就是一张「第二张图」。纯函数 + 确定性(O(n log n),SACK 合并排序主导);
- * 组件只把结果映射为 SVG。
+ * TCP 会话:每方向一条带(c2s 在上、s2c 在下,两个 ISN 空间不混轴),每条带
+ * 就是一张「第二张图」。
  *
- * 事实来源与 FaultCompare 完全同源:analyzeStream 重建 segments/gaps,
- * Packet.tcpSackBlocks/tcpAck 提供 SACK 与累计确认。不做丢包推断 ——
- * 缺口是「观察层事实」,是否丢包由 FaultCompare 的事件引擎下结论。
+ * 非 TCP 会话(stp/arp/lldp/mdns/dns/…,2026-09-01 用户要求所有协议可渲染):
+ * 没有 TCP 序号空间,回退为**时间轴带** —— 轴=报文序号(1..N),每个报文一个
+ * 刻度点,按 协议+端点对 分带;同样复用条带视觉语言(点=报文,可点击看详情)。
+ *
+ * 纯函数 + 确定性(O(n) 单遍为主,SACK 合并排序 O(n log n));
+ * 组件只把结果映射为 SVG。
  */
 
 /** SACK 渲染护栏:单带超过此数的块截断(极端抓包的 SACK 风暴不拖垮 DOM) */
 export const SEQ_SPACE_MAX_SACK = 100
+/** 证据标注渲染护栏:单带 marks/retxMarks 上限,超出均匀采样
+ *  (2026-09-01 用户实测:2.3 万包的大会话满屏三角渲染极慢) */
+export const SEQ_SPACE_MAX_MARKS = 200
 
 /** 单方向带(一张序列空间图) */
 export interface SeqSpaceLane {
@@ -41,6 +45,12 @@ export interface SeqSpaceLane {
   marks: Array<{ packetNumber: number; seq: number; len: number; kind: 'retx' | 'expose' | 'fill' | 'ack' }>
   /** 字节刻度(1/2/5 整步长) */
   ticks: number[]
+  /** 非 TCP 回退时间轴带的报文点位(TCP 带为空);label 形如 "#3 概要 · 120B" */
+  messages: Array<{ packetNumber: number; seq: number; label: string; proto: string; anomaly: boolean }>
+  /** 带性质:tcp=字节序号空间;fallback=时间轴(报文序号) */
+  kind: 'tcp' | 'fallback'
+  /** 带的协议名(回退带显示;TCP 带恒 'tcp') */
+  proto: string
 }
 
 export interface SeqSpaceLayout {
@@ -86,6 +96,15 @@ function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
   return out
 }
 
+/** 渲染护栏的均匀采样:保留首尾,中间等步取点,输出按原序(O(n)) */
+function sampleMark<T>(arr: T[], max: number): T[] {
+  if (arr.length <= max) return arr
+  const out: T[] = []
+  const stride = (arr.length - 1) / (max - 1)
+  for (let i = 0; i < max; i++) out.push(arr[Math.round(i * stride)])
+  return out
+}
+
 /** 方向判定:与 analyzeStream 同规则 —— 以流内首包源端点为 c2s。
  *  options.client 只用于带标签(显示层),不参与判定(两者不一致时
  *  保证事实层的方向自洽,显示跟随事实) */
@@ -111,9 +130,58 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
     return dir === 'c2s' ? `${cEnd} → ${sEnd}` : `${sEnd} → ${cEnd}`
   }
 
+  if (facts.segments.length === 0) {
+    // 非 TCP(或缺 seq/len):回退时间轴带。按 协议+端点对 分组,组内轴=报文序号。
+    // 分组键稳定性:协议 + 无向端点对(两端排序),同组报文在时间轴上从左到右。
+    const groups = new Map<string, { proto: string; label: string; msgs: Array<{ packetNumber: number; seq: number; label: string; proto: string; anomaly: boolean }> }>()
+    for (const p of ordered) {
+      const a = `${p.srcIp ?? p.srcMac ?? '?'}:${p.srcPort ?? ''}`
+      const b = `${p.dstIp ?? p.dstMac ?? '?'}:${p.dstPort ?? ''}`
+      const pair = [a, b].sort().join('↔')
+      const key = `${p.proto}|${pair}`
+      let g = groups.get(key)
+      if (!g) {
+        g = { proto: p.proto, label: `${a} ↔ ${b} · ${p.proto}`, msgs: [] }
+        groups.set(key, g)
+      }
+      g.msgs.push({
+        packetNumber: p.number,
+        seq: p.number, // 时间轴带:x=报文序号(非字节)
+        label: `#${p.number} ${p.info ?? p.proto} · ${p.len}B`,
+        proto: p.proto,
+        anomaly: (p.tcpAnalysis?.length ?? 0) > 0,
+      })
+    }
+    const lanes: SeqSpaceLane[] = []
+    for (const g of groups.values()) {
+      const nums = g.msgs.map((m) => m.seq)
+      const axisMin = Math.min(...nums)
+      const axisMax = Math.max(...nums)
+      lanes.push({
+        direction: 'c2s',
+        label: g.label,
+        axisMin,
+        axisMax: axisMax === axisMin ? axisMin + 1 : axisMax, // 单包带给 1 格跨度,除零保护
+        seenRuns: [],
+        gaps: [],
+        sackBlocks: [],
+        retxMarks: [],
+        marks: [],
+        ticks: ticksFor(axisMin, axisMax === axisMin ? axisMin + 1 : axisMax),
+        messages: sampleMark(g.msgs, SEQ_SPACE_MAX_MARKS),
+        kind: 'fallback',
+        proto: g.proto,
+      })
+    }
+    return { lanes, width: 720 }
+  }
+
   // 每方向:报文 → seq 占位端点(含 SYN/FIN 各占 1;与 analyzeStream 同规则)
   const dirMap = new Map<number, StreamDirection>()
   for (const sg of facts.segments) dirMap.set(sg.packetNumber, sg.direction)
+
+  // 一次性建号查表(此前 packets.find 是 O(n²),2.3 万包实测拖慢渲染)
+  const packetByNumber = new Map(packets.map((p) => [p.number, p]))
 
   // SACK 归属:SACK 描述**对向**数据的到达情况,由 ACK 方向报文携带 →
   // 归入被描述的那条带(c2s 带的 SACK 来自 s2c 方向报文)
@@ -130,7 +198,7 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   // 在两个 ISN 空间之间来回跳 —— m4 ackTrack 同一条原则)
   const finalAck: Record<StreamDirection, number | undefined> = { c2s: undefined, s2c: undefined }
   for (const sg of facts.segments) {
-    const p = packets.find((q) => q.number === sg.packetNumber)
+    const p = packetByNumber.get(sg.packetNumber)
     if (!p?.tcpAck) continue
     const target: StreamDirection = sg.direction === 'c2s' ? 's2c' : 'c2s'
     const cur = finalAck[target]
@@ -138,11 +206,9 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   }
 
   // 重传/证据标记:tcpAnalysis 含 retransmission → retx;越过缺口暴露缺口 →
-  // expose;填补缺口的乱序段 → fill;恢复确认(推进过缺口的 ACK)→ ack(由
-  // gap.firstObservedPacket 之后的累计确认近似:凡 ack 越过任一缺口终点的对向报文)
+  // expose;填补缺口的乱序段 → fill。全部有渲染上限(均匀采样),大会话不爆 DOM。
   const retxMarks: Record<StreamDirection, SeqSpaceLane['retxMarks']> = { c2s: [], s2c: [] }
   const marks: Record<StreamDirection, SeqSpaceLane['marks']> = { c2s: [], s2c: [] }
-  const packetByNumber = new Map(packets.map((p) => [p.number, p]))
   for (const sg of facts.segments) {
     const p = packetByNumber.get(sg.packetNumber)
     if (!p) continue
@@ -159,22 +225,18 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       marks[dir].push({ packetNumber: p.number, seq: sg.seq, len: sg.seqLen, kind: 'fill' })
     }
   }
-  // 恢复 ACK:对向确认值越过该方向任一缺口的终点(缺口被确认 = 已恢复)
-  const ackMarks: Record<StreamDirection, Set<number>> = { c2s: new Set(), s2c: new Set() }
-  for (const g of facts.gaps) {
-    for (const p of packets) {
-      if (p.tcpAck == null || p.tcpSeq == null) continue
-      if (dirOf(p, c2sKey) === g.direction) continue // 确认由对向报文携带
-      if (p.tcpAck > g.end) ackMarks[g.direction].add(p.number)
-    }
-  }
-  for (const dir of ['c2s', 's2c'] as const) {
-    for (const n of ackMarks[dir]) {
-      const p = packetByNumber.get(n)
-      const sg = facts.segments.find((q) => q.packetNumber === n)
-      // 纯 ACK 报文不在 segments 的 seq 占位里也无所谓:mark 用其 ack 值落位
-      marks[dir].push({ packetNumber: n, seq: p?.tcpAck ?? 0, len: 0, kind: 'ack' })
-      void sg
+  // 恢复 ACK:每个缺口只取**首个**确认值越过其终点的对向报文(缺口被确认 =
+  // 已恢复,一次就够)。此前是"每个越过的 ACK 都标",大会话几千个 ACK 满屏三角。
+  const gapEnds = facts.gaps.map((g) => ({ dir: g.direction, end: g.end, done: false }))
+  for (const p of ordered) {
+    if (p.tcpAck == null) continue
+    const carry = dirOf(p, c2sKey)
+    for (const ge of gapEnds) {
+      if (ge.done || carry === ge.dir) continue // 确认由对向报文携带
+      if (p.tcpAck > ge.end) {
+        ge.done = true
+        marks[ge.dir].push({ packetNumber: p.number, seq: p.tcpAck, len: 0, kind: 'ack' })
+      }
     }
   }
 
@@ -200,6 +262,7 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       axisMin = Math.min(axisMin, s)
       axisMax = Math.max(axisMax, e)
     }
+    const sortedMarks = marks[dir].sort((a, b) => a.seq - b.seq)
     lanes.push({
       direction: dir,
       label: labelOf(dir),
@@ -209,9 +272,12 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       gaps: laneGaps,
       sackBlocks: mergeRanges(sackRaw[dir]).slice(0, SEQ_SPACE_MAX_SACK),
       finalAck: finalAck[dir],
-      retxMarks: retxMarks[dir],
-      marks: marks[dir].sort((a, b) => a.seq - b.seq),
+      retxMarks: sampleMark(retxMarks[dir], SEQ_SPACE_MAX_MARKS),
+      marks: sampleMark(sortedMarks, SEQ_SPACE_MAX_MARKS),
       ticks: ticksFor(axisMin, axisMax),
+      messages: [],
+      kind: 'tcp',
+      proto: 'tcp',
     })
   }
 

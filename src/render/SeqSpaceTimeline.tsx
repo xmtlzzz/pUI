@@ -1,5 +1,6 @@
 import { useMemo, type RefObject } from 'react'
 import { computeSeqSpaceLayout, type SeqSpaceLane } from './seqSpace.ts'
+import { protocolColor } from '../model/protocolColors'
 import type { Conversation } from '../model/types'
 
 /**
@@ -85,7 +86,7 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
           const span = lane.axisMax - lane.axisMin || 1
           const x = (v: number): number => ((v - lane.axisMin) / span) * (width - W_PAD * 2) + W_PAD
           return (
-            <g key={lane.direction} transform={`translate(0 ${top})`}>
+            <g key={`${lane.kind}-${lane.direction}-${li}`} transform={`translate(0 ${top})`}>
               <LaneGraphic lane={lane} x={x} width={width} onSelect={onSelect} hlSet={hlSet} laneIndex={li} />
             </g>
           )
@@ -112,14 +113,14 @@ function LaneGraphic({
 }) {
   return (
     <g data-testid={`seqsp-lane-${laneIndex}`}>
-      {/* 带标题:方向端点对 */}
+      {/* 带标题:方向端点对(回退带含协议名) */}
       <text x={W_PAD} y={12} fontSize={10} fill="#94a3b8">
         {lane.label}
       </text>
-      {/* 轴说明(只画在第一条带) */}
+      {/* 轴说明(只画在第一条带):TCP 带=字节序列空间;回退带=时间轴(报文序号) */}
       {laneIndex === 0 && (
         <text x={width - W_PAD} y={12} textAnchor="end" fontSize={10} fill="#94a3b8">
-          序列号空间(字节) · 绿=已收 红纹=未收到 紫=SACK(对端已收) 蓝=累计确认 红=重传
+          {layoutCaption(lane.kind)}
         </text>
       )}
 
@@ -151,12 +152,19 @@ function LaneGraphic({
           <title>{`SACK(对端已收) ${Math.round(s)}–${Math.round(e)}`}</title>
         </rect>
       ))}
+      {/* SACK 行内说明:与最后一个 SACK 块左对齐(不再固定贴右边与块重叠) */}
       {lane.sackBlocks.length > 0 && (
-        <text x={width - W_PAD} y={SACK_Y + 8} textAnchor="end" fontSize={9} fill="#7c3aed">
+        <text
+          x={Math.min(x(lane.sackBlocks[lane.sackBlocks.length - 1][0]), width - W_PAD - 90)}
+          y={SACK_Y + 8}
+          textAnchor="start"
+          fontSize={9}
+          fill="#7c3aed"
+        >
           对端已收(SACK)
         </text>
       )}
-      {/* 重传标记(红条,叠在主条下沿) */}
+      {/* 重传标记(红条,叠在 SACK 行;title 即说明,不再另画文字) */}
       {lane.retxMarks.map((m, i) => {
         const x0 = x(m.seq)
         const x1 = x(m.seq + Math.max(m.len, 1))
@@ -169,24 +177,46 @@ function LaneGraphic({
           </g>
         )
       })}
-      {/* 证据链关键报文标注:暴露缺口/补缺口/恢复 ACK(三角 + #帧号;点击跳详情) */}
-      {lane.marks
-        .filter((m) => m.kind !== 'retx')
-        .map((m, i) => {
-          const px = x(m.seq)
-          const isHl = hlSet?.has(m.packetNumber) ?? false
-          const color = m.kind === 'ack' ? ACK : m.kind === 'fill' ? SEEN : RETX
-          return (
-            <g key={`mk${i}`} data-pkt={m.packetNumber} style={{ cursor: 'pointer' }} onClick={() => onSelect(m.packetNumber)}>
-              <title>{`#${m.packetNumber} ${m.kind === 'ack' ? '恢复确认' : m.kind === 'fill' ? '补缺口' : '暴露缺口'}(点击查看报文)`}</title>
-              <path d={`M${px - 4},${LABEL_Y + 6} L${px + 4},${LABEL_Y + 6} L${px},${LABEL_Y - 1} z`} fill={isHl ? ACK : color} />
-              <text x={px} y={LABEL_Y + 16} textAnchor="middle" fontSize={8.5} fill={isHl ? ACK : color}>
-                {`#${m.packetNumber}`}
-              </text>
-              <rect x={px - 8} y={LABEL_Y - 4} width={16} height={24} fill="transparent" />
-            </g>
-          )
-        })}
+      {/* 证据链关键报文标注:暴露缺口/补缺口/恢复 ACK(三角;点击跳详情)。
+          帧号文字按像素防叠:与前一个标注距离 < 26px 的只画三角不画字 */}
+      {(() => {
+        const shown: React.ReactNode[] = []
+        let lastTextX = -Infinity
+        lane.marks
+          .filter((m) => m.kind !== 'retx')
+          .forEach((m, i) => {
+            const px = x(m.seq)
+            const isHl = hlSet?.has(m.packetNumber) ?? false
+            const color = m.kind === 'ack' ? ACK : m.kind === 'fill' ? SEEN : RETX
+            const showText = px - lastTextX >= 26
+            if (showText) lastTextX = px
+            shown.push(
+              <g key={`mk${i}`} data-pkt={m.packetNumber} style={{ cursor: 'pointer' }} onClick={() => onSelect(m.packetNumber)}>
+                <title>{`#${m.packetNumber} ${m.kind === 'ack' ? '恢复确认' : m.kind === 'fill' ? '补缺口' : '暴露缺口'}(点击查看报文)`}</title>
+                <path d={`M${px - 4},${LABEL_Y + 6} L${px + 4},${LABEL_Y + 6} L${px},${LABEL_Y - 1} z`} fill={isHl ? ACK : color} />
+                {showText && (
+                  <text x={px} y={LABEL_Y + 16} textAnchor="middle" fontSize={8.5} fill={isHl ? ACK : color}>
+                    {`#${m.packetNumber}`}
+                  </text>
+                )}
+                <rect x={px - 8} y={LABEL_Y - 4} width={16} height={24} fill="transparent" />
+              </g>,
+            )
+          })
+        return shown
+      })()}
+      {/* 非 TCP 回退时间轴带:每报文一个可点击圆点(异常包橙色),轴=报文序号 */}
+      {lane.messages.map((m, i) => {
+        const px = x(m.seq)
+        const isHl = hlSet?.has(m.packetNumber) ?? false
+        return (
+          <g key={`msg${i}`} data-testid="seqsp-msg" data-pkt={m.packetNumber} style={{ cursor: 'pointer' }} onClick={() => onSelect(m.packetNumber)}>
+            <title>{`${m.label}(点击查看报文)`}</title>
+            <circle cx={px} cy={BAR_Y + BAR_H / 2} r={isHl ? 5 : 4} fill={m.anomaly ? '#ea580c' : protocolColor(m.proto)} stroke={isHl ? ACK : '#fff'} strokeWidth={isHl ? 2 : 1} />
+            <rect x={px - 6} y={BAR_Y - 3} width={12} height={BAR_H + 6} fill="transparent" />
+          </g>
+        )
+      })}
       {/* ACK 游标:累计确认位置(游标卡在缺口前 = 对端没收到缺口数据);
           标签贴画布边缘时锚点内移,避免文字被裁掉一半 */}
       {lane.finalAck != null && (
@@ -228,4 +258,11 @@ function LaneGraphic({
       </g>
     </g>
   )
+}
+
+/** 轴说明文案:TCP=字节序列空间读法;回退=时间轴读法 */
+function layoutCaption(kind: 'tcp' | 'fallback'): string {
+  return kind === 'tcp'
+    ? '序列号空间(字节) · 绿=已收 红纹=未收到 紫=SACK(对端已收) 蓝=累计确认 红=重传'
+    : '时间轴(报文序号) · 点=报文(点击看详情) 橙=带分析标记'
 }

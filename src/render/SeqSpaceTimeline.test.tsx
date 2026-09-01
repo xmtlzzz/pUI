@@ -112,4 +112,22 @@ describe('SeqSpaceTimeline', () => {
     const vbW = svg.getAttribute('viewBox')!.split(' ').map(Number)[2]
     expect(w).toBe(vbW * 2)
   })
+
+  it('非 TCP 会话:渲染时间轴回退带,每报文一个可点击点', () => {
+    const ps = [
+      pkt(1, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),
+      pkt(2, { transport: 'arp', proto: 'arp', srcMac: 'aa', dstMac: 'ff', srcIp: 'a' }),
+      pkt(3, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),
+    ]
+    const onSelect = vi.fn()
+    const { container } = render(<SeqSpaceTimeline conv={conv(ps)} onSelect={onSelect} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    // 不再是空态:有 2 条回退带(mdns/arp),带内 3 个报文点
+    expect(svg.querySelectorAll('[data-testid="seqsp-msg"]')).toHaveLength(3)
+    // 轴说明是时间轴读法
+    expect(svg.textContent).toContain('时间轴(报文序号)')
+    // 点击报文点回调帧号
+    fireEvent.click(svg.querySelector('[data-pkt="2"]')!)
+    expect(onSelect).toHaveBeenCalledWith(2)
+  })
 })

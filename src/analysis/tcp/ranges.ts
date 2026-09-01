@@ -44,6 +44,11 @@ export interface GapWithAbs {
 export class SeqRanges {
   /** 已见区间,按 start 升序、互不相交、互不相邻(相邻即合并) */
   private ranges: Range[] = []
+  /** 已见字节总数(增量维护;totalBytes() O(1) 读取。VDI 级大会话
+   *  analyzeStream 每包要读两次,逐区间求和的 O(k) 会变成 O(n·k) 冻结主线程) */
+  private total = 0
+  /** 最近一次 insert 合并后新区间的下标(insert 局部性:每包只影响 O(1) 个洞) */
+  private lastTouched = 0
   /** 展开坐标的原点(首个观察到的 32 位序列号) */
   private origin: number | null = null
   /** 上一次展开时的参考点(32 位),用于判断回绕方向 */
@@ -202,7 +207,19 @@ export class SeqRanges {
       ne = Math.max(ne, rs[j][1])
       j++
     }
+    // 增量维护字节总数:合并后区间长 - 被吞区间总长 = 净增
+    let eaten = 0
+    for (let k = i; k < j; k++) eaten += rs[k][1] - rs[k][0]
+    this.total += (ne - ns) - eaten
     rs.splice(i, j - i, [ns, ne])
+    // 记录本次 insert 触及的内部区间下标范围(合并后的单一区间下标),
+    // 供增量空洞对账只检查受影响的洞,而不是每包全量重建
+    this.lastTouched = i
+  }
+
+  /** 最近一次 insert 合并后新区间在 ranges 中的下标(增量对账用) */
+  lastTouchedIndex(): number {
+    return this.lastTouched
   }
 
   isEmpty(): boolean {
@@ -270,11 +287,24 @@ export class SeqRanges {
     return out
   }
 
-  /** 已见字节总数 */
+  /** 已见字节总数(O(1):insert 时增量维护) */
   totalBytes(): number {
-    let n = 0
-    for (const [s, e] of this.ranges) n += e - s
-    return n
+    return this.total
+  }
+
+  /** 内部区间数(只读访问器,供增量空洞对账按下标遍历,免全量分配) */
+  get rangeCount(): number {
+    return this.ranges.length
+  }
+
+  /** 第 i 个内部区间(绝对坐标,只读)。i 必须在 [0, rangeCount) 内 */
+  rangeAt(i: number): readonly [number, number] {
+    return this.ranges[i]
+  }
+
+  /** 绝对坐标 → 32 位序列号(只读包装,供增量空洞对账把区间端点折回 32 位) */
+  wrapOf(abs: number): number {
+    return this.wrap(abs)
   }
 
   /** 已见区间(32 位边界),按序列顺序 */

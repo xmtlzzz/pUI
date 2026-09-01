@@ -1,0 +1,115 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { createRef } from 'react'
+import { SeqSpaceTimeline } from './SeqSpaceTimeline.tsx'
+import type { Packet, Conversation } from '../model/types'
+
+function pkt(n: number, o: Partial<Packet>): Packet {
+  return {
+    number: n,
+    time: n * 0.001,
+    len: 60,
+    transport: 'TCP',
+    proto: 'tcp',
+    ...o,
+  } as Packet
+}
+
+function conv(packets: Packet[]): Conversation {
+  return {
+    key: 'k',
+    client: '10.0.0.1:1000',
+    server: '10.0.0.2:80',
+    protocol: 'tcp',
+    packetCount: packets.length,
+    packets,
+    issues: [],
+  } as unknown as Conversation
+}
+
+/** 握手 → 数据(带缺口) → SACK → 恢复 的最小故事 */
+const packets = [
+  pkt(1, { srcIp: '10.0.0.1', srcPort: 1000, dstIp: '10.0.0.2', dstPort: 80, tcpSeq: 0, tcpAck: 0, tcpLen: 0, tcpFlags: '0x0002' }),
+  pkt(2, { srcIp: '10.0.0.2', srcPort: 80, dstIp: '10.0.0.1', dstPort: 1000, tcpSeq: 0, tcpAck: 1, tcpLen: 0, tcpFlags: '0x0012' }),
+  pkt(3, { srcIp: '10.0.0.1', srcPort: 1000, dstIp: '10.0.0.2', dstPort: 80, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+  pkt(4, { srcIp: '10.0.0.1', srcPort: 1000, dstIp: '10.0.0.2', dstPort: 80, tcpSeq: 201, tcpAck: 1, tcpLen: 100 }),
+  pkt(5, { srcIp: '10.0.0.2', srcPort: 80, dstIp: '10.0.0.1', dstPort: 1000, tcpSeq: 1, tcpAck: 101, tcpLen: 0, tcpSackBlocks: [[201, 301]] }),
+  pkt(6, { srcIp: '10.0.0.2', srcPort: 80, dstIp: '10.0.0.1', dstPort: 1000, tcpSeq: 1, tcpAck: 301, tcpLen: 0 }),
+  pkt(7, { srcIp: '10.0.0.1', srcPort: 1000, dstIp: '10.0.0.2', dstPort: 80, tcpSeq: 101, tcpAck: 301, tcpLen: 100 }),
+]
+
+describe('SeqSpaceTimeline', () => {
+  it('空会话渲染空态', () => {
+    render(<SeqSpaceTimeline conv={null} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    expect(screen.getByText('从左侧选择一个会话查看时序图')).toBeTruthy()
+  })
+
+  it('渲染两条方向带,带标题=端点对方向', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    expect(svg.textContent).toContain('10.0.0.1:1000 → 10.0.0.2:80')
+    expect(svg.textContent).toContain('10.0.0.2:80 → 10.0.0.1:1000')
+  })
+
+  it('第二张图元素齐全:绿已收条/红斜纹缺口/紫SACK/蓝ACK游标', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    // 绿色已见条(#10b981)
+    expect(svg.querySelector('rect[fill="#10b981"]')).toBeTruthy()
+    // 红斜纹缺口(pattern 引用)
+    expect(svg.querySelector('rect[fill="url(#seqsp-hatch)"]')).toBeTruthy()
+    // 紫色 SACK(#8b5cf6)
+    expect(svg.querySelector('rect[fill="#8b5cf6"]')).toBeTruthy()
+    // 蓝色 ACK 游标(#1d4ed8)+ 文本
+    expect(svg.textContent).toContain('累计确认 ACK 301')
+    // 轴说明
+    expect(svg.textContent).toContain('序列号空间(字节)')
+  })
+
+  it('缺口 title 给出未收到字节范围;SACK title 给出对端已收范围', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    const gap = svg.querySelector('rect[fill="url(#seqsp-hatch)"]')!
+    expect(gap.querySelector('title')?.textContent).toContain('未收到')
+    expect(gap.querySelector('title')?.textContent).toContain('101')
+    const sack = svg.querySelector('rect[fill="#8b5cf6"]')!
+    expect(sack.querySelector('title')?.textContent).toContain('SACK')
+  })
+
+  it('重传报文画红色标记', () => {
+    const ps = [
+      pkt(1, { srcIp: 'a', dstIp: 'b', tcpSeq: 0, tcpLen: 100 }),
+      pkt(2, { srcIp: 'a', dstIp: 'b', tcpSeq: 0, tcpLen: 100, tcpAnalysis: ['retransmission'] }),
+    ]
+    const { container } = render(<SeqSpaceTimeline conv={conv(ps)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    expect(svg.querySelector('[data-testid="seqsp-retx"]')).toBeTruthy()
+  })
+
+  it('点击带内报文标记触发 onSelect(帧号)', () => {
+    const onSelect = vi.fn()
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={onSelect} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    const hit = svg.querySelector('[data-pkt="7"]') as SVGElement
+    expect(hit).toBeTruthy()
+    fireEvent.click(hit)
+    expect(onSelect).toHaveBeenCalledWith(7)
+  })
+
+  it('字节刻度渲染在带下方(数值文本)', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    // c2s 带轴 0..301,1/2/5 步长必有刻度文本
+    expect(svg.textContent).toMatch(/0/)
+    expect(svg.querySelector('g[data-testid="seqsp-ticks"]')).toBeTruthy()
+  })
+
+  it('zoom 盒尺寸模式:width/height 乘 zoom', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={2} />)
+    const svg = container.querySelector('svg')!
+    const w = Number(svg.getAttribute('width'))
+    const vbW = svg.getAttribute('viewBox')!.split(' ').map(Number)[2]
+    expect(w).toBe(vbW * 2)
+  })
+})

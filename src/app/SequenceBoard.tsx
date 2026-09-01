@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { SequenceDiagram } from '../render/SequenceDiagram'
-import { FlowTimeline } from '../render/FlowTimeline.tsx'
+import { SeqSpaceTimeline } from '../render/SeqSpaceTimeline.tsx'
 import { PacketDetail } from '../detail/PacketDetail'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useApp, selectSelected } from '../state/appStore'
@@ -104,7 +104,7 @@ export function SequenceBoard({ onClose }: { onClose: () => void }) {
       <div className="seq-board-canvas" data-testid="seq-board-canvas">
         <ErrorBoundary name="时序图(整页)">
           {diagramStyle === 'C' ? (
-            <FlowTimeline
+            <SeqSpaceTimeline
               conv={selected}
               highlight={highlight}
               onSelect={(n) => selectPacket(n)}

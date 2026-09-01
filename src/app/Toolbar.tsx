@@ -148,9 +148,10 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
               <button className={diagramStyle === 'B' ? 'on' : ''} onClick={() => setDiagramStyle('B')}>
                 B 行式
               </button>
-              {/* C 时间流:纵轴=时间、报文逐行排列(用户要求 2026-09-01,替代对角线观感) */}
+              {/* C 序号空间:横向字节轴 + 缺口/SACK/ACK 游标(用户要求 2026-09-01,
+                  要 FaultCompare 序列空间条带图的读法,不要报文交互箭头) */}
               <button className={diagramStyle === 'C' ? 'on' : ''} onClick={() => setDiagramStyle('C')}>
-                C 时间流
+                C 序号空间
               </button>
             </div>
             <div className="seg" title="相对:相对首包秒数;绝对:本地时钟时间戳(PRD F4)">

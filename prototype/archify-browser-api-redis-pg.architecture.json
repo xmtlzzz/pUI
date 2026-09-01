@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cache-Aside Read Path",
+    "output": "browser-api-redis-postgres.html",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "cache-hit",
+        "label": "Cache hit",
+        "focus": ["browser", "api", "redis"],
+        "note": "Fast path: the API serves the read from Redis and never touches PostgreSQL."
+      },
+      {
+        "id": "cache-miss-fallback",
+        "label": "Cache-miss fallback",
+        "focus": ["browser", "api", "postgres"],
+        "note": "Slow path: miss in Redis, read from PostgreSQL, then repopulate the cache."
+      }
+    ]
+  },
+  "components": [
+    { "id": "browser", "type": "external", "label": "Browser", "sublabel": "client", "pos": [60, 330], "size": [130, 62] },
+    { "id": "api", "type": "backend", "label": "API", "sublabel": "service :8080", "pos": [340, 330], "size": [130, 62] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "cache :6379", "pos": [340, 150], "size": [130, 62] },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "primary :5432", "pos": [620, 330], "size": [140, 62] }
+  ],
+  "connections": [
+    { "id": "browser-to-api", "from": "browser", "to": "api", "label": "HTTPS GET", "variant": "emphasis" },
+    { "id": "api-to-redis", "from": "api", "to": "redis", "label": "cache lookup" },
+    { "id": "api-to-postgres", "from": "api", "to": "postgres", "label": "on miss: SQL read", "variant": "dashed" },
+    { "id": "repopulate", "from": "postgres", "to": "redis", "label": "repopulate cache", "variant": "dashed", "fromSide": "top", "toSide": "right" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Fast path", "items": ["Cache hit is served from Redis", "PostgreSQL is never touched on a hit"] },
+    { "dot": "amber", "title": "Fallback path", "items": ["A cache miss falls back to PostgreSQL", "The read result repopulates Redis for the next reader"] }
+  ]
+}

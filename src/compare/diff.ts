@@ -29,6 +29,10 @@ export interface CompareTcpEvent {
   recovered?: boolean
   /** 缺口区间(判定键的一部分;M5 事件无缺口) */
   gap?: { start: number; end: number; byteCount: number }
+  /** 流方向(TcpEvent 原生携带:c2s=客户端→服务端方向的数据流)。
+   *  缺口事件的方向决定「丢失发生在哪条传输路径上」的推断方向 —— 接收侧是
+   *  观察到缺口的侧,发送侧到观察侧之间是丢失可能发生的路径段 */
+  direction?: 'c2s' | 's2c'
 }
 
 /** 序列空间事实窄接口:对照层只消费降级标志(供结论措辞限定),不读序列细节。 */
@@ -53,6 +57,10 @@ export interface EventDiffEntry {
   gapText?: string
   recovered: boolean
   onlyIn: 'A' | 'B' | 'both'
+  /** 事件所在流方向(c2s=客户端→服务端;仅 TCP 事件携带)。
+   *  结论层用它把「仅 X 侧观察到缺口」翻译成「数据从客户端流向服务端的路径上」
+   *  等端点级措辞 —— 缺口的观察侧是接收侧,发送侧→接收侧之间是丢失候选路径段 */
+  direction?: 'c2s' | 's2c'
 }
 
 export interface TimelineRow {
@@ -89,6 +97,10 @@ const TIMELINE_MAX_ROWS = 2000
  *  2ms 足以容忍时间戳精度差而不至于把不同报文误并(可在 opts 覆盖)。 */
 const DEFAULT_EPOCH_TOLERANCE_MS = 2
 
+/** 时钟偏移估计上限:两侧抓包首包 epoch 差超过该值即视为存在时钟偏移,
+ *  启动「先对偏移再配对」的两阶段匹配(现网两端时钟不同步是常态)。 */
+const SKEW_SUSPECT_S = 1.0
+
 // ---------------------------------------------------------------------------
 // AppEvent 归一:应用层事件进入与 TCP 事件同一比较空间
 // ---------------------------------------------------------------------------
@@ -105,6 +117,7 @@ interface NormalizedEvent {
   kind: string
   recovered: boolean
   gap?: { start: number; end: number; byteCount: number }
+  direction?: 'c2s' | 's2c'
 }
 
 /** M5 事件形态:无 gap;收束报文 endPacket 存在 = 已收束(零窗口重开/SYN-ACK 到达)。
@@ -138,7 +151,7 @@ function normalizeEvent(e: CompareTcpEvent | M5EventLike | AppEventLike): Normal
     return { kind: m5.kind, recovered }
   }
   const tcp = e as CompareTcpEvent
-  return { kind: tcp.kind, recovered: tcp.recovered ?? true, gap: tcp.gap }
+  return { kind: tcp.kind, recovered: tcp.recovered ?? true, gap: tcp.gap, direction: tcp.direction }
 }
 
 // ---------------------------------------------------------------------------
@@ -196,21 +209,20 @@ export function diffConversations(
 
   const eventDiffs: EventDiffEntry[] = []
   const seenKeys = new Set<string>()
+  const pushDiff = (e: NormalizedEvent, onlyIn: 'A' | 'B' | 'both'): void => {
+    eventDiffs.push({ kind: e.kind, gapText: gapTextOf(e), recovered: e.recovered, onlyIn, direction: e.direction })
+  }
   for (const e of normA) {
     const k = eventKey(e)
     if (seenKeys.has(k)) continue // 同侧同键事件去重(判定键相同即同一现象)
     seenKeys.add(k)
-    if (keyB.has(k)) {
-      eventDiffs.push({ kind: e.kind, gapText: gapTextOf(e), recovered: e.recovered, onlyIn: 'both' })
-    } else {
-      eventDiffs.push({ kind: e.kind, gapText: gapTextOf(e), recovered: e.recovered, onlyIn: 'A' })
-    }
+    pushDiff(e, keyB.has(k) ? 'both' : 'A')
   }
   for (const e of normB) {
     const k = eventKey(e)
     if (seenKeys.has(k)) continue
     seenKeys.add(k)
-    eventDiffs.push({ kind: e.kind, gapText: gapTextOf(e), recovered: e.recovered, onlyIn: 'B' })
+    pushDiff(e, 'B')
   }
   // 排序确定:仅单侧优先(对照最关心的差异)→ kind → 缺口文本
   eventDiffs.sort(
@@ -238,9 +250,18 @@ function midStreamOf(facts: unknown): boolean {
   return false
 }
 
-/** 两侧报文按 epoch 归并:同侧互见 = 方向相反(一请求一响应)+ epoch 差 ≤ 容差。
- *  「两侧均见」指的是**同一交互的两侧视角**(A 抓到请求、B 抓到响应或反之),
- *  同方向两包即使 epoch 相邻也是不同报文(如 A 侧只见重传、B 侧见原始),不合并。 */
+/** 两侧报文按 epoch 归并,两级配对:
+ *
+ *  通道 1(物理包身份):同一物理包两侧都会见到 —— TCP 用「同方向 + seq/ack/flags/
+ *  载荷长一致」,其余协议用「同方向 + 载荷长一致」;配对时先估计时钟偏移(B 首包 -
+ *  A 首包,|偏移| > 1s 视为偏移嫌疑),对齐后 epoch 差 ≤ 容差即合并 AB 行。
+ *  这是「同一个包两点都看见」的正确判定 —— 方向相同的同 seq 包在 A、B 各出现一次,
+ *  旧实现按「方向相反」配对,时钟偏移 > 容差时全部行退化为仅A/仅B,时间线不可读。
+ *
+ *  通道 2(交互配对):无法用身份配对时,「方向相反 + 对齐后 epoch 差 ≤ 容差」
+ *  合并为同一交互的两侧视角(如 A 抓到响应、B 抓到同一响应:某些观测点只见单向)。
+ *
+ *  丢失段在接收侧没有对应包 → 自然留在「仅发送侧」行,这正是定位证据行。 */
 function buildTimeline(packetsA: Packet[], packetsB: Packet[], toleranceMs: number): TimelineRow[] {
   const tol = toleranceMs / 1000
   // epoch 缺失的报文:无法参与绝对时间对齐,退回 relative time(time 字段)。
@@ -250,31 +271,69 @@ function buildTimeline(packetsA: Packet[], packetsB: Packet[], toleranceMs: numb
   const aSorted = [...packetsA].sort((x, y) => epochOf(x) - epochOf(y) || x.number - y.number)
   const bSorted = [...packetsB].sort((x, y) => epochOf(x) - epochOf(y) || x.number - y.number)
 
-  // AB 合并:对 A 的每包,在 B 的未合并包里找「方向相反 + epoch 差 ≤ tol」的最早者。
-  // 两侧均已按时间排序,用双指针 + 已用标记,避免 O(n²):B 指针只前进(A 时间单调)。
+  // 时钟偏移估计:B 侧首包 epoch − A 侧首包 epoch(会话起点近似同物理时刻:
+  // TCP 三次握手的 SYN 两侧几乎必见,其 epoch 差即偏移)。仅当差值可疑(>1s)时启用
+  // 补偿;正常同步时钟下偏移 ≈ 转发延迟,补偿与否等价。
+  let skew = 0
+  if (aSorted.length > 0 && bSorted.length > 0) {
+    const rawSkew = epochOf(bSorted[0]) - epochOf(aSorted[0])
+    if (Math.abs(rawSkew) > SKEW_SUSPECT_S) skew = rawSkew
+  }
+  // 对齐函数:B 侧时间减去偏移 → A 时基
+  const alignB = (p: Packet): number => epochOf(p) - skew
+
+  // 通道 1:物理包身份(A 每个 B 未用包里找同身份 + 对齐后差 ≤ tol)
+  const identityOf = (p: Packet): string => {
+    const seq = p.tcpSeq != null ? `,seq=${p.tcpSeq}` : ''
+    const len = p.tcpLen != null ? `,len=${p.tcpLen}` : ''
+    const flags = p.tcpFlags != null ? `,f=${p.tcpFlags}` : ''
+    const ack = p.tcpAck != null ? `,ack=${p.tcpAck}` : ''
+    return p.transport === 'tcp'
+      ? `${p.direction}|${p.srcIp}<${p.srcPort}>-${p.dstIp}<${p.dstPort}>${seq}${ack}${flags}${len}`
+    : `${p.srcIp}-${p.dstIp}${seq}${len}`
+  }
+  const bIdentities = new Map<string, number[]>() // 身份 → B 下标列表(同 seq 重传可多包)
+  bSorted.forEach((p, i) => {
+    const k = identityOf(p)
+    const arr = bIdentities.get(k)
+    if (arr) arr.push(i)
+    else bIdentities.set(k, [i])
+  })
+
   const bUsed = new Array<boolean>(bSorted.length).fill(false)
-  let bi = 0
+  // 通道 2 用双指针:A 按时间单调推进,B 指针只前进(跳过已用/已过期),整体 O(n+m)。
+  // 通道 1 的身份匹配对每包只扫「同身份」短列表,不影响总复杂度。
+  let scanStart = 0
   const rows: TimelineRow[] = []
   for (const pa of aSorted) {
     const ta = epochOf(pa)
-    // 推进 bi 跳过已不可能匹配的 B 包(epoch 差已超容差且 B 在前)
-    while (bi < bSorted.length && (bUsed[bi] || epochOf(bSorted[bi]) < ta - tol)) bi++
-    // 在 [bi, 第一个 epoch > ta+tol) 窗口内找方向相反的未用 B 包
+    // 通道 1:同身份且对齐后差 ≤ tol 的最早未用 B 包
     let match = -1
-    for (let j = bi; j < bSorted.length; j++) {
-      const tb = epochOf(bSorted[j])
-      if (tb > ta + tol) break
+    for (const j of bIdentities.get(identityOf(pa)) ?? []) {
       if (bUsed[j]) continue
-      if (oppositeDirection(pa, bSorted[j])) {
+      if (Math.abs(alignB(bSorted[j]) - ta) <= tol) {
         match = j
         break
+      }
+    }
+    // 通道 2:交互配对(方向相反 + 对齐后差 ≤ tol,取最早);B 指针单调推进
+    if (match < 0) {
+      while (scanStart < bSorted.length && (bUsed[scanStart] || alignB(bSorted[scanStart]) < ta - tol)) scanStart++
+      for (let j = scanStart; j < bSorted.length; j++) {
+        const tb = alignB(bSorted[j])
+        if (tb > ta + tol) break
+        if (bUsed[j]) continue
+        if (oppositeDirection(pa, bSorted[j])) {
+          match = j
+          break
+        }
       }
     }
     if (match >= 0) {
       bUsed[match] = true
       const pb = bSorted[match]
       rows.push({
-        timeEpoch: ta, // 同一交互取 A 侧时刻(容差内的微差属时间戳精度,不承载信息)
+        timeEpoch: ta, // 同一包/同一交互取 A 侧时刻(时钟偏移已在配对中补偿)
         side: 'AB',
         numberA: pa.number,
         numberB: pb.number,

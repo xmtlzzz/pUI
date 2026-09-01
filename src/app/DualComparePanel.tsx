@@ -18,6 +18,7 @@ import {
 import { runApplicationAnalyzers, type AppEvent } from '../analysis/app/analyzers'
 import { saveText, isTauri } from '../bridge/tauri'
 import type { Conversation } from '../model/types'
+import { displayHost } from '../model/types'
 import './dualCompare.css'
 
 /**
@@ -474,7 +475,10 @@ function PairResultView({
   )
 }
 
-/** 单对分析:两侧独立走完整链路,diff 只消费结论(绝不跨侧合并字节) */
+/** 单对分析:两侧独立走完整链路,diff 只消费结论(绝不跨侧合并字节)。
+ *  端点身份传给 verdict:把事件方向(c2s/s2c)翻译成「客户端→服务端」等
+ *  显式路径措辞 —— 与引擎的时钟偏移口径一致(客户端侧见缺口 = 客户端发出的
+ *  数据在到达该观测点前丢失)。 */
 function analyzePair(pair: AlignedPair): PairAnalysis {
   const a = analyzeSide(pair.sideA)
   const b = analyzeSide(pair.sideB)
@@ -486,5 +490,11 @@ function analyzePair(pair: AlignedPair): PairAnalysis {
     b.facts,
     b.events,
   )
-  return { diff, verdicts: buildVerdicts(diff) }
+  return {
+    diff,
+    verdicts: buildVerdicts(diff, {
+      client: displayHost(pair.sideA.client),
+      server: displayHost(pair.sideA.server),
+    }),
+  }
 }

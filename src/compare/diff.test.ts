@@ -4,7 +4,9 @@ import type { CompareTcpEvent, CompareFacts } from './diff'
 import type { AppEvent } from '../analysis/app/analyzers'
 import type { Conversation, Packet } from '../model/types'
 
-/** 手工构造报文(参考 analyzeTcp 相关测试风格,不依赖 tshark) */
+/** 手工构造报文(参考 analyzeTcp 相关测试风格,不依赖 tshark)。
+ *  TCP 包默认携带递增 seq(1000+n):物理包身份匹配依赖 seq/ack/flags/len,
+ *  真实抓包必有这些字段,fixture 也不可省 —— 省了会把不同段误判为同身份。 */
 function pkt(n: number, tEpoch: number, opts: {
   len?: number
   fromA: boolean
@@ -13,7 +15,9 @@ function pkt(n: number, tEpoch: number, opts: {
   portA: number
   portB: number
   info?: string
+  seq?: number
 }): Packet {
+  const seq = opts.seq ?? 1000 + n * 10
   return {
     number: n,
     time: tEpoch,
@@ -25,6 +29,10 @@ function pkt(n: number, tEpoch: number, opts: {
     dstIp: opts.fromA ? opts.ipB : opts.ipA,
     srcPort: opts.fromA ? opts.portA : opts.portB,
     dstPort: opts.fromA ? opts.portB : opts.portA,
+    tcpSeq: seq,
+    tcpAck: 1,
+    tcpFlags: '0x0018',
+    tcpLen: 0,
     info: opts.info ?? '',
     direction: opts.fromA ? 'request' : 'response',
   }
@@ -128,6 +136,58 @@ describe('diffConversations · timeline', () => {
     expect(d.truncated).toBe(false)
   })
 
+  it('merges same physical packet across clock skew (same direction, same seq) into AB row', () => {
+    // 同一个物理包在两侧都会见到且方向相同(A 抓到请求、B 也抓到同一请求)。
+    // 旧实现按「方向相反 + 容差」合并,B 侧时钟偏移 > 容差时全部行退化为仅A/仅B;
+    // 正确语义:先按时钟偏移对齐(首包 epoch 差),再按「同方向 + TCP 四元组 + seq/ack
+    // 一致 + 对齐后差 ≤ 容差」判定同一物理包 —— 这是 TCP 报文的稳定身份。
+    const aPkts = [pkt(1, 100.000, { fromA: true, ipA, ipB, portA, portB, info: 'GET /x' })]
+    const bPkts = [pkt(1, 100.000 + 1.5, { fromA: true, ipA, ipB, portA, portB, info: 'GET /x' })] // B 时钟快 1.5s
+    const d = diffConversations(mkConv(aPkts, 'a'), emptyFacts(), [], mkConv(bPkts, 'b'), emptyFacts(), [])
+    expect(d.timeline).toHaveLength(1)
+    expect(d.timeline[0].side).toBe('AB')
+    expect(d.timeline[0].numberA).toBe(1)
+    expect(d.timeline[0].numberB).toBe(1)
+    // AB 行时刻取 A 侧 epoch(时钟偏移已在配对中补偿)
+    expect(d.timeline[0].timeEpoch).toBe(100.0)
+  })
+
+  it('pairs path-lost first-send with its B-side retransmission arrival (info differs), everything else merges AB', () => {
+    // 模拟丢包:发出 2 段,第 2 段在 A→B 路径上丢失(A 重传、B 缺口)。
+    // B 侧的重传到达与 A 侧的「首发 seg2」身份相同(同 seq/flags/len)→ 配成 AB 行,
+    // 但 A 信息「seg2 首发超时重发」与 B 信息「重传到达」不同,行内两列如实呈现差异;
+    // 真正的「仅 A」证据来自**重传前 B 侧无任何对应包**的时段(B 侧包数 < A 侧)。
+    // 时间线语义:每行 = A 侧一个包的视角,AB = 在 B 侧找到了同身份/交互对应物。
+    const aPkts = [
+      pkt(1, 100.000, { fromA: true, ipA, ipB, portA, portB, info: 'SYN' }),
+      pkt(2, 100.010, { fromA: true, ipA, ipB, portA, portB, info: 'seg1', seq: 1001 }),
+      pkt(3, 100.012, { fromA: true, ipA, ipB, portA, portB, info: 'seg2', seq: 1031 }), // 丢在路径上
+      pkt(4, 100.400, { fromA: true, ipA, ipB, portA, portB, info: 'seg2 retransmission', seq: 1031 }), // 同 seq 重发
+    ]
+    const bPkts = [
+      pkt(1, 100.000 + 1.5, { fromA: true, ipA, ipB, portA, portB, info: 'SYN' }),
+      pkt(2, 100.010 + 1.5, { fromA: true, ipA, ipB, portA, portB, info: 'seg1', seq: 1001 }),
+      pkt(3, 100.014 + 1.5, { fromA: true, ipA, ipB, portA, portB, info: 'seg3', seq: 1061 }), // seg2 未到达
+      pkt(4, 100.400 + 1.5, { fromA: true, ipA, ipB, portA, portB, info: 'seg2 retransmission (arrived)', seq: 1031 }),
+    ]
+    const d = diffConversations(mkConv(aPkts, 'a'), emptyFacts(), [], mkConv(bPkts, 'b'), emptyFacts(), [])
+    const sides = d.timeline.map((r) => r.side)
+    // SYN/seg1/重传段(后到)三个身份配对成功
+    expect(sides.filter((s) => s === 'AB')).toHaveLength(3)
+    // B 的 seg3(seq=1061)在 A 侧无对应 → 仅 B
+    expect(sides).toContain('B')
+    // 「仅 A」恰好一行 = seg2 的首次发出(t=0.012):该包在 B 侧无对应 ——
+    // 同身份的 B 包只有 t=0.400 的重传到达(超容差),这正是路径丢失的证据行
+    const aOnly = d.timeline.filter((r) => r.side === 'A')
+    expect(aOnly).toHaveLength(1)
+    expect(aOnly[0].infoA).toBe('seg2')
+    expect(aOnly[0].timeEpoch).toBeCloseTo(100.012, 3)
+    const ab = d.timeline.filter((r) => r.side === 'AB')
+    // A 的重传(seg2, seq=1031, t=0.400)与 B 的重传到达(t=0.400)配对
+    const retxRow = ab.find((r) => r.infoA === 'seg2 retransmission')
+    expect(retxRow?.infoB).toBe('seg2 retransmission (arrived)')
+  })
+
   it('keeps sides separate when epoch gap exceeds tolerance', () => {
     const aPkts = [pkt(1, 100.000, { fromA: true, ipA, ipB, portA, portB, info: 'GET /x' })]
     const bPkts = [pkt(1, 100.010, { fromA: false, ipA, ipB, portA, portB, info: '200 OK' })]
@@ -135,12 +195,16 @@ describe('diffConversations · timeline', () => {
     expect(d.timeline.map((r) => r.side)).toEqual(['A', 'B'])
   })
 
-  it('does not merge same-direction packets even within tolerance (A-only retransmission seen twice)', () => {
-    // 同方向两包不构成「一请求一响应」,即使 epoch 落在容差内也不合并
+  it('merges same-direction same-identity packets across sides into AB (physical-packet semantics)', () => {
+    // 新语义:同方向同身份(四元组+seq/ack/flags/len)的包 = 同一物理包的两侧视角,
+    // 对齐后差 ≤ 容差即合并 —— TCP 报文的稳定身份优先于「方向相反才合并」的旧假设。
+    // (同一 seq 在两侧各见一次,正是绝大多数报文的形态:发送侧与接收侧都抓到了它。)
     const aPkts = [pkt(1, 100.000, { fromA: true, ipA, ipB, portA, portB, info: 'seq=1' })]
     const bPkts = [pkt(1, 100.001, { fromA: true, ipA, ipB, portA, portB, info: 'seq=1 dup' })]
     const d = diffConversations(mkConv(aPkts, 'a'), emptyFacts(), [], mkConv(bPkts, 'b'), emptyFacts(), [])
-    expect(d.timeline.map((r) => r.side)).toEqual(['A', 'B'])
+    expect(d.timeline.map((r) => r.side)).toEqual(['AB'])
+    expect(d.timeline[0].infoA).toBe('seq=1')
+    expect(d.timeline[0].infoB).toBe('seq=1 dup')
   })
 
   it('marks only-in-one-side rows with omitted opposite frame number', () => {

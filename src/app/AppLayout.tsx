@@ -8,6 +8,7 @@ import { SequenceDiagram } from '../render/SequenceDiagram'
 import { PacketDetail } from '../detail/PacketDetail'
 import { FaultCompare } from './FaultCompare'
 import { DualComparePanel } from './DualComparePanel'
+import { SequenceBoard } from './SequenceBoard'
 import { useApp, selectSelected } from '../state/appStore'
 import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
@@ -57,6 +58,8 @@ export function AppLayout() {
   // 双点对照整页板块:本地 UI 状态(不入 store —— 板块开关是导航态,与 compareFor
   // 同级但更轻;进入新文件时该 state 保留无妨,面板自身按 store 数据空态渲染)
   const [showDualBoard, setShowDualBoard] = useState(false)
+  // 时序图整页板块开关(与双点对照同模式;进入时主视图状态全部保留)
+  const [showSeqBoard, setShowSeqBoard] = useState(false)
   const [drag, setDrag] = useState(false)
   const [zoom, setZoom] = useState(1)
   const svgRef = useRef<SVGSVGElement | null>(null)
@@ -443,6 +446,16 @@ export function AppLayout() {
             <DualComparePanel onClose={() => setShowDualBoard(false)} />
           </ErrorBoundary>
         </>
+      ) : showSeqBoard ? (
+        <>
+          {/* 时序图整页板块(用户要求 2026-08-31):主视图时序图区域太小,
+              长会话交互看不清 —— 整页放大渲染 + 报文详情联动 */}
+          <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
+          {error && <div className="err">{error}</div>}
+          <ErrorBoundary name="时序图整页">
+            <SequenceBoard onClose={() => setShowSeqBoard(false)} />
+          </ErrorBoundary>
+        </>
       ) : (
         <>
           <Toolbar
@@ -463,6 +476,10 @@ export function AppLayout() {
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>
               <button type="button" className="btn" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">
                 ⚠ 故障分析(对照正常参考)
+              </button>
+              {/* 时序图整页入口:主视图时序图区域小,长会话看不清(用户要求 2026-08-31) */}
+              <button type="button" className="btn" onClick={() => setShowSeqBoard(true)} data-testid="seq-board-entry">
+                ⇄ 时序图(整页)
               </button>
               {/* 双点对照入口:主抓包(A 侧)已就绪即可进入;B 侧在面板内加载 */}
               <button type="button" className="btn" data-testid="dual-entry" onClick={() => setShowDualBoard(true)}>

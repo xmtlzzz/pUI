@@ -199,3 +199,13 @@ h4 {
     color: #bbf7d0;
   }
 }
+
+/* 时序图整页板块(seq-board,复用 dc-page 骨架):画布占据剩余全部空间 */
+.seq-board-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--bg, #fff);
+}

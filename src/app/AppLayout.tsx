@@ -5,6 +5,7 @@ import { FilterPanel } from './FilterPanel'
 import { ListPane } from './ListPane'
 import { ErrorBoundary } from './ErrorBoundary'
 import { SequenceDiagram } from '../render/SequenceDiagram'
+import { FlowTimeline } from '../render/FlowTimeline.tsx'
 import { PacketDetail } from '../detail/PacketDetail'
 import { FaultCompare } from './FaultCompare'
 import { DualComparePanel } from './DualComparePanel'
@@ -512,7 +513,11 @@ export function AppLayout() {
             <div className="v-resizer" onPointerDown={startVDrag} title="拖动调整宽度" />
             <div className="pane view">
               <ErrorBoundary name="时序图">
-                <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+                {diagramStyle === 'C' ? (
+                  <FlowTimeline conv={selected} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+                ) : (
+                  <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+                )}
               </ErrorBoundary>
               <div className="h-resizer" onPointerDown={startHDrag} title="拖动调整高度" />
               <div style={{ height: detailHeight, flex: 'none', overflow: 'hidden' }}>

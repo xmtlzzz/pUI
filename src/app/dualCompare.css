@@ -3,8 +3,10 @@
 .dc-page {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 14px;
+  gap: 10px;
+  /* 内边距给足:对照内容不贴窗口边缘(用户反馈 2026-08-31),
+     左右 24px 与主视图面板留白一致 */
+  padding: 12px 24px 16px;
   height: 100%;
   overflow: auto;
   outline: none;
@@ -13,13 +15,19 @@
 .dc-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex: none;
   flex-wrap: wrap;
+  /* 顶栏与内容区之间留出呼吸空间,并以下边线与内容分组 */
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
 }
 
 .dc-headline {
   font-weight: 600;
+  font-size: 14px;
+  /* 标题与后续动作的视觉分组 */
+  margin-right: 6px;
 }
 
 .dc-bmeta {
@@ -60,12 +68,15 @@
 .dc-summary {
   font-size: 13px;
   color: var(--text-dim, #475569);
+  /* 与后续卡片的视觉分隔 */
+  padding: 2px 2px 0;
 }
 
 .dc-pair {
   border: 1px solid var(--border, #cbd5e1);
   border-radius: 10px;
-  padding: 10px 14px;
+  /* 卡片内呼吸感:左右 16px,内容不贴卡片边(用户反馈 2026-08-31) */
+  padding: 12px 16px 6px;
   background: var(--bg, #fff);
 }
 
@@ -98,7 +109,7 @@
 .dc-table th,
 .dc-table td {
   border: 1px solid var(--border, #cbd5e1);
-  padding: 3px 8px;
+  padding: 4px 10px;
   text-align: left;
   vertical-align: top;
 }

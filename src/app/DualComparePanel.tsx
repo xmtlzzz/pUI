@@ -202,10 +202,11 @@ export function DualComparePanel({ onClose }: DualComparePanelProps) {
   return (
     <div className="dc-page">
       <div className="dc-toolbar">
+        {/* 标题在前、返回在后(用户反馈 2026-08-31):标题锚定页面身份,返回是次要动作 */}
+        <span className="dc-headline">⇄ 双点对照</span>
         <button type="button" className="btn" onClick={onClose} data-testid="dc-back">
           ← 返回
         </button>
-        <span className="dc-headline">⇄ 双点对照</span>
         <button type="button" className="btn" onClick={pickFile} data-testid="dc-open-dual">
           打开 B 侧抓包
         </button>

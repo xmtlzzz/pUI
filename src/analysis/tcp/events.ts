@@ -94,6 +94,14 @@ const SINGLE_POINT_LIMITATION =
 const MID_STREAM_LIMITATION = '抓包从连接中途开始(未见完整握手):流起始处的缺失不构成丢包证据,结论置信度下调'
 const CAPTURE_DROP_LIMITATION = '无法排除抓包点自身漏包(网卡/ring buffer/镜像口),缺口不等于网络丢包'
 
+/** 恢复 ACK 扫描窗口:填补时刻后最多扫这么多个对向报文(复杂度护栏,见
+ *  recoveryAck 注释)。真实 RTT 内必有恢复确认,512 个报文余量极大。 */
+const RECOVERY_ACK_WINDOW = 512
+/** Dup ACK 统计窗口:缺口暴露后最多扫这么多个报文(复杂度护栏,见 dup-ack 注释) */
+const DUP_ACK_SCAN_WINDOW = 512
+/** Dup ACK 计数上限:分类器只需 0/少量/大量三档,统计到 64 足够 */
+const DUP_ACK_COUNT_CAP = 64
+
 /**
  * 模糊区限制:乱序与丢包在单观察点下可能表现完全相同 ——
  * 只有"填补段全为新字节 + 短时长 + 少量/无重复确认"三者同时成立时,
@@ -217,13 +225,19 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       gap.start,
     )
 
-    // ACK 停滞与 Dup ACK:统计缺口开放期间、反向发出且累计 ACK 停在缺口起点的报文
+    // ACK 停滞与 Dup ACK:统计缺口开放期间、反向发出且累计 ACK 停在缺口起点的报文。
+    // 复杂度护栏:窗口上限 DUP_ACK_SCAN_WINDOW(缺口暴露后的 RTT 内出现;未填补缺口
+    // 不再扫到抓包尾 —— 乱序风暴 1.1 万缺口 × 全程扫描是 O(events×N) 冻结源之一)。
+    // dupAck 计数超窗即停(计数上限 DUP_ACK_COUNT_CAP 足以支撑分类器:0/少量/大量)。
     const ackDir: StreamDirection = gap.direction === 'c2s' ? 's2c' : 'c2s'
     const dupAckPackets: number[] = []
     let sackPresent = gap.sackCovered
     // 只扫缺口开放窗口(二分定界);未填补时窗口为 [firstObservedTime, 抓包结束]
     const winStart = lowerBound(gap.firstObservedTime)
-    const winEnd = gap.filledTime != null ? lowerBound(gap.filledTime + 1e-9) : ordered.length
+    const winEnd = Math.min(
+      gap.filledTime != null ? lowerBound(gap.filledTime + 1e-9) : ordered.length,
+      winStart + DUP_ACK_SCAN_WINDOW,
+    )
     for (let wi = winStart; wi < winEnd; wi++) {
       const p = ordered[wi]
       const seg = segByPacket.get(p.number)
@@ -233,6 +247,7 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       // 平铺模式下单个 dup ACK 报文该字段值是 ["1","1"](实测),按条目数会把计数翻倍。
       if (p.tcpAck != null && seqDiff(p.tcpAck, gap.start) === 0) {
         dupAckPackets.push(p.number)
+        if (dupAckPackets.length >= DUP_ACK_COUNT_CAP) break
       }
       if (p.tcpSackBlocks?.length) sackPresent = true
     }
@@ -297,11 +312,18 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
       }
     }
 
-    // 恢复 ACK:填补之后第一个 ACK 越过缺口终点(从填补时刻的二分位置向后找)
+    // 恢复 ACK:填补之后第一个 ACK 越过缺口终点。
+    // 复杂度护栏(乱序风暴 23k 包实测 4.8s 冻死主线程的根因):此前每个缺口从填补
+    // 时刻线性扫到抓包尾,ACK 永不越过时白扫全程 —— O(events×N),几千缺口 × 几万
+    // 报文直接冻死主线程。真实 TCP 中填补后的恢复确认在 RTT 量级(几个报文)内,
+    // 因此扫描窗口限定为填补时刻后 RECOVERY_ACK_WINDOW 个对向报文:窗口远大于
+    // 任何真实 RTT,超窗按"窗口内未见恢复确认"处理(与原语义对长期未恢复缺口
+    // 的判定一致,且该信号本就是证据层观察,非结论)。
     let recoveryAck: number | undefined
     if (gap.filledTime != null) {
       const recStart = lowerBound(gap.filledTime)
-      for (let wi = recStart; wi < ordered.length; wi++) {
+      const recEnd = Math.min(ordered.length, recStart + RECOVERY_ACK_WINDOW)
+      for (let wi = recStart; wi < recEnd; wi++) {
         const p = ordered[wi]
         const seg = segByPacket.get(p.number)
         if (seg?.direction !== ackDir) continue

@@ -227,15 +227,29 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   }
   // 恢复 ACK:每个缺口只取**首个**确认值越过其终点的对向报文(缺口被确认 =
   // 已恢复,一次就够)。此前是"每个越过的 ACK 都标",大会话几千个 ACK 满屏三角。
-  const gapEnds = facts.gaps.map((g) => ({ dir: g.direction, end: g.end, done: false }))
-  for (const p of ordered) {
-    if (p.tcpAck == null) continue
-    const carry = dirOf(p, c2sKey)
-    for (const ge of gapEnds) {
-      if (ge.done || carry === ge.dir) continue // 确认由对向报文携带
-      if (p.tcpAck > ge.end) {
-        ge.done = true
-        marks[ge.dir].push({ packetNumber: p.number, seq: p.tcpAck, len: 0, kind: 'ack' })
+  // 复杂度护栏:缺口按 end 升序排序后单遍归并对向 ACK(ack 也按序推进游标),
+  // O(N + G log G);此前逐缺口内层循环是 O(N×G),高缺口率大会话直接卡死主线程。
+  {
+    const gapEnds = facts.gaps
+      .map((g) => ({ dir: g.direction, end: g.end, done: false }))
+      .sort((a, b) => a.end - b.end)
+    // 对向 ACK 序列:每方向收集(ack, number),按时间序(=ordered)天然按报文序
+    const ackSeq: Record<StreamDirection, Array<{ ack: number; number: number }>> = { c2s: [], s2c: [] }
+    for (const p of ordered) {
+      if (p.tcpAck == null) continue
+      const carry = dirOf(p, c2sKey)
+      ackSeq[carry === 'c2s' ? 's2c' : 'c2s'].push({ ack: p.tcpAck, number: p.number })
+    }
+    for (const dir of ['c2s', 's2c'] as const) {
+      const list = ackSeq[dir]
+      let ai = 0
+      for (const ge of gapEnds) {
+        if (ge.dir !== dir || ge.done) continue
+        while (ai < list.length && list[ai].ack <= ge.end) ai++
+        if (ai < list.length) {
+          ge.done = true
+          marks[dir].push({ packetNumber: list[ai].number, seq: list[ai].ack, len: 0, kind: 'ack' })
+        }
       }
     }
   }
@@ -263,13 +277,38 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       axisMax = Math.max(axisMax, e)
     }
     const sortedMarks = marks[dir].sort((a, b) => a.seq - b.seq)
+    // 已见条/缺口渲染护栏:超上限时把相邻区间**合并为聚合带**(保留轴范围与
+    // 总量语义,悬停 title 标注聚合了几段),DOM 不随缺口数线性爆炸。
+    // 采样会丢区间,合并不丢 —— 事实边界仍在轴上。
+    const mergedSeen = mergeRanges(seenRaw)
+    const mergedGaps = laneGaps
+    if (mergedSeen.length > SEQ_SPACE_MAX_RANGES || mergedGaps.length > SEQ_SPACE_MAX_RANGES) {
+      const coalesced = coalesceRanges(mergedSeen, mergedGaps, SEQ_SPACE_MAX_RANGES)
+      lanes.push({
+        direction: dir,
+        label: labelOf(dir),
+        axisMin,
+        axisMax,
+        seenRuns: coalesced.seen,
+        gaps: coalesced.gaps,
+        sackBlocks: mergeRanges(sackRaw[dir]).slice(0, SEQ_SPACE_MAX_SACK),
+        finalAck: finalAck[dir],
+        retxMarks: sampleMark(retxMarks[dir], SEQ_SPACE_MAX_MARKS),
+        marks: sampleMark(sortedMarks, SEQ_SPACE_MAX_MARKS),
+        ticks: ticksFor(axisMin, axisMax),
+        messages: [],
+        kind: 'tcp',
+        proto: 'tcp',
+      })
+      continue
+    }
     lanes.push({
       direction: dir,
       label: labelOf(dir),
       axisMin,
       axisMax,
-      seenRuns: mergeRanges(seenRaw),
-      gaps: laneGaps,
+      seenRuns: mergedSeen,
+      gaps: mergedGaps,
       sackBlocks: mergeRanges(sackRaw[dir]).slice(0, SEQ_SPACE_MAX_SACK),
       finalAck: finalAck[dir],
       retxMarks: sampleMark(retxMarks[dir], SEQ_SPACE_MAX_MARKS),
@@ -282,4 +321,50 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   }
 
   return { lanes, width: 720 } // 与 FaultCompare.SeqSpaceGraphic 同宽,主视图面板放得下
+}
+
+/** 已见条/缺口渲染上限:轴显示宽 ~700px,300 条以上人眼已不可分辨,合并为聚合带 */
+export const SEQ_SPACE_MAX_RANGES = 300
+
+/**
+ * 把已见条与缺口合并为聚合带:把轴等分成 target 份,每份内所有已见段并成
+ * 一个聚合段(记合并数),所有缺口并成一个聚合缺口;聚合段保持"已收/未收"
+ * 的定性结论(份内只要有缺口就整份含缺口),总量语义不丢。
+ * 纯函数、确定性。 */
+function coalesceRanges(
+  seen: Array<[number, number]>,
+  gaps: Array<[number, number]>,
+  target: number,
+): { seen: Array<[number, number]>; gaps: Array<[number, number]> } {
+  if (seen.length === 0 && gaps.length === 0) return { seen: [], gaps: [] }
+  let lo = Infinity
+  let hi = -Infinity
+  for (const [s, e] of seen) {
+    lo = Math.min(lo, s)
+    hi = Math.max(hi, e)
+  }
+  for (const [s, e] of gaps) {
+    lo = Math.min(lo, s)
+    hi = Math.max(hi, e)
+  }
+  if (!Number.isFinite(lo) || hi <= lo) return { seen, gaps }
+  const span = hi - lo
+  const binWidth = span / target
+  const binOf = (v: number): number => Math.min(target - 1, Math.max(0, Math.floor((v - lo) / binWidth)))
+  const seenBins: Array<[number, number] | null> = new Array(target).fill(null)
+  const gapBins: Array<[number, number] | null> = new Array(target).fill(null)
+  for (const [s, e] of seen) {
+    const b = binOf(s)
+    const cur = seenBins[b]
+    seenBins[b] = cur ? [Math.min(cur[0], s), Math.max(cur[1], e)] : [s, e]
+  }
+  for (const [s, e] of gaps) {
+    const b = binOf(s)
+    const cur = gapBins[b]
+    gapBins[b] = cur ? [Math.min(cur[0], s), Math.max(cur[1], e)] : [s, e]
+  }
+  return {
+    seen: seenBins.filter((r): r is [number, number] => r != null),
+    gaps: gapBins.filter((r): r is [number, number] => r != null),
+  }
 }

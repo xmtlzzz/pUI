@@ -177,6 +177,52 @@ describe('computeSeqSpaceLayout', () => {
     for (let i = 1; i < lane.marks.length; i++) expect(lane.marks[i].seq).toBeGreaterThanOrEqual(lane.marks[i - 1].seq)
   })
 
+  it('gaps/seenRuns 渲染护栏:超上限合并为聚合带,轴范围不变', () => {
+    // 200 个缺口段(段间 10B 洞),未超上限 → 全量
+    const ps: Packet[] = []
+    for (let i = 0; i < 200; i++) {
+      ps.push(pkt(i + 1, { srcIp: 'a', dstIp: 'b', tcpSeq: i * 110, tcpLen: 100 }))
+    }
+    const lay = computeSeqSpaceLayout(ps, { client: 'a:1' })
+    const lane = lay.lanes[0]
+    expect(lane.seenRuns.length).toBe(200)
+    expect(lane.gaps.length).toBe(199)
+    // 超上限形态:2000 段 → 合并为聚合带(≤300),轴范围不变
+    const ps2: Packet[] = []
+    for (let i = 0; i < 2000; i++) {
+      ps2.push(pkt(i + 1, { srcIp: 'a', dstIp: 'b', tcpSeq: i * 110, tcpLen: 100 }))
+    }
+    const lay2 = computeSeqSpaceLayout(ps2, { client: 'a:1' })
+    const l2 = lay2.lanes[0]
+    expect(l2.seenRuns.length).toBeLessThanOrEqual(300)
+    expect(l2.gaps.length).toBeLessThanOrEqual(300)
+    // 轴范围不变(合并不改变事实边界)
+    expect(l2.axisMin).toBe(0)
+    expect(l2.axisMax).toBe(1999 * 110 + 100)
+    // 采样保序
+    for (let i = 1; i < l2.seenRuns.length; i++) expect(l2.seenRuns[i][0]).toBeGreaterThan(l2.seenRuns[i - 1][0])
+  })
+
+  it('性能护栏:高缺口率 23k 包全布局 < 1.5s(卡死回归)', () => {
+    const N = 23000
+    const ps: Packet[] = []
+    let seq = 0
+    for (let i = 0; i < N; i++) {
+      const c2s = i % 2 === 0
+      if (c2s) {
+        seq += 500
+        if (i % 6 === 0) seq += 200
+        ps.push(pkt(i + 1, { srcIp: 'a', dstIp: 'b', tcpSeq: seq, tcpLen: 500, tcpAck: 1, tcpAnalysis: i % 11 === 0 ? ['retransmission'] : undefined }))
+      } else {
+        ps.push(pkt(i + 1, { srcIp: 'b', dstIp: 'a', tcpSeq: 9999, tcpLen: 0, tcpAck: seq, tcpSackBlocks: i % 10 === 0 ? [[seq - 200, seq]] : undefined }))
+      }
+    }
+    const t0 = performance.now()
+    computeSeqSpaceLayout(ps, { client: 'a:1' })
+    const ms = performance.now() - t0
+    expect(ms).toBeLessThan(1500)
+  })
+
   it('非 TCP 会话回退时间轴带:每协议一条带,轴=报文序号,行内报文可点击', () => {
     const ps: Packet[] = [
       pkt(1, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),

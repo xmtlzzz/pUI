@@ -176,7 +176,7 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     const start = p.tcpSeq
     const end = (start + sl) >>> 0
     const prevHighest = ranges.highest()
-    const gapsBefore = ranges.gaps().length
+    const gapsBefore = ranges.gapCount() // O(1)(高缺口率大会话下 gaps() 全量重建是秒级热点)
 
     // 先落位、后计量:newBytes 取 add() 前后 totalBytes() 的差值。
     // 不能用落位前的 newBytes():其查询路径面对多候选带时可能解析到与 add 实际

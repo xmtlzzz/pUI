@@ -47,6 +47,8 @@ export class SeqRanges {
   /** 已见字节总数(增量维护;totalBytes() O(1) 读取。VDI 级大会话
    *  analyzeStream 每包要读两次,逐区间求和的 O(k) 会变成 O(n·k) 冻结主线程) */
   private total = 0
+  /** 空洞数量(增量维护;区间数 k 的空洞恒为 k-1,直接由区间数导出) */
+  private gapTotal = 0
   /** 最近一次 insert 合并后新区间的下标(insert 局部性:每包只影响 O(1) 个洞) */
   private lastTouched = 0
   /** 展开坐标的原点(首个观察到的 32 位序列号) */
@@ -212,6 +214,8 @@ export class SeqRanges {
     for (let k = i; k < j; k++) eaten += rs[k][1] - rs[k][0]
     this.total += (ne - ns) - eaten
     rs.splice(i, j - i, [ns, ne])
+    // 空洞数 = 区间数 - 1(区间有序互不重叠,相邻对之间恰为一个洞)
+    this.gapTotal = Math.max(0, rs.length - 1)
     // 记录本次 insert 触及的内部区间下标范围(合并后的单一区间下标),
     // 供增量空洞对账只检查受影响的洞,而不是每包全量重建
     this.lastTouched = i
@@ -268,6 +272,12 @@ export class SeqRanges {
   /** 当前存在的空洞(已见区间之间的缺口),按序列顺序返回 32 位边界 */
   gaps(): Array<[number, number]> {
     return this.gapsWithAbs().map((g) => [g.start, g.end])
+  }
+
+  /** 空洞数量(O(1):insert 时增量维护)。analyzeStream 每包读一次,
+   *  逐洞重建数组再取 length 的 O(k) 在高缺口率大会话下是秒级热点 */
+  gapCount(): number {
+    return this.gapTotal
   }
 
   /** 空洞及其绝对坐标:绝对坐标是跨回绕流排序的唯一可靠键。

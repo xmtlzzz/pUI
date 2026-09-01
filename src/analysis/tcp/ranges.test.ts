@@ -292,3 +292,22 @@ describe('gapsWithAbs:跨回绕的绝对坐标空洞', () => {
     expect(sum).toBe(100000)
   })
 })
+
+describe('SeqRanges gapCount 增量一致性', () => {
+  it('gapCount() 恒等于 gaps().length(各种插入形态)', () => {
+    const r = new SeqRanges()
+    expect(r.gapCount()).toBe(0)
+    r.add(1000, 2000)
+    expect(r.gapCount()).toBe(r.gaps().length)
+    r.add(3000, 4000)
+    expect(r.gapCount()).toBe(r.gaps().length) // 1
+    r.add(500, 800)
+    expect(r.gapCount()).toBe(r.gaps().length) // 2
+    r.add(2000, 3000) // 桥接,洞数 -1
+    expect(r.gapCount()).toBe(r.gaps().length) // 1
+    r.add(3600, 3800) // 内部重叠,洞数不变
+    expect(r.gapCount()).toBe(r.gaps().length)
+    for (let i = 0; i < 100; i++) r.add(10000 + i * 110, 10000 + i * 110 + 100)
+    expect(r.gapCount()).toBe(r.gaps().length)
+  })
+})

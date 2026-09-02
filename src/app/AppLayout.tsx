@@ -6,6 +6,7 @@ import { ListPane } from './ListPane'
 import { ErrorBoundary } from './ErrorBoundary'
 import { SequenceDiagram } from '../render/SequenceDiagram'
 import { SeqSpaceTimeline } from '../render/SeqSpaceTimeline.tsx'
+import { FlowTimeline } from '../render/FlowTimeline.tsx'
 import { PacketDetail } from '../detail/PacketDetail'
 import { FaultCompare } from './FaultCompare'
 import { DualComparePanel } from './DualComparePanel'
@@ -515,6 +516,8 @@ export function AppLayout() {
               <ErrorBoundary name="时序图">
                 {diagramStyle === 'C' ? (
                   <SeqSpaceTimeline conv={selected} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
+                ) : diagramStyle === 'D' ? (
+                  <FlowTimeline conv={selected} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
                 ) : (
                   <SequenceDiagram conv={selected} style={diagramStyle} timeMode={timeMode} highlight={highlight} onSelect={selectPacket} svgRef={svgRef} zoom={zoom} />
                 )}

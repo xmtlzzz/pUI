@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { SequenceDiagram } from '../render/SequenceDiagram'
 import { SeqSpaceTimeline } from '../render/SeqSpaceTimeline.tsx'
+import { FlowTimeline } from '../render/FlowTimeline.tsx'
 import { PacketDetail } from '../detail/PacketDetail'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useApp, selectSelected } from '../state/appStore'
@@ -103,15 +104,23 @@ export function SequenceBoard({ onClose }: { onClose: () => void }) {
       {/* 时序图主体:占据剩余全部空间(整页价值所在);内部滚动,放大后同样可达 */}
       <div className="seq-board-canvas" data-testid="seq-board-canvas">
         <ErrorBoundary name="时序图(整页)">
-          {diagramStyle === 'C' ? (
-            <SeqSpaceTimeline
-              conv={selected}
-              highlight={highlight}
-              onSelect={(n) => selectPacket(n)}
-              svgRef={svgRef}
-              zoom={zoom}
-            />
-          ) : (
+            {diagramStyle === 'C' ? (
+              <SeqSpaceTimeline
+                conv={selected}
+                highlight={highlight}
+                onSelect={(n) => selectPacket(n)}
+                svgRef={svgRef}
+                zoom={zoom}
+              />
+            ) : diagramStyle === 'D' ? (
+              <FlowTimeline
+                conv={selected}
+                highlight={highlight}
+                onSelect={(n) => selectPacket(n)}
+                svgRef={svgRef}
+                zoom={zoom}
+              />
+            ) : (
             <SequenceDiagram
               conv={selected}
               style={diagramStyle}

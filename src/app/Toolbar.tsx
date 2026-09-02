@@ -153,6 +153,11 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
               <button className={diagramStyle === 'C' ? 'on' : ''} onClick={() => setDiagramStyle('C')}>
                 C 序号空间
               </button>
+              {/* D 时间流:纵轴时间逐行排布(2026-09-02 用户要求加回:内容多时
+                  C 的横向字节轴难辨交互先后,D 每包一行从上往下看时间顺序) */}
+              <button className={diagramStyle === 'D' ? 'on' : ''} onClick={() => setDiagramStyle('D')}>
+                D 时间流
+              </button>
             </div>
             <div className="seg" title="相对:相对首包秒数;绝对:本地时钟时间戳(PRD F4)">
               <button className={timeMode === 'relative' ? 'on' : ''} onClick={() => setTimeMode('relative')}>

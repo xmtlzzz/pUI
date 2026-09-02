@@ -67,8 +67,9 @@ export interface AppState {
   currentPath: string
   /** 加载序号:用于丢弃被新加载覆盖的过期异步结果 */
   loadSeq: number
-  /** 时序图形态:A=斜线 B=行式 C=时间流(纵轴时间,用户要求 2026-09-01);默认 A 不变 */
-  diagramStyle: 'A' | 'B' | 'C'
+  /** 时序图形态:A=斜线 B=行式 C=序号空间(横向字节轴) D=时间流(纵轴时间,
+   *  2026-09-02 用户要求加回:内容多时横线形态难辨交互先后,D 与 C 互补);默认 A 不变 */
+  diagramStyle: 'A' | 'B' | 'C' | 'D'
   timeMode: 'relative' | 'absolute'
   sortKey: SortKey
   sortDir: SortDir
@@ -83,7 +84,7 @@ export interface AppState {
   clearFilter: () => void
   select: (id: string) => void
   selectPacket: (n: number) => void
-  setDiagramStyle: (s: 'A' | 'B' | 'C') => void
+  setDiagramStyle: (s: 'A' | 'B' | 'C' | 'D') => void
   setTimeMode: (m: 'relative' | 'absolute') => void
   setSort: (key: SortKey) => void
   searchQuery: string

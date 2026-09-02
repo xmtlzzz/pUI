@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { computeSeqSpaceLayout, type SeqSpaceLane } from './seqSpace.ts'
-import { protocolColor } from '../model/protocolColors'
 import { wheelZoom } from '../m4/viewModel'
 import type { Conversation } from '../model/types'
 
@@ -224,6 +223,9 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
             <rect width="6" height="6" fill="#fee2e2" />
             <line x1="0" y1="0" x2="0" y2="6" stroke="#ef4444" strokeWidth="2" />
           </pattern>
+          <marker id="seqsp-arr" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L7,3 L0,6 z" fill="#94a3b8" />
+          </marker>
         </defs>
         {layout.lanes.map((lane, li) => {
           const top = li * (LANE_H + LANE_GAP)
@@ -379,18 +381,48 @@ function LaneGraphic({
           })
         return shown
       })()}
-      {/* 非 TCP 回退时间轴带:每报文一个可点击圆点(异常包橙色),轴=报文序号 */}
-      {lane.messages.filter((m) => inView(m.seq, m.seq)).map((m, i) => {
-        const px = x(m.seq)
-        const isHl = hlSet?.has(m.packetNumber) ?? false
+      {/* 非 TCP 回退时间轴带:线条交互图(用户要求 2026-09-02:ICMP 等也要
+          线条形式,不是点点点)。上下两条端点行,每报文一条水平线段:
+          a2b 左→右(蓝),b2a 右→左(橙,与 A/B 形态方向色一致),中性虚线;
+          t 时刻落位,帧号标注在线上方,点击跳详情 */}
+      {(() => {
+        if (lane.messages.length === 0) return null
+        const TOP_Y = BAR_Y // 上行端点(a2b 出发侧)
+        const BOT_Y = BAR_Y + BAR_H + 16 // 下行端点(b2a 出发侧)
+        const lineColor = (d: string): string => (d === 'a2b' ? '#3b82f6' : d === 'b2a' ? '#f97316' : '#94a3b8')
         return (
-          <g key={`msg${i}`} data-testid="seqsp-msg" data-pkt={m.packetNumber} style={{ cursor: 'pointer' }} onClick={() => onSelect(m.packetNumber)}>
-            <title>{`${m.label}(点击查看报文)`}</title>
-            <circle cx={px} cy={BAR_Y + BAR_H / 2} r={isHl ? 5 : 4} fill={m.anomaly ? '#ea580c' : protocolColor(m.proto)} stroke={isHl ? ACK : '#fff'} strokeWidth={isHl ? 2 : 1} />
-            <rect x={px - 6} y={BAR_Y - 3} width={12} height={BAR_H + 6} fill="transparent" />
-          </g>
+          <>
+            {/* 两端点行基线 */}
+            <line x1={W_PAD} y1={TOP_Y} x2={width - W_PAD} y2={TOP_Y} stroke="#cbd5e1" strokeDasharray="4 4" />
+            <line x1={W_PAD} y1={BOT_Y} x2={width - W_PAD} y2={BOT_Y} stroke="#cbd5e1" strokeDasharray="4 4" />
+            {lane.messages.filter((m) => inView(m.t, m.t)).map((m, i) => {
+              const px = x(m.t)
+              const isHl = hlSet?.has(m.packetNumber) ?? false
+              const color = m.anomaly ? '#ea580c' : lineColor(m.dir)
+              // 线段:从出发端点行横跨到对侧(a2b 上→下、b2a 下→上);终点箭头
+              const fromY = m.dir === 'b2a' ? BOT_Y : TOP_Y
+              const toY = m.dir === 'b2a' ? TOP_Y : BOT_Y
+              const arrowX = m.dir === 'b2a' ? Math.max(px - 7, W_PAD) : Math.min(px + 7, width - W_PAD)
+              const labelY = m.dir === 'b2a' ? BOT_Y + 14 : TOP_Y - 6
+              return (
+                <g key={`msg${i}`} data-testid="seqsp-msg" data-pkt={m.packetNumber} style={{ cursor: 'pointer' }} onClick={() => onSelect(m.packetNumber)}>
+                  <title>{`${m.label}(点击查看报文)`}</title>
+                  <circle cx={px} cy={fromY} r={3.5} fill={color} stroke="#fff" strokeWidth={1} />
+                  {m.dir === 'neutral' ? (
+                    <line x1={px} y1={fromY} x2={px} y2={toY} stroke={color} strokeWidth={1.6} strokeDasharray="2 3" />
+                  ) : (
+                    <line x1={px} y1={fromY} x2={arrowX} y2={toY} stroke={color} strokeWidth={1.6} markerEnd="url(#seqsp-arr)" />
+                  )}
+                  <text x={px} y={labelY} textAnchor="middle" fontSize={8.5} fill={isHl ? ACK : color}>
+                    {`#${m.packetNumber}`}
+                  </text>
+                  <rect x={px - 8} y={Math.min(fromY, toY) - 4} width={16} height={Math.abs(toY - fromY) + 8} fill="transparent" />
+                </g>
+              )
+            })}
+          </>
         )
-      })}
+      })()}
       {/* ACK 游标:累计确认位置(游标卡在缺口前 = 对端没收到缺口数据);
           标签贴画布边缘时锚点内移,避免文字被裁掉一半 */}
       {lane.finalAck != null && lane.finalAck >= viewMin && lane.finalAck <= viewMax && (
@@ -417,15 +449,17 @@ function LaneGraphic({
           缩放时刻度按可见窗口 1/2/5 重算(密度恒定) */}
       <g data-testid="seqsp-ticks">
         <line x1={W_PAD} y1={TICK_LINE_Y} x2={width - W_PAD} y2={TICK_LINE_Y} stroke={AXIS} />
-        {ticks.map((t) => {
+        {ticks.map((t, ti) => {
           const tx = x(t)
           const anchor = tx < W_PAD + 20 ? 'start' : tx > width - W_PAD - 20 ? 'end' : 'middle'
           const ax = anchor === 'start' ? W_PAD : anchor === 'end' ? width - W_PAD : tx
+          // 时间轴的小数刻度四舍五入后可能撞值(0.2 与 0.25 → 同 0.2):key 带下标防撞
+          const tickLabel = lane.kind === 'fallback' ? (t < 1 ? t.toFixed(2) : String(t)) : String(t)
           return (
-            <g key={t}>
+            <g key={`${t}-${ti}`}>
               <line x1={tx} y1={TICK_LINE_Y} x2={tx} y2={TICK_LINE_Y + 4} stroke={AXIS} />
               <text x={ax} y={TICK_LINE_Y + 16} textAnchor={anchor} fontSize={10} fill={TICK_TEXT}>
-                {t}
+                {tickLabel}
               </text>
             </g>
           )
@@ -449,9 +483,9 @@ function laneTicks(viewMin: number, viewMax: number): number[] {
   return out
 }
 
-/** 轴说明文案:TCP=字节序列空间读法;回退=时间轴读法 */
+/** 轴说明文案:TCP=字节序列空间读法;回退=时间轴线条读法 */
 function layoutCaption(kind: 'tcp' | 'fallback'): string {
   return kind === 'tcp'
     ? '序列号空间(字节) · 绿=已收 红纹=未收到 紫=SACK(对端已收) 蓝=累计确认 红=重传'
-    : '时间轴(报文序号) · 点=报文(点击看详情) 橙=带分析标记'
+    : '时间轴(相对秒) · 线=报文(点击看详情) 蓝=发出 橙=返回 橙线=带分析标记'
 }

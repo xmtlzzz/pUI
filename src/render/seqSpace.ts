@@ -45,8 +45,9 @@ export interface SeqSpaceLane {
   marks: Array<{ packetNumber: number; seq: number; len: number; kind: 'retx' | 'expose' | 'fill' | 'ack' }>
   /** 字节刻度(1/2/5 整步长) */
   ticks: number[]
-  /** 非 TCP 回退时间轴带的报文点位(TCP 带为空);label 形如 "#3 概要 · 120B" */
-  messages: Array<{ packetNumber: number; seq: number; label: string; proto: string; anomaly: boolean }>
+  /** 非 TCP 回退时间轴带的报文线段(TCP 带为空)。t=相对时刻(秒),
+   *  dir=a2b/b2a/neutral(线段方向),label 形如 "#3 概要 · 120B" */
+  messages: Array<{ packetNumber: number; seq: number; t: number; dir: 'a2b' | 'b2a' | 'neutral'; label: string; proto: string; anomaly: boolean }>
   /** 带性质:tcp=字节序号空间;fallback=时间轴(报文序号) */
   kind: 'tcp' | 'fallback'
   /** 带的协议名(回退带显示;TCP 带恒 'tcp') */
@@ -131,9 +132,20 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   }
 
   if (facts.segments.length === 0) {
-    // 非 TCP(或缺 seq/len):回退时间轴带。按 协议+端点对 分组,组内轴=报文序号。
-    // 分组键稳定性:协议 + 无向端点对(两端排序),同组报文在时间轴上从左到右。
-    const groups = new Map<string, { proto: string; label: string; msgs: Array<{ packetNumber: number; seq: number; label: string; proto: string; anomaly: boolean }> }>()
+    // 非 TCP(或缺 seq/len):回退**时间轴线条交互图**(用户要求 2026-09-02:
+    // ICMP 等报文也要线条形式的时序图,不是点点点)。按 协议+端点对 分组,
+    // 组内轴=相对时间秒(与 A/B 形态同坐标),每报文一条水平线段:
+    // request/本端发出 → 向右(a2b),response/对端发出 → 向左(b2a),
+    // 判不了用中性虚线。方向判定优先 Packet.direction,缺失按源端点。
+    const groups = new Map<
+      string,
+      {
+        proto: string
+        label: string
+        srcKey: string
+        msgs: Array<{ packetNumber: number; seq: number; t: number; dir: 'a2b' | 'b2a' | 'neutral'; label: string; proto: string; anomaly: boolean }>
+      }
+    >()
     for (const p of ordered) {
       const a = `${p.srcIp ?? p.srcMac ?? '?'}:${p.srcPort ?? ''}`
       const b = `${p.dstIp ?? p.dstMac ?? '?'}:${p.dstPort ?? ''}`
@@ -141,12 +153,22 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       const key = `${p.proto}|${pair}`
       let g = groups.get(key)
       if (!g) {
-        g = { proto: p.proto, label: `${a} ↔ ${b} · ${p.proto}`, msgs: [] }
+        g = { proto: p.proto, label: `${a} ↔ ${b} · ${p.proto}`, srcKey: a, msgs: [] }
         groups.set(key, g)
+      }
+      // 方向:Packet.direction 优先;缺失时按源端点(与组内首个方向一致按源=组标签左端)
+      let dir: 'a2b' | 'b2a' | 'neutral'
+      if (p.direction === 'request') dir = 'a2b'
+      else if (p.direction === 'response') dir = 'b2a'
+      else {
+        const src = `${p.srcIp ?? p.srcMac ?? '?'}:${p.srcPort ?? ''}`
+        dir = src === g.srcKey ? 'a2b' : 'b2a'
       }
       g.msgs.push({
         packetNumber: p.number,
-        seq: p.number, // 时间轴带:x=报文序号(非字节)
+        seq: p.number, // 保留序号(x 落位由 t 决定)
+        t: p.time,
+        dir,
         label: `#${p.number} ${p.info ?? p.proto} · ${p.len}B`,
         proto: p.proto,
         anomaly: (p.tcpAnalysis?.length ?? 0) > 0,
@@ -154,20 +176,22 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
     }
     const lanes: SeqSpaceLane[] = []
     for (const g of groups.values()) {
-      const nums = g.msgs.map((m) => m.seq)
-      const axisMin = Math.min(...nums)
-      const axisMax = Math.max(...nums)
+      const ts = g.msgs.map((m) => m.t)
+      const axisMin = Math.min(...ts)
+      const rawMax = Math.max(...ts)
+      // 单包/同时刻带:轴两端留 1ms 呼吸,除零保护
+      const axisMax = rawMax === axisMin ? axisMin + 0.001 : rawMax
       lanes.push({
         direction: 'c2s',
         label: g.label,
         axisMin,
-        axisMax: axisMax === axisMin ? axisMin + 1 : axisMax, // 单包带给 1 格跨度,除零保护
+        axisMax,
         seenRuns: [],
         gaps: [],
         sackBlocks: [],
         retxMarks: [],
         marks: [],
-        ticks: ticksFor(axisMin, axisMax === axisMin ? axisMin + 1 : axisMax),
+        ticks: ticksFor(axisMin, axisMax),
         messages: sampleMark(g.msgs, SEQ_SPACE_MAX_MARKS),
         kind: 'fallback',
         proto: g.proto,

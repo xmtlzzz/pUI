@@ -132,20 +132,22 @@ describe('SeqSpaceTimeline', () => {
     expect(svg.getAttribute('viewBox')!.split(' ')[2]).toBe('1200')
   })
 
-  it('非 TCP 会话:渲染时间轴回退带,每报文一个可点击点', () => {
+  it('非 TCP 会话:渲染时间轴线条交互图,每报文一条可点击方向线段', () => {
     const ps = [
-      pkt(1, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),
-      pkt(2, { transport: 'arp', proto: 'arp', srcMac: 'aa', dstMac: 'ff', srcIp: 'a' }),
-      pkt(3, { transport: 'udp', proto: 'mdns', srcIp: 'a', dstIp: '224.0.0.251', srcPort: 5353, dstPort: 5353 }),
+      pkt(1, { transport: 'icmp', proto: 'icmp', srcIp: 'a', dstIp: 'b', time: 0.1, direction: 'request' }),
+      pkt(2, { transport: 'icmp', proto: 'icmp', srcIp: 'b', dstIp: 'a', time: 0.2, direction: 'response' }),
+      pkt(3, { transport: 'icmp', proto: 'icmp', srcIp: 'a', dstIp: 'b', time: 0.5, direction: 'request' }),
     ]
     const onSelect = vi.fn()
     const { container } = render(<SeqSpaceTimeline conv={conv(ps)} onSelect={onSelect} svgRef={createRef()} zoom={1} />)
     const svg = container.querySelector('svg')!
-    // 不再是空态:有 2 条回退带(mdns/arp),带内 3 个报文点
+    // 3 条方向线段(不是点点点)
     expect(svg.querySelectorAll('[data-testid="seqsp-msg"]')).toHaveLength(3)
+    const lines = svg.querySelectorAll('[data-testid="seqsp-msg"] line')
+    expect(lines.length).toBeGreaterThanOrEqual(3)
     // 轴说明是时间轴读法
-    expect(svg.textContent).toContain('时间轴(报文序号)')
-    // 点击报文点回调帧号
+    expect(svg.textContent).toContain('时间轴(相对秒)')
+    // 点击线段回调帧号
     fireEvent.click(svg.querySelector('[data-pkt="2"]')!)
     expect(onSelect).toHaveBeenCalledWith(2)
   })

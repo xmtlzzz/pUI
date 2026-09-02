@@ -232,10 +232,29 @@ describe('computeSeqSpaceLayout', () => {
     const lay = computeSeqSpaceLayout(ps, { client: 'a' })
     expect(lay.lanes).toHaveLength(2) // mdns 一带 + arp 一带(按 协议+端点对 分带)
     const mdns = lay.lanes.find((l) => l.label.includes('mdns'))!
-    expect(mdns.axisMin).toBe(1)
-    expect(mdns.axisMax).toBe(3) // 轴=报文序号空间(非字节)
     expect(mdns.messages.map((m) => m.packetNumber)).toEqual([1, 3])
     expect(mdns.messages[0].label).toContain('#1')
+  })
+
+  it('非 TCP 回退带:轴=相对时间秒,每报文一条方向线段(线条交互图)', () => {
+    // ICMP ping 一来一回:0.1s 请求、0.2s 响应
+    const ps: Packet[] = [
+      pkt(1, { transport: 'icmp', proto: 'icmp', srcIp: 'a', dstIp: 'b', time: 0.1, direction: 'request' }),
+      pkt(2, { transport: 'icmp', proto: 'icmp', srcIp: 'b', dstIp: 'a', time: 0.2, direction: 'response' }),
+      pkt(3, { transport: 'icmp', proto: 'icmp', srcIp: 'a', dstIp: 'b', time: 0.5, direction: 'request' }),
+    ]
+    const lay = computeSeqSpaceLayout(ps, { client: 'a' })
+    const lane = lay.lanes[0]
+    // 轴=时间(0.1..0.5),不再是报文序号
+    expect(lane.axisMin).toBeCloseTo(0.1)
+    expect(lane.axisMax).toBeCloseTo(0.5)
+    // 每报文一条线段,t 时刻落位;x1/x2 体现方向(请求右行、响应左行)
+    expect(lane.messages).toHaveLength(3)
+    expect(lane.messages[0].t).toBeCloseTo(0.1)
+    expect(lane.messages[0].dir).toBe('a2b')
+    expect(lane.messages[1].dir).toBe('b2a')
+    // 采样护栏仍在(200 上限)
+    expect(lane.kind).toBe('fallback')
   })
 
   it('非 TCP 带刻度同样 1/2/5 步长;混合 TCP+非 TCP 时只出 TCP 序号空间带', () => {

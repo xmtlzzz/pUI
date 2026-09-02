@@ -13,19 +13,35 @@
 }
 
 .fc-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   flex: none;
+  /* 按钮靠左但留呼吸,不顶住最左边缘(用户要求 2026-09-02) */
+  padding: 2px 0 6px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
 }
 
 .fc-headline {
   font-weight: 600;
+  /* 标题居中(用户要求 2026-09-02:不夹在按钮之间的靠右)
+     absolute 居中:不占 flex 位,左右按钮分别靠边 */
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
+  pointer-events: none;
 }
 
 .fc-controls {
   display: inline-flex;
   gap: 6px;
+  /* 标题已绝对居中不占位:控制组推到最右,左右按钮对称 */
+  margin-left: auto;
 }
 
 .fc-degraded {

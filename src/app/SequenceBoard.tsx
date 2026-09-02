@@ -6,6 +6,9 @@ import { PacketDetail } from '../detail/PacketDetail'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useApp, selectSelected } from '../state/appStore'
 import { exportSvgPng, defaultPngName } from '../export/exportPng'
+// 整页板块复用 dc-* 骨架(页面留白/工具栏/标题),必须引入对应样式:
+// 不 import 则时序图整页板块的 dc-page padding 不生效,按钮贴窗口边缘
+import './dualCompare.css'
 
 /**
  * 时序图整页板块(用户要求 2026-08-31):主视图右下角的时序图区域太小,

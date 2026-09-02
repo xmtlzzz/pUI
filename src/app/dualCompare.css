@@ -1,4 +1,6 @@
-/* 双点对照面板(dc-* 前缀;视觉语言复用 fc-*/btn 体系,深浅色跟随应用变量) */
+/* 双点对照面板(dc-* 前缀;视觉语言复用 fc-* 与 btn 体系,深浅色跟随应用变量)。
+   注意:CSS 注释内出现「星号 + 斜杠」的连写会提前终止注释,吞掉下方规则,
+   本文件头部就曾因此丢失 .dc-page 规则(按钮贴边根因)。 */
 
 .dc-page {
   display: flex;
@@ -13,21 +15,30 @@
 }
 
 .dc-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   flex: none;
   flex-wrap: wrap;
-  /* 顶栏与内容区之间留出呼吸空间,并以下边线与内容分组 */
-  padding-bottom: 6px;
+  /* 顶栏按钮不贴最左边缘(用户要求 2026-09-02:按钮靠左但留呼吸) */
+  padding: 2px 0 6px;
   border-bottom: 1px solid var(--border, #e2e8f0);
 }
 
 .dc-headline {
   font-weight: 600;
   font-size: 14px;
-  /* 标题与后续动作的视觉分组 */
-  margin-right: 6px;
+  /* 标题居中(用户要求 2026-09-02:文字标识放中间而非夹在按钮间)。
+     absolute 居中:不参与 flex 占位,左右按钮天然靠边 */
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+  pointer-events: none;
 }
 
 .dc-bmeta {

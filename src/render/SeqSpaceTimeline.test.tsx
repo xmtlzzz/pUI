@@ -130,4 +130,31 @@ describe('SeqSpaceTimeline', () => {
     fireEvent.click(svg.querySelector('[data-pkt="2"]')!)
     expect(onSelect).toHaveBeenCalledWith(2)
   })
+
+  it('滚轮缩放:向上滚(放大)后带标题出现放大范围,双击复位', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    // 初始无放大标记
+    expect(svg.textContent).not.toContain('· 放大')
+    // 滚轮向上(deltaY<0)= 放大
+    fireEvent.wheel(svg, { deltaY: -100 })
+    // 带标题出现「· 放大 <范围>」
+    expect(svg.textContent).toContain('· 放大')
+    // 双击复位
+    fireEvent.dblClick(svg)
+    expect(svg.textContent).not.toContain('· 放大')
+  })
+
+  it('拖拽平移:按下并水平移动后窗口平移(游标位置变化)', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    fireEvent.wheel(svg, { deltaY: -120 })
+    const before = svg.textContent
+    // 指针拖拽序列
+    fireEvent.pointerDown(svg, { pointerId: 1, clientX: 400, clientY: 100, buttons: 1 })
+    fireEvent.pointerMove(svg, { pointerId: 1, clientX: 200, clientY: 100 })
+    fireEvent.pointerUp(svg, { pointerId: 1 })
+    // 平移后文本应变化(刻度值范围移动)
+    expect(svg.textContent).not.toBe(before)
+  })
 })

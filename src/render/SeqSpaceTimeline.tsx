@@ -236,7 +236,9 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
           const viewMin = win ? win.start : lane.axisMin
           const viewMax = win ? win.end : lane.axisMax
           const span = viewMax - viewMin || 1
-          const x = (v: number): number => ((v - viewMin) / span) * (width - W_PAD * 2) + W_PAD
+          // TCP 带预留左侧方向列(标注客户端/服务端→),回退带用窄边距
+          const plotLeft = lane.kind === 'tcp' ? DIR_LABEL_COL : W_PAD
+          const x = (v: number): number => ((v - viewMin) / span) * (width - W_PAD * 2 - DIR_LABEL_COL) + plotLeft
           return (
             <g key={key} transform={`translate(0 ${top})`}>
               <LaneGraphic
@@ -246,6 +248,7 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
                 onSelect={onSelect}
                 hlSet={hlSet}
                 laneIndex={li}
+                plotLeft={plotLeft}
                 viewMin={viewMin}
                 viewMax={viewMax}
                 zoomed={win != null}
@@ -258,6 +261,9 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
   )
 }
 
+/** TCP 带左侧方向标注列宽(客户端→ / 服务端→);字节条从其后起算 */
+const DIR_LABEL_COL = 62
+
 function LaneGraphic({
   lane,
   x,
@@ -265,6 +271,7 @@ function LaneGraphic({
   onSelect,
   hlSet,
   laneIndex,
+  plotLeft,
   viewMin,
   viewMax,
   zoomed,
@@ -275,6 +282,8 @@ function LaneGraphic({
   onSelect: (n: number) => void
   hlSet: Set<number> | null
   laneIndex: number
+  /** 绘图区左边界(TCP 带=方向列后;回退带=窄边距) */
+  plotLeft: number
   /** 当前可见轴窗口(滚轮缩放/拖拽后变化;默认全轴) */
   viewMin: number
   viewMax: number
@@ -288,17 +297,24 @@ function LaneGraphic({
   return (
     <g data-testid={`seqsp-lane-${laneIndex}`}>
       {/* 带标题:方向端点对(回退带含协议名) */}
-      <text x={W_PAD} y={12} fontSize={10} fill="#94a3b8">
+      <text x={plotLeft} y={12} fontSize={10} fill="#94a3b8">
         {lane.label}
         {zoomed ? ` · 放大 ${Math.round(viewMin)}–${Math.round(viewMax)}` : ''}
       </text>
-      {/* 轴说明(只画在第一条带):TCP 带=字节序列空间;回退带=时间轴(报文序号) */}
+      {/* 轴说明(只画在第一条带):TCP 带=字节序列空间;回退带=时间轴(相对秒) */}
       {laneIndex === 0 && (
         <text x={width - W_PAD} y={12} textAnchor="end" fontSize={10} fill="#94a3b8">
           {layoutCaption(lane.kind)}
         </text>
       )}
 
+      {/* 方向标注(TCP 带左列:上下两行分别是「客户端→服务端」/「服务端→客户端」,
+          数据流方向一眼可辨;用户要求 2026-09-02) */}
+      {lane.kind === 'tcp' && (
+        <text x={W_PAD + 4} y={BAR_Y + BAR_H / 2 + 3} fontSize={10} fontWeight="bold" fill={lane.direction === 'c2s' ? '#1d4ed8' : '#c2410c'}>
+          {lane.direction === 'c2s' ? '客户端 →' : '服务端 →'}
+        </text>
+      )}
       {/* 已见字节条(事实层:抓包看见过的字节;窗口外不渲染) */}
       {lane.seenRuns.filter(([s, e]) => inView(s, e)).map(([s, e], i) => (
         <rect key={`seen${i}`} x={x(s)} y={BAR_Y} width={Math.max(x(e) - x(s), 1)} height={BAR_H} fill={SEEN} rx={2}>

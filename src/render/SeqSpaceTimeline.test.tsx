@@ -152,6 +152,13 @@ describe('SeqSpaceTimeline', () => {
     expect(onSelect).toHaveBeenCalledWith(2)
   })
 
+  it('TCP 会话:两行方向标注(客户端→ / 服务端→),一眼看出谁发谁收', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    expect(svg.textContent).toContain('客户端 →')
+    expect(svg.textContent).toContain('服务端 →')
+  })
+
   it('滚轮缩放:向上滚(放大)后带标题出现放大范围,双击复位', () => {
     const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
     const svg = container.querySelector('svg')!

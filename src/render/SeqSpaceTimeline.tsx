@@ -66,7 +66,7 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
     setWindows({})
   }, [conv])
   const svgElRef = useRef<SVGSVGElement | null>(null)
-  const dragRef = useRef<{ pointerId: number; x: number; laneKey: string; win: AxisWindow; width: number } | null>(null)
+  const dragRef = useRef<{ pointerId: number; x: number; laneKey: string; win: AxisWindow; width: number; moved: boolean } | null>(null)
 
   // 占满容器(用户要求 2026-09-02:整页板块右侧留白太怪):viewBox 宽跟随
   // 容器实际宽度(布局 720 只是下限),ResizeObserver 监听;jsdom 无布局,
@@ -129,7 +129,12 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
     return () => svg.removeEventListener('wheel', onWheelNative)
   }, [onWheelNative])
 
-  // 拖拽平移:横向像素位移换算字节位移,窗口钳制在轴内
+  // 拖拽平移:横向像素位移换算字节位移,窗口钳制在轴内。
+  // 点击护栏(用户实测:点报文无详情):pointerdown 只记录起点、**不捕获指针** ——
+  // setPointerCapture 会把后续 click 的 target 重定向到捕获元素(svg 根),
+  // 图元的 onClick 永远收不到(真实浏览器行为,jsdom 模拟不出)。改为移动超过
+  // 4px 才算拖拽(阈值内视为点击,浏览器原生 click 正常派发到图元)。
+  const DRAG_THRESHOLD_PX = 4
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
       const svg = svgElRef.current
@@ -142,8 +147,8 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
       if (!lane) return
       const key = `${lane.kind}-${lane.direction}-${li}`
       const win = windows[key] ?? { start: lane.axisMin, end: lane.axisMax }
-      dragRef.current = { pointerId: e.pointerId, x: e.clientX, laneKey: key, win, width: rect.width }
-      e.currentTarget.setPointerCapture?.(e.pointerId)
+      // moved=false:尚未超过阈值,是"潜在点击";拖动才置 true(此时才开始平移)
+      dragRef.current = { pointerId: e.pointerId, x: e.clientX, laneKey: key, win, width: rect.width, moved: false }
     },
     [layout.lanes, windows],
   )
@@ -151,12 +156,15 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
     (e: React.PointerEvent<SVGSVGElement>) => {
       const d = dragRef.current
       if (!d || d.pointerId !== e.pointerId) return
+      const dx = e.clientX - d.x
+      if (!d.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return // 未达阈值:不动作,留给 click
       const lane = layout.lanes.find((_, i) => `${layout.lanes[i].kind}-${layout.lanes[i].direction}-${i}` === d.laneKey)
       if (!lane) return
       const span = d.win.end - d.win.start
       const full = lane.axisMax - lane.axisMin
       if (span >= full) return // 未缩放时无可平移范围
-      const dBytes = -((e.clientX - d.x) / Math.max(d.width, 1)) * span
+      d.moved = true
+      const dBytes = -(dx / Math.max(d.width, 1)) * span
       let s0 = d.win.start + dBytes
       s0 = Math.min(Math.max(s0, lane.axisMin), lane.axisMax - span)
       setWindows((prev) => ({ ...prev, [d.laneKey]: { start: s0, end: s0 + span } }))

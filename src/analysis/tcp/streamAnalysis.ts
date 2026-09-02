@@ -223,14 +223,18 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
       const affected = new Set<number>([ti - 1, ti])
       let oi = 0
       let ri = 1
-      // open 的游标与洞游标同步前进;受影响洞用 splice 原地替换
+      // open 的游标与洞游标同步前进;受影响洞用 splice 原地替换。
+      // 死循环护栏(真实 VDI 抓包 #9697 复现,进程假死):ri 的推进**必须以洞序为准**,
+      // 每轮至少 +1 —— 不能被 open.length 钳制成 0:重传风暴下 open 会先于洞被
+      // 删空,钳制版 skip=0 后 ri 永不前进,主线程无限自旋(用户实测「能滚动但
+      // 点不动」即此)。open 游标 oi 单独用 Math.min 钳在合法范围。
       while (ri < rc) {
         if (!affected.has(ri)) {
           // 未受影响:洞与开放记录按原序一一对应,双方游标同步跳过
           let runEnd = ri
           while (runEnd < rc && !affected.has(runEnd)) runEnd++
-          const skip = Math.min(runEnd - ri, open.length - oi)
-          oi += skip
+          const skip = runEnd - ri
+          oi = Math.min(oi + skip, open.length)
           ri += skip
           continue
         }

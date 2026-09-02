@@ -68,6 +68,33 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
   const svgElRef = useRef<SVGSVGElement | null>(null)
   const dragRef = useRef<{ pointerId: number; x: number; laneKey: string; win: AxisWindow; width: number } | null>(null)
 
+  // 占满容器(用户要求 2026-09-02:整页板块右侧留白太怪):viewBox 宽跟随
+  // 容器实际宽度(布局 720 只是下限),ResizeObserver 监听;jsdom 无布局,
+  // window resize 兜底。SVG 按 viewBox 拉伸后字体/图元等比放大,清晰不挤。
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const [wrapWidth, setWrapWidth] = useState(0)
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const measure = (): void => {
+      const w = el.getBoundingClientRect().width
+      if (w > 0) setWrapWidth(Math.floor(w))
+    }
+    measure()
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(measure)
+      ro.observe(el)
+      return () => ro.disconnect()
+    }
+    // jsdom 兜底:window resize + 测试钩子
+    window.addEventListener('resize', measure)
+    ;(window as unknown as { __seqspResize?: () => void }).__seqspResize = measure
+    return () => {
+      window.removeEventListener('resize', measure)
+      delete (window as unknown as { __seqspResize?: () => void }).__seqspResize
+    }
+  }, [])
+
   // 双击复位所有带窗口(简明交互:全图回到全轴)
   const resetWindows = useCallback(() => setWindows({}), [])
 
@@ -144,12 +171,17 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
     return <div className="empty">从左侧选择一个会话查看时序图</div>
   }
 
-  const width = layout.width
+  // 画布宽:容器实际宽优先(占满面板,整页板块不再右侧留白),布局 720 为下限
+  const width = Math.max(wrapWidth, layout.width)
   const height = Math.max(layout.lanes.length * (LANE_H + LANE_GAP), LANE_H)
   const zoomedAny = Object.values(windows).some((w) => w != null)
 
   return (
-    <div className="seq-wrap" style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}>
+    <div
+      ref={wrapRef}
+      className="seq-wrap"
+      style={{ flex: 1, overflow: 'auto', position: 'relative', background: '#f8fafc', border: '1px solid #eef2f7', borderRadius: 8, padding: 8 }}
+    >
       {conv.issues.length > 0 && (
         <div className="issue-banner">⚠ {conv.issues.map((i) => i.message).join('；')}</div>
       )}

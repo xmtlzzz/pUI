@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import { createRef } from 'react'
 import { SeqSpaceTimeline } from './SeqSpaceTimeline.tsx'
 import type { Packet, Conversation } from '../model/types'
@@ -111,6 +111,25 @@ describe('SeqSpaceTimeline', () => {
     const w = Number(svg.getAttribute('width'))
     const vbW = svg.getAttribute('viewBox')!.split(' ').map(Number)[2]
     expect(w).toBe(vbW * 2)
+  })
+
+  it('占满容器宽度:容器比默认 720 宽时 viewBox 宽跟随容器(jsdom mock 1200)', () => {
+    // jsdom 无真实布局,通过 mock getBoundingClientRect 驱动 ResizeObserver 路径
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const wrap = container.querySelector('.seq-wrap') as HTMLElement
+    const svg = container.querySelector('svg')!
+    // 初始:默认宽(布局 720)
+    expect(svg.getAttribute('viewBox')!.split(' ')[2]).toBe('720')
+    // 模拟容器加宽:ResizeObserver 回调
+    wrap.getBoundingClientRect = () => ({ width: 1200 } as DOMRect)
+    act(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    // 观察者触发后 viewBox 跟随 1200
+    act(() => {
+      ;(window as unknown as { __seqspResize?: () => void }).__seqspResize?.()
+    })
+    expect(svg.getAttribute('viewBox')!.split(' ')[2]).toBe('1200')
   })
 
   it('非 TCP 会话:渲染时间轴回退带,每报文一个可点击点', () => {

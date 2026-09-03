@@ -27,7 +27,10 @@ export function serializeSvgForExport(svgEl: SVGSVGElement): string {
 }
 
 export async function exportSvgPng(svgEl: SVGSVGElement | null, fileName: string): Promise<void> {
-  if (!svgEl) return
+  if (!svgEl) {
+    // 不再静默返回:上层用户以为导出了实际没保存 —— 抛出让调用方 try/catch 提示
+    throw new Error('图表尚未渲染完成')
+  }
   const blob = await svgToBlob(svgEl)
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   if (isTauri) {

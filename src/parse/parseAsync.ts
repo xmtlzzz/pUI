@@ -29,6 +29,29 @@ const WORKER_THRESHOLD = 1024 * 1024 // 1MB
 /** 池上限:解析是低频操作,4 只足以覆盖「同时解析两份 + 余量」,再多只增内存 */
 const MAX_POOL = 4
 
+/** 排队上限:用户快速连开多份抓包时,在途文本(≥1MB/份)会全部驻留内存。
+ *  池满(MAX_POOL in-flight)后最多再排 2 份,超出立即 reject —— 宁可让用户
+ *  看到明确错误重试,也不能无限堆积拖垮进程。 */
+const MAX_QUEUE = 2
+
+/** 解析被用户主动取消(切换文件/中止):与「worker 崩溃回落主线程」是两种语义,
+ *  取消必须原样浮出,不能走主线程兜底重解(否则等于没取消)。 */
+export class ParseCancelledError extends Error {
+  constructor(message = '解析已取消') {
+    super(message)
+    this.name = 'ParseCancelledError'
+  }
+}
+
+/** 排队已满被拒:背压上限的显式拒绝,同样不回落主线程(回落会静默重解,
+ *  把「用户并发太多」变成「悄悄多占一次主线程」)。 */
+export class ParseQueueFullError extends Error {
+  constructor(message = '解析排队已满,请稍后再试') {
+    super(message)
+    this.name = 'ParseQueueFullError'
+  }
+}
+
 /** 池大小:min(4, os.availableParallelism())。vitest worker 沙箱里
  *  os.cpus() 可能返回空数组(perfGuard.test.ts 先例),故 availableParallelism
  *  优先;两者都不可用时保守按 1(行为退化为单 Worker,仍正确)。 */
@@ -76,6 +99,8 @@ interface PoolEntry {
 interface QueuedRequest {
   jsonText: string
   start: (entry: PoolEntry) => void
+  /** 请求取消/排队超限时的失败回调(用于 cancel/背压 reject 排队中的请求) */
+  reject: (err: Error) => void
 }
 
 let pool: PoolEntry[] = []
@@ -94,7 +119,17 @@ function spawnEntry(): PoolEntry | null {
     const entry: PoolEntry = { worker, pending: new Map(), busy: false }
     worker.onmessage = (ev: { data: unknown }) => {
       const msg = ev.data as { kind: 'ok' | 'err'; packets?: Packet[]; error?: string; requestId?: number }
-      const id = msg.requestId ?? -1
+      // 回传协议契约:Worker 必须原样带回 requestId,否则并发关联键失效
+      // (曾因 parseWorker 未回传 requestId,首个并发请求永久挂起)。这里显式断言,
+      // 缺失即视为该请求失败并走回落 —— 比静默落到 id=-1 更早暴露协议漂移。
+      if (msg.requestId === undefined) {
+        for (const [, p] of entry.pending) p.reject(new Error('worker response missing requestId'))
+        entry.pending.clear()
+        entry.busy = false
+        drainQueue()
+        return
+      }
+      const id = msg.requestId
       const p = entry.pending.get(id)
       entry.pending.delete(id)
       entry.busy = entry.pending.size > 0
@@ -168,8 +203,13 @@ function parseInWorker(jsonText: string): Promise<Packet[]> {
       reject(new Error('worker create failed'))
       return
     }
-    // 池满且无空闲:入队 FIFO(等任一 Worker 释放即派)
-    queue.push({ jsonText, start })
+    // 池满且无空闲:入队 FIFO(等任一 Worker 释放即派)。
+    // 背压上限:排队超过 MAX_QUEUE 直接拒(在途大文本不无限驻留内存)
+    if (queue.length >= MAX_QUEUE) {
+      reject(new ParseQueueFullError())
+      return
+    }
+    queue.push({ jsonText, start, reject })
   })
 }
 
@@ -185,12 +225,40 @@ export function parsePacketsAsync(jsonText: string): Promise<Packet[]> {
       return Promise.reject(e instanceof Error ? e : new Error(String(e)))
     }
   }
-  return parseInWorker(jsonText).catch(() => {
-    // Worker 路径失败(创建失败/崩溃/消息异常):回落主线程重试一次。
-    // 主线程也失败才把错误抛给调用方(与旧同步行为一致)
-    resetPool()
+  return parseInWorker(jsonText).catch((err) => {
+    // 用户主动取消 / 排队已满:原样抛给调用方,不走主线程兜底重解
+    // (取消回落主线程等于没取消;背压回落则把并发压力悄悄变成主线程负担)
+    if (err instanceof ParseCancelledError || err instanceof ParseQueueFullError) throw err
+    // 其余 Worker 路径失败(创建失败/崩溃/消息异常):回落主线程重试一次。
+    // 主线程也失败才把错误抛给调用方(与旧同步行为一致)。
+    // 注意:崩溃/消息异常的 in-flight 与队列已在 onerror/onmessage 处理器内
+    // 处理(该 Worker 的 pending 被 reject、池缩容、队列改派/重建),这里**不**
+    // 能调用 resetPool() —— 它会把其它健康 Worker 上在途请求与排队请求一并
+    // terminate/清空,让无辜调用方永久挂起(对抗审查实证)。
     return parsePackets(jsonText)
   })
+}
+
+/**
+ * 取消所有在途解析(用户中途切换文件):terminate 全部 Worker 并拒绝
+ *  in-flight + 排队中的请求为 ParseCancelledError。调用方据此停止等待,
+ *  parsePacketsAsync 的回落路径不拦截取消(见上)。返回被取消的请求数。
+ */
+export function cancelParse(): number {
+  const n = queue.length + pool.reduce((acc, e) => acc + e.pending.size, 0)
+  for (const req of queue) req.reject(new ParseCancelledError())
+  queue = []
+  for (const entry of pool) {
+    for (const [, p] of entry.pending) p.reject(new ParseCancelledError())
+    entry.pending.clear()
+    try {
+      entry.worker.terminate()
+    } catch {
+      /* 不可恢复的 Worker,忽略 terminate 失败 */
+    }
+  }
+  pool = []
+  return n
 }
 
 /** 清空池状态(崩溃缩容/回落后的统一收尾;测试钩子复用) */

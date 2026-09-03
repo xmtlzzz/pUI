@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
 import { openCapture, openSample, fetchHex, getTsharkVersion } from '../bridge/tauri'
+import { cancelParse } from '../parse/parseAsync'
 import { emptyFilter } from '../model/types'
 import { overlapRange } from '../stats/histogram'
 import type { SortKey, SortDir } from '../app/sortConversations'
@@ -41,8 +42,10 @@ function resetHexCache(): Record<number, string> {
   return {}
 }
 
-/** 同一帧的并发 fetchHex 去重:重复请求复用同一个 in-flight Promise */
-const hexInflight = new Map<number, Promise<string>>()
+/** 同一帧的并发 fetchHex 去重:重复请求复用同一个 in-flight Promise。
+ *  键含文件标识 `${path}:${n}`:切换文件后同号报文必须重新发起,
+ *  不得复用旧文件的 in-flight(其 resolve 会被 currentPath 守卫丢弃,导致新文件 hex 静默空白) */
+const hexInflight = new Map<string, Promise<string>>()
 
 /**
  * 跳回报文详情前保存的对照页位置(按分镜/阶段粒度,案例 openQuestion 裁定)。
@@ -82,6 +85,8 @@ export interface AppState {
   openExample: (name: string) => Promise<void>
   setFilter: (patch: Partial<FilterCondition>) => void
   clearFilter: () => void
+  /** 手动关闭错误 banner:保留 loading/error 语义,仅清空 error 文案 */
+  dismissError: () => void
   select: (id: string) => void
   selectPacket: (n: number) => void
   setDiagramStyle: (s: 'A' | 'B' | 'C' | 'D') => void
@@ -222,6 +227,9 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async openFile(path) {
+    // 切换文件:终止在途 Worker 解析(浏览器回退路径的 Worker 池;生产走主线程
+    // 批解析不受影响),避免旧文件解析继续占用 CPU/内存、结果被 loadSeq 丢弃
+    cancelParse()
     const seq = get().loadSeq + 1
     set({ loading: true, loadingFrames: 0, error: null, loadSeq: seq })
     const t0 = performance.now()
@@ -241,6 +249,9 @@ export const useApp = create<AppState>((set, get) => ({
         compareFor: null, compareEventIndex: 0, compareResume: null,
         // 主抓包更换 → 副抓包必须重新提供(两侧必须同源同批,旧 B 侧与新 A 侧无可比性)
         dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null,
+        // 递增 dualLoadSeq:让挂起中的 B 侧加载(其 seq 已被占用)自然过期,
+        // 完成后被「seq !== 快照」挡住,不得写入新主抓包的对照上下文
+        dualLoadSeq: get().dualLoadSeq + 1,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -249,6 +260,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async openExample(name) {
+    cancelParse()
     const seq = get().loadSeq + 1
     set({ loading: true, loadingFrames: 0, error: null, loadSeq: seq })
     const t0 = performance.now()
@@ -266,6 +278,7 @@ export const useApp = create<AppState>((set, get) => ({
         compareFor: null, compareEventIndex: 0, compareResume: null,
         // 示例同样替换主抓包:同源同批约束与 openFile 一致
         dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null,
+        dualLoadSeq: get().dualLoadSeq + 1,
       })
     } catch (e) {
       if (get().loadSeq !== seq) return
@@ -277,20 +290,25 @@ export const useApp = create<AppState>((set, get) => ({
     const filter = { ...get().filter, ...patch }
     set({ filter, filtered: deriveFiltered(get().conversations, filter, get().timeRange) })
   },
+  dismissError() {
+    set({ error: null })
+  },
   clearFilter() {
     const filter = emptyFilter()
     set({ filter, filtered: deriveFiltered(get().conversations, filter, get().timeRange) })
   },
   setTimeRange(r) {
     const s = get()
-    const patch: Partial<AppState> = { timeRange: r, filtered: deriveFiltered(s.conversations, s.filter, r) }
+    const filtered = deriveFiltered(s.conversations, s.filter, r)
+    const patch: Partial<AppState> = { timeRange: r, filtered }
     if (r) {
       // 定位语义:选中窗口内报文最多的会话,并在时序图上高亮窗口内报文。
       // 长会话区间横跨整个时间轴时,单纯的「区间重叠过滤」列表毫无变化——定位+高亮才是可见反应
+      // best 只在 filtered(筛选+时间窗)内扫描:被筛选掉的会话不得被选中/高亮
       let best: Conversation | null = null
       let bestCount = 0
       let bestNums: number[] = []
-      for (const c of s.conversations) {
+      for (const c of filtered) {
         const nums = c.packets
           .filter((p) => p.time >= r.start && p.time <= r.end)
           .map((p) => p.number)
@@ -353,7 +371,8 @@ export const useApp = create<AppState>((set, get) => ({
     if (!path) return ''
     const cached = get().hexCache[n]
     if (cached) return cached
-    const pending = hexInflight.get(n)
+    const key = `${path}:${n}`
+    const pending = hexInflight.get(key)
     if (pending) return pending
     const p = (async () => {
       const hex = await fetchHex(path, n)
@@ -361,9 +380,9 @@ export const useApp = create<AppState>((set, get) => ({
       set((s) => ({ hexCache: hexCachePut(s.hexCache, n, hex) }))
       return hex
     })().finally(() => {
-      hexInflight.delete(n)
+      hexInflight.delete(key)
     })
-    hexInflight.set(n, p)
+    hexInflight.set(key, p)
     return p
   },
   getHex(n) {

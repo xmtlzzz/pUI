@@ -51,6 +51,19 @@ describe('exportTranscript', () => {
     expect(md).toContain('\\|bimg src=x onerror=alert(1)\\`q\\` second line')
     expect(md).not.toContain('<img')
   })
+
+  it('& 实体转义为 &amp;(防 Markdown 渲染器二次解码歧义)', () => {
+    const evil: Packet[] = [
+      { number: 9, time: 1, len: 60, transport: 'tcp', proto: 'http', srcIp: '1.1.1.1', dstIp: '2.2.2.2', direction: 'request',
+        info: 'GET /a&b<c>&d' },
+    ]
+    const md = exportTranscript({ ...conv, packets: evil, packetCount: 1 })
+    // mdCell 包裹反引号,内部每个 & 实体转义(<c> 剥尖括号后留 c);原文的 & 不得裸透
+    // (否则 &lt; &amp; 等字面量被渲染器二次解码产生歧义)
+    expect(md).toContain('`GET /a&amp;bc&amp;d`')
+    // 无裸 & 残留(允许的只有 &amp; 实体)
+    expect(md.match(/&(?!amp;)/g) ?? []).toEqual([])
+  })
 })
 describe('exportTranscript 紧凑模式(连续相同行合并为区间)', () => {
   const repeated: Packet[] = [

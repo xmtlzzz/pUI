@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { buildCompareReport, defaultCompareFileName } from './report'
 import { renderCompareReportHtml, renderCompareReportMd } from './render'
-import type { CompareReportInput } from './report'
+import type { CompareReportInput, CompareReportModel } from './report'
 import type { AlignedPair, AlignmentResult, UnmatchedSide } from './align'
 import type { Conversation, Packet } from '../model/types'
 import type { ConversationDiff, EventDiffEntry, PacketDiffStats, TimelineRow } from './diff'
@@ -151,6 +151,72 @@ describe('renderCompareReportMd', () => {
     inp.verdicts = new Map([['a1', [{ statement: 'a|b', severity: 'info' }]]])
     const md = renderCompareReportMd(buildCompareReport(inp))
     expect(md).toContain('a\\|b')
+  })
+
+  describe('Markdown 注入防护(存储型 XSS)', () => {
+    /** 构造一个把抓包可控自由文本塞满各渲染位置(时间线信息/端点标签/邮箱标签/文件名/结论)的模型 */
+    const payload = '<img src=x onerror=alert(1)>'
+    const scripty = '<script>evil()</script>'
+    let inp: CompareReportInput
+    beforeEach(() => {
+      inp = input()
+      inp.fileA = scripty + '.pcap'
+      inp.diffs = new Map([
+        [
+          'a1',
+          {
+            ...diffModel,
+            stats,
+            timeline: [
+              { timeEpoch: 1, side: 'A', numberA: 1, infoA: payload },
+              { timeEpoch: 2, side: 'B', numberB: 7, infoB: payload },
+            ],
+          },
+        ],
+      ])
+      inp.verdicts = new Map([['a1', [{ statement: payload, severity: 'warn' }]]])
+    })
+
+    it('时间线信息(infoA/infoB)中的尖括号被剥除:导出 MD 不存在原始 <img>/<script> 标签', () => {
+      const md = renderCompareReportMd(buildCompareReport(inp))
+      // 全库其它渲染器口径:尖括号整体剥除(防 <img onerror> 透传 Typora/Obsidian/marked 系)
+      expect(md).not.toContain('<img')
+      expect(md).not.toContain('<script')
+      expect(md).not.toContain(payload)
+    })
+
+    it('结论/概要等单元格中的尖括号同样剥除,& 实体转义为 &amp;', () => {
+      const model2: CompareReportModel = buildCompareReport(inp)
+      model2.summary = [...model2.summary, { label: '可疑值', value: 'a&b<img src=x onerror=alert(1)>' }]
+      const md = renderCompareReportMd(model2)
+      expect(md).not.toContain('<img')
+      expect(md).toContain('a&amp;b')
+    })
+
+    it('端点标签 endpointLabel/statsRow.label/unmatchedRow.label 不携带原始尖括号', () => {
+      const m = buildCompareReport(inp)
+      // 对齐层 endpointLabel 来自 client/server 主机名 —— 抓包可控,作为防御性验证
+      const model2: CompareReportModel = {
+        ...m,
+        pairs: m.pairs.map((p) => ({ ...p, endpointLabel: '<img src=x onerror=alert(2)>', statsRow: { ...p.statsRow, label: '<b>l</b>' } })),
+        unmatchedRows: [{ ...m.unmatchedRows[0], label: '<script>evil()</script>' }],
+      }
+      const md = renderCompareReportMd(model2)
+      expect(md).not.toContain('<img')
+      expect(md).not.toContain('<script>')
+      expect(md).not.toContain('<b>')
+    })
+
+    it('MD 与 HTML 渲染器输出均不泄露指纹标签之外的原始尖括号', () => {
+      const m = buildCompareReport(inp)
+      const md = renderCompareReportMd(m)
+      const html = renderCompareReportHtml(buildCompareReport(inp))
+      const rawAngles = (s: string) => (s.match(/<[^>]*>/g) ?? []).filter((t) => /<(\/?)(img|script|b)>/i.test(t)).length
+      expect(rawAngles(md)).toBe(0)
+      expect(rawAngles(html)).toBe(0)
+      expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+      expect(md).not.toContain(payload)
+    })
   })
 })
 

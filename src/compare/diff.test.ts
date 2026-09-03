@@ -242,9 +242,26 @@ describe('diffConversations · timeline', () => {
     const d = diffConversations(mkConv(aPkts, 'a'), emptyFacts(), [], mkConv(bPkts, 'b'), emptyFacts(), [])
     expect(d.truncated).toBe(true)
     expect(d.timeline).toHaveLength(2000)
-    // 截断按时间升序保留最早的 2000 行
+    // 截断按时间升序保留最早 2000 行
     const times = d.timeline.map((r) => r.timeEpoch)
     expect([...times].sort((x, y) => x - y)).toEqual(times)
+  })
+
+  it('截断保留「最早+最晚各一半」:不丢会话后段的丢包恢复/重传风暴证据', () => {
+    // 3000 包纯 A 侧(不合并):总行数 > 2000 → 触发截断
+    const packets: Packet[] = []
+    for (let i = 0; i < 3000; i++) packets.push(pkt(i + 1, 100 + i * 0.001, { fromA: true, ipA, ipB, portA, portB, info: 'p' + i }))
+    const d = diffConversations(mkConv(packets, 'a'), emptyFacts(), [], mkConv([], 'b'), emptyFacts(), [])
+    expect(d.truncated).toBe(true)
+    expect(d.timeline).toHaveLength(2000)
+    // 首尾都在:最早行(pkt1)与最晚行(pkt3000)均保留 —— 会话前半段与后半段证据不缺席
+    expect(d.timeline[0].numberA).toBe(1)
+    expect(d.timeline[d.timeline.length - 1].numberA).toBe(3000)
+    // 首尾各一半:前 1000 行是前半段(1..1000),后 1000 行是后半段(2001..3000)
+    const mids = d.timeline.map((r) => r.numberA as number)
+    expect(mids.indexOf(1000) >= 0).toBe(true)
+    expect(mids.indexOf(1001) >= 0).toBe(false) // 中间 1001..2000 被丢弃
+    expect(mids.indexOf(2001) >= 0).toBe(true)
   })
 })
 

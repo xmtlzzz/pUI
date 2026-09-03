@@ -45,17 +45,36 @@ function tcpFlagsHex(v: unknown): string | undefined {
   }
   return undefined
 }
+/** 数值形态预校验:拒绝 parseInt/parseFloat 的宽松截断与静默吞字。
+ *  int 只收纯十进制整数(科学计数 1e3 会被 parseInt 截成 1,拒绝);
+ *  float 收小数与科学计数(但 Number 后的溢出/Infinity 由调用方兜底)。 */
+const INT_RE = /^[+-]?\d+$/
+const FLOAT_RE = /^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/
+
+/** 整数严格解析:形态合法 + Number 可安全表示才返回,否则 undefined。
+ *  保持既有 NaN 回落语义;顺带拒绝 >2^53 的精度丢失(超界按缺字段处理)。 */
 function int(v: string | string[] | undefined): number | undefined {
   const s = first(v)
-  if (s == null) return undefined
-  const n = Number.parseInt(s, 10)
-  return Number.isNaN(n) ? undefined : n
+  if (s == null || !INT_RE.test(s)) return undefined
+  const n = Number(s)
+  return Number.isSafeInteger(n) ? n : undefined
 }
+
+/** 浮点严格解析:形态合法 + 有限(非 Infinity/NaN)才返回,否则 undefined。
+ *  parseFloat('1e400') 得 Infinity 会污染时间轴计算,这里显式拒掉。 */
 function float(v: string | string[] | undefined): number | undefined {
   const s = first(v)
-  if (s == null) return undefined
-  const n = Number.parseFloat(s)
-  return Number.isNaN(n) ? undefined : n
+  if (s == null || !FLOAT_RE.test(s)) return undefined
+  const n = Number(s)
+  return Number.isFinite(n) ? n : undefined
+}
+
+/** TCP 序号/确认号:32 位无符号,[0, 2^32-1] 之外按缺字段处理
+ *  (曾用 float() 宽松吞下超界/科学计数,污染序列空间运算)。 */
+function tcpSeq32(v: string | string[] | undefined): number | undefined {
+  const n = int(v)
+  if (n == null) return undefined
+  return n >= 0 && n <= 0xffffffff ? n : undefined
 }
 
 const IGNORED_STACK = new Set([
@@ -81,14 +100,16 @@ const ANALYSIS_FIELDS: Array<[string, string]> = [
 
 /** SACK 块解析:平铺模式下左右边界是并行数组,按下标配对;
  *  树形态下 tshark 只保留最后一块(其 sack.count 仍是原始块数)。
- *  边界数量不匹配(截断/畸形)时只取成对的部分,宁可少报也不产出 NaN 污染序列空间运算。 */
+ *  边界数量不匹配(截断/畸形)时只取成对的部分,宁可少报也不产出 NaN 污染序列空间运算。
+ *  边界用严格 int()(与 tcpSeq32 同口径):宽松 parseInt 会把 '1e3' 截成 1、'12abc' 截成 12,
+ *  静默吞掉畸形值 —— 与「拒绝静默截断」契约矛盾(对抗审查)。 */
 function sackBlocks(le: string[], re: string[]): Array<[number, number]> | undefined {
   const n = Math.min(le.length, re.length)
   const out: Array<[number, number]> = []
   for (let i = 0; i < n; i++) {
-    const l = Number.parseInt(le[i], 10)
-    const r = Number.parseInt(re[i], 10)
-    if (Number.isNaN(l) || Number.isNaN(r)) continue
+    const l = int(le[i])
+    const r = int(re[i])
+    if (l == null || r == null) continue
     out.push([l, r])
   }
   return out.length ? out : undefined
@@ -299,8 +320,8 @@ function frameToPacket(F: ReturnType<typeof makeFrameFields>, fallbackIndex: num
     srcPort,
     dstPort,
     tcpFlags: base.tcpFlags,
-    tcpSeq: float(F.get('tcp.seq_raw')),
-    tcpAck: float(F.get('tcp.ack_raw')),
+    tcpSeq: tcpSeq32(F.get('tcp.seq_raw')),
+    tcpAck: tcpSeq32(F.get('tcp.ack_raw')),
     tcpStream: int(F.get('tcp.stream')),
     tcpLen: int(F.get('tcp.len')),
     tcpWindow: int(F.get('tcp.window_size')),
@@ -323,8 +344,9 @@ function frameToPacket(F: ReturnType<typeof makeFrameFields>, fallbackIndex: num
     smb2Cmd: first(F.get('smb2.cmd')),
     smb2Response: smb2Resp == null ? undefined : /^(?:1|true)$/i.test(smb2Resp),
     smb2Tree: first(F.get('smb2.tree')),
-    // dns.flags.response:树形态为 "0"/"1",-e 形态为 "False"/"True",两者都识别
-    info: makeInfo({ ...base, info: dnsResp === '1' || dnsResp === 'True' ? 'response' : undefined }),
+    // dns.flags.response:树形态为 "0"/"1",-e 形态为 "False"/"True";
+    // 大小写不敏感匹配(与 smb2 的 /i 契约一致,小写 true/false 也识别)
+    info: makeInfo({ ...base, info: dnsResp == null ? undefined : /^(?:1|true)$/i.test(dnsResp) ? 'response' : undefined }),
     direction: 'other',
   }
 }

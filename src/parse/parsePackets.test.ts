@@ -415,4 +415,107 @@ describe('parsePackets -e 平铺形态(-T json -e 输出,大文件模式)', () =
     expect(none.smb2Cmd).toBeUndefined()
     expect(none.smb2Tree).toBeUndefined()
   })
+
+  describe('数值字段严格解析(int/float:拒绝溢出与非法后缀)', () => {
+    const addr = { 'ip.src': ['1.1.1.1'], 'ip.dst': ['2.2.2.2'] }
+
+    it('float 超界(1e400)不产生 Infinity 时间戳,按缺字段处理', () => {
+      const [p] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['1e400'], 'frame.len': ['60'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+      }))
+      // 字段存在但数值不可用 → 回落 0(与缺失同语义),绝不能是 Infinity
+      expect(p.time).not.toBe(Number.POSITIVE_INFINITY)
+      expect(Number.isFinite(p.time)).toBe(true)
+      expect(p.time).toBe(0)
+    })
+
+    it('int 含非法后缀(123abc)拒绝整串,不截断取整', () => {
+      const [p] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['123abc'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+      }))
+      // 整串非法 → len 回落 0,而不是 parseInt 的 123
+      expect(p.len).toBe(0)
+    })
+
+    it('int 科学计数(1e3)拒绝,不被 parseInt 截断为 1', () => {
+      const [p] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['1e3'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+      }))
+      expect(p.len).toBe(0)
+    })
+
+    it('tcp.seq_raw/tcp.ack_raw 按整数解析,超 2^32 不合法(拒绝而非截断/负数)', () => {
+      const [big] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['60'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+        'tcp.seq_raw': ['4294967296'], // 2^32:超出 32 位序号合法上界
+        'tcp.ack_raw': ['99999999999'],
+      }))
+      // 从 2^32 起拒绝:序号上界是 2^32-1,不会被 float 宽松吞掉
+      expect(big.tcpSeq).toBeUndefined()
+      expect(big.tcpAck).toBeUndefined()
+    })
+
+    it('tcp.seq_raw 32 位合法值(接近上界)仍精确解析', () => {
+      const [p] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['60'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+        'tcp.seq_raw': ['4294967295'],
+        'tcp.ack_raw': ['101'],
+      }))
+      expect(p.tcpSeq).toBe(4294967295)
+      expect(p.tcpAck).toBe(101)
+    })
+
+    it('非数值文本(float abc / int 空)回落缺字段语义,不 NaN 化', () => {
+      const [p] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['abc'], 'frame.len': ['60'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+        'tcp.window_size': ['abc'],
+      }))
+      expect(Number.isNaN(p.time)).toBe(false)
+      expect(p.time).toBe(0)
+      expect(p.tcpWindow).toBeUndefined()
+    })
+
+    it('float 正常小数值(秒/微秒)不受正则预校验影响', () => {
+      const [p] = parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['0.000000123'], 'frame.len': ['60'],
+        'frame.protocols': ['eth:ethertype:ip:tcp'], ...addr,
+      }))
+      expect(p.time).toBeCloseTo(0.000000123, 10)
+    })
+  })
+
+  describe('DNS 方向:大小写不敏感契约(与 smb2 的 /i 一致)', () => {
+    const mkDns = (flag: string): ReturnType<typeof parsePackets>[0] =>
+      parsePackets(flatFrame({
+        'frame.number': ['1'], 'frame.time_relative': ['0'], 'frame.len': ['70'],
+        'frame.protocols': ['eth:ethertype:ip:udp:dns'],
+        'ip.src': ['1.1.1.1'], 'ip.dst': ['8.8.8.8'],
+        'udp.srcport': ['54322'], 'udp.dstport': ['53'],
+        'dns.flags.response': [flag],
+        'dns.qry.name': ['example.com'],
+      }))[0]
+
+    it('小写 true/false 也正确判定方向(与 smb2 大小写不敏感一致)', () => {
+      expect(mkDns('true').info).toContain('response')
+      expect(mkDns('false').info).not.toContain('response')
+    })
+
+    it('混合大小写 TRUE/tRue 同样判定为响应', () => {
+      expect(mkDns('TRUE').info).toContain('response')
+      expect(mkDns('TrUe').info).toContain('response')
+    })
+
+    it('既有契约不变:1/True/0/False 方向正确', () => {
+      expect(mkDns('1').info).toContain('response')
+      expect(mkDns('True').info).toContain('response')
+      expect(mkDns('0').info).not.toContain('response')
+      expect(mkDns('False').info).not.toContain('response')
+    })
+  })
 })

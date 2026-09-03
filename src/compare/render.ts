@@ -53,9 +53,24 @@ function table(headers: string[], rows: string[][], cls: string): string {
   )
 }
 
-/** Markdown 单元格转义:竖线是表格结构字符,内容里的 | 必须转义,否则表格被撑破 */
+/** Markdown 单元格转义:与 exportTranscript.mdCell 同一注入防线 —— 抓包内容是不可信输入。
+ *  竖线是表格结构字符必须转义,换行折叠为空格;`<`/`>` 是 Markdown 渲染器注入口
+ *  (Typora/Obsidian/marked 系会渲染原始 HTML),必须整体剥除防 <img onerror> 透传;
+ *  `&` 实体转义,防 &amp;/&lt; 等字面量被渲染器二次解码产生歧义 —— 先于其它替换做,
+ *  否则后续会把 &amp; 的 & 再转一次。内部反引号前置反斜杠转义(替换串用 BS+BT
+ *  显式构造:字面量 '\\`' 实际只是反引号,是静默失效的转义)。
+ *  与 exportTranscript.mdCell 输出形态一致,保证全库 Markdown 单元格同口径。 */
+const MD_BS = String.fromCharCode(92) // 反斜杠
+const MD_BT = String.fromCharCode(96) // 反引号
+
 function mdCell(s: string): string {
-  return s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+  const noAngle = s.replace(/&/g, '&amp;').replace(/[<>]/g, '')
+  return noAngle.split(MD_BT).join(MD_BS + MD_BT).split('|').join(MD_BS + '|').replace(/\r?\n/g, ' ')
+}
+
+/** 标题/行内文本的轻量转义:剥尖括号(防 HTML 注入)、拍平换行。 */
+function mdText(s: string): string {
+  return s.replace(/[<>]/g, '').replace(/\r?\n/g, ' ')
 }
 
 function mdTable(headers: string[], rows: string[][]): string {
@@ -75,7 +90,7 @@ const ONLY_IN_LABEL: Record<string, string> = { A: '仅 A', B: '仅 B', both: '�
 
 export function renderCompareReportMd(model: CompareReportModel): string {
   const out: string[] = []
-  out.push(`# ${model.title}`)
+  out.push(`# ${mdText(model.title)}`)
   out.push('')
   out.push('## 概要')
   out.push('')
@@ -83,10 +98,10 @@ export function renderCompareReportMd(model: CompareReportModel): string {
   out.push('')
 
   model.pairs.forEach((p, i) => {
-    out.push(`## 会话对 ${i + 1}:${p.endpointLabel}`)
+    out.push(`## 会话对 ${i + 1}:${mdText(p.endpointLabel)}`)
     out.push('')
     const s = p.statsRow.stats
-    out.push(`### 报文对照(${p.statsRow.label})`)
+    out.push(`### 报文对照(${mdText(p.statsRow.label)})`)
     out.push('')
     out.push(mdTable(['指标', 'A 侧', 'B 侧'], [
       ['包数', String(s.countA), String(s.countB)],
@@ -115,7 +130,7 @@ export function renderCompareReportMd(model: CompareReportModel): string {
       ))
     }
     out.push('')
-    out.push(`### 时间线${p.timelineTruncated ? '(已截断:仅保留最早部分)' : ''}`)
+    out.push(`### 时间线${p.timelineTruncated ? '(已截断:保留最早与最晚各半)' : ''}`)
     out.push('')
     if (p.timelineRows.length === 0) {
       out.push('无可列报文。')
@@ -200,7 +215,7 @@ export function renderCompareReportHtml(model: CompareReportModel): string {
 
     parts.push('<h3>时间线</h3>')
     if (p.timelineTruncated) {
-      parts.push('<p class="meta">已截断:仅保留最早部分(巨型会话渲染护栏)。</p>')
+      parts.push('<p class="meta">已截断:保留最早与最晚各半(巨型会话渲染护栏)。</p>')
     }
     if (p.timelineRows.length === 0) {
       parts.push('<p class="empty">无可列报文。</p>')

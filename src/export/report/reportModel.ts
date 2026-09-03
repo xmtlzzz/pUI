@@ -223,9 +223,13 @@ function splitCells(inner: string): string[] {
   return out
 }
 
-/** 单元格展示文本:还原转义(原文的竖线/反引号)后剥除代码标记反引号 */
+/** 单元格展示文本:还原转义(原文的竖线/反引号/& 实体)后剥除代码标记反引号 */
 function cellDisplay(s: string): string {
-  return s.replace(/\\([|`])/g, '$1').replace(/`/g, '').trim()
+  return s
+    .replace(/\\([|`])/g, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/`/g, '')
+    .trim()
 }
 
 /** 导出文件名:与 defaultCompareReportName / defaultEvidenceJsonName 同风格的 ASCII 安全名 */

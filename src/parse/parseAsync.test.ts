@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { parsePacketsAsync, resetParseWorkerForTest } from './parseAsync'
+import { parsePacketsAsync, resetParseWorkerForTest, cancelParse, ParseCancelledError, poolSizeFor } from './parseAsync'
 import { parsePackets, parsePacketsBatchPush } from './parsePackets'
+import { handleParseMessage } from './parseWorker'
+import type { Packet } from '../model/types'
 
 /**
  * 与 parsePackets.test.ts 同构的最小平铺帧构造
@@ -24,6 +26,22 @@ const tcpFrame = (): string =>
     'tcp.ack_raw': '1',
     'tcp.len': '0',
   })
+
+/** 直接驱动真实 parseWorker.ts 的处理函数(handleParseMessage)并以 post 回调
+ *  捕获回传 —— 验证 Worker 端回传协议本身(requestId 是否原样带回),
+ *  不再是标了 requestId 的假 Worker 的自证循环。 */
+function realWorkerReply(msg: { kind: string; jsonText?: string; requestId?: number }): {
+  kind: string
+  packets?: Packet[]
+  error?: string
+  requestId?: number
+} | null {
+  let out: { kind: string; packets?: Packet[]; error?: string; requestId?: number } | null = null
+  handleParseMessage(msg, (resp) => {
+    out = resp
+  })
+  return out
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -230,6 +248,103 @@ describe('parsePacketsAsync — Worker 池(M6 并发解析)', () => {
     w2.responder = (req) => setTimeout(() => w2.replyOk(req.jsonText ?? '', req.requestId ?? -1), 0)
     const r2 = await p2
     expect(r2.length).toBe(r1.length)
+  }, 30_000)
+
+  it('真实 parseWorker 处理函数回传 requestId(回传协议非自证循环)', async () => {
+    // 直接驱动 parseWorker.ts 的 onmessage 处理函数:验证 Worker 端回传响应
+    // 确实带上了主线程派发时的 requestId —— 不再依赖假 Worker 手动 echo
+    const text = makeBigText('10.9.0.1', '99')
+    // 模拟主线程派发带 requestId 的请求(parseAsync 的真实派发形态)
+    const out1 = realWorkerReply({ kind: 'parse', jsonText: text, requestId: 42 })
+    expect(out1).toEqual({ kind: 'ok', packets: parsePackets(text), requestId: 42 })
+    // err 分支同样回传 requestId
+    const out2 = realWorkerReply({ kind: 'parse', jsonText: '{broken', requestId: 7 })
+    expect(out2).toEqual({ kind: 'err', error: expect.any(String), requestId: 7 })
+  }, 30_000)
+
+  it('真实 Worker 回应路径下,并发双请求各自 resolve 且结果互不串扰', async () => {
+    stubWorkerClass()
+    const texts = [makeBigText('10.9.5.1', '51'), makeBigText('10.9.5.2', '52')]
+    const wire = (): void => {
+      for (const w of FakeWorker.instances) {
+        w.responder = (req) => {
+          const out = realWorkerReply({ kind: 'parse', jsonText: req.jsonText ?? '', requestId: req.requestId ?? -1 })
+          if (out) setTimeout(() => w.onmessage?.({ data: out }), 0)
+        }
+      }
+    }
+    const p1 = parsePacketsAsync(texts[0])
+    wire()
+    const p2 = parsePacketsAsync(texts[1])
+    wire()
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1[0].srcIp).toBe('10.9.5.1')
+    expect(r2[0].srcIp).toBe('10.9.5.2')
+    expect(r1[0].number).toBe(51)
+    expect(r2[0].number).toBe(52)
+  }, 30_000)
+
+  it('队列超出上限:立即 reject 超限请求(背压,不无限驻留内存)', async () => {
+    stubWorkerClass()
+    // 闷死所有 Worker:responder 不回 → in-flight 永不释放 → 队列越积越多
+    // 池占满(poolSizeFor() 个 in-flight)+ 队列 2 个 = 6 个在途,第 7 个起超限即拒
+    const inFlight = poolSizeFor()
+    const texts = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => makeBigText(`10.9.7.${i}`, String(700 + i)))
+    const overflowCount = texts.length - (inFlight + 2 /* MAX_QUEUE */)
+    expect(overflowCount).toBeGreaterThan(0)
+    const ps = texts.map((t) => parsePacketsAsync(t).catch((e) => e))
+    // 只等超限的那几个(前 6 个停在 pending,await 会挂死)—— 断言它们全部被拒
+    const settled = await Promise.all(ps.slice(-overflowCount))
+    for (const r of settled) expect(r).toBeInstanceOf(Error)
+    for (const r of settled) expect((r as Error).message).toContain('排队已满')
+  }, 30_000)
+
+  it('cancel 中途切换文件:cancel 之后未完成的请求 reject 为 ParseCancelledError', async () => {
+    stubWorkerClass()
+    // 闷死 Worker(不回应),让请求停在 in-flight;cancel 必须释放它们
+    const big = makeBigText('10.9.8.1', '81')
+    const p = parsePacketsAsync(big)
+    await Promise.resolve()
+    cancelParse()
+    await expect(p).rejects.toBeInstanceOf(ParseCancelledError)
+    // 取消后新请求仍可用(cancelParse 已清空池 → 按需重建新 Worker)
+    const p2 = parsePacketsAsync(big)
+    const w2 = FakeWorker.instances[FakeWorker.instances.length - 1]
+    w2.responder = (req) => setTimeout(() => w2.replyOk(req.jsonText ?? '', req.requestId ?? -1), 0)
+    const r2 = await p2
+    expect(r2[0].srcIp).toBe('10.9.8.1')
+  }, 30_000)
+
+  it('cancel 也应拒绝排队中尚未派发的请求(不留内存驻留)', async () => {
+    stubWorkerClass()
+    // 恰好 = 在途(poolSizeFor) + 队列(MAX_QUEUE=2) 个请求:全部停在 in-flight/队列,
+    // cancel 后都应 reject 为 ParseCancelledError(不得在队列里无限驻留文本)
+    const inFlight = poolSizeFor()
+    const texts = [0, 1, 2, 3, 4, 5].map((i) => makeBigText(`10.9.9.${i}`, String(900 + i)))
+    const ps = texts.slice(0, inFlight + 2).map((t) => parsePacketsAsync(t).catch((e) => e))
+    await Promise.resolve()
+    cancelParse()
+    const settled = await Promise.all(ps)
+    expect(settled.length).toBe(ps.length)
+    for (const r of settled) {
+      expect(r).toBeInstanceOf(ParseCancelledError)
+    }
+  }, 30_000)
+
+  it('解析中途取消后请求仍 resolve:对已完成的请求不受影响(仅在排队中/未返回时取消)', async () => {
+    // 关闭闷死:回应正常。请求完成早于 cancel,取消不应影响已完成结果
+    stubWorkerClass()
+    const big = makeBigText('10.9.10.1', '101')
+    const wire = (): void => {
+      for (const w of FakeWorker.instances) {
+        w.responder = (req) => setTimeout(() => w.replyOk(req.jsonText ?? '', req.requestId ?? -1), 0)
+      }
+    }
+    const p = parsePacketsAsync(big)
+    wire()
+    const r = await p
+    cancelParse() // 已完成之后取消:无挂起项,静默
+    expect(r[0].srcIp).toBe('10.9.10.1')
   }, 30_000)
 })
 

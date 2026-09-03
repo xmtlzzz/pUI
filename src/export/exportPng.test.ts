@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { defaultPngName, serializeSvgForExport, exportHeightWithinLimit, MAX_EXPORT_HEIGHT } from './exportPng'
+import { defaultPngName, serializeSvgForExport, exportHeightWithinLimit, MAX_EXPORT_HEIGHT, exportSvgPng } from './exportPng'
 
 describe('defaultPngName', () => {
   it('builds a readable filename', () => {
@@ -33,5 +33,11 @@ describe('serializeSvgForExport', () => {
     expect(xml).toContain('viewBox="0 0 100 50"')
     expect(xml).not.toContain('scale(')
     expect(xml).not.toContain('transform')
+  })
+})
+
+describe('exportSvgPng', () => {
+  it('svgRef 为 null(图表尚未渲染)时 reject 而非静默返回', async () => {
+    await expect(exportSvgPng(null, 'session.png')).rejects.toThrow('图表尚未渲染完成')
   })
 })

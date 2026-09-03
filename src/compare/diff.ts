@@ -80,7 +80,7 @@ export interface ConversationDiff {
   eventDiffs: EventDiffEntry[]
   /** 按 timeEpoch 升序;AB 行 infoA!==infoB 时保留两者 */
   timeline: TimelineRow[]
-  /** 时间线超过 2000 行被截断(防巨型会话撑爆 UI;截断保留最早 2000 行) */
+  /** 时间线超过 2000 行被截断(防巨型会话撑爆 UI;截断保留最早+最晚各一半) */
   truncated: boolean
 }
 
@@ -233,14 +233,14 @@ export function diffConversations(
   )
 
   // ---- 时间线:两侧包按 time_epoch 归并,同侧互见(方向相反 + epoch 差 ≤ 容差)合并 AB 行 ----
-  const timeline = buildTimeline(sideA.packets, sideB.packets, opts?.epochToleranceMs ?? DEFAULT_EPOCH_TOLERANCE_MS)
+  const { rows: timeline, truncated } = buildTimeline(sideA.packets, sideB.packets, opts?.epochToleranceMs ?? DEFAULT_EPOCH_TOLERANCE_MS)
 
   // midStream 降级标志当前不改变差异计算(序列结论已在单侧分析内降级),
   // 读取它只为让调用方在报告层可统一判断两侧口径;此处显式引用防「未消费」误判
   void factsAMid
   void factsBMid
 
-  return { stats, eventDiffs, timeline, truncated: timeline.length >= TIMELINE_MAX_ROWS }
+  return { stats, eventDiffs, timeline, truncated }
 }
 
 function midStreamOf(facts: unknown): boolean {
@@ -262,7 +262,11 @@ function midStreamOf(facts: unknown): boolean {
  *  合并为同一交互的两侧视角(如 A 抓到响应、B 抓到同一响应:某些观测点只见单向)。
  *
  *  丢失段在接收侧没有对应包 → 自然留在「仅发送侧」行,这正是定位证据行。 */
-function buildTimeline(packetsA: Packet[], packetsB: Packet[], toleranceMs: number): TimelineRow[] {
+function buildTimeline(
+  packetsA: Packet[],
+  packetsB: Packet[],
+  toleranceMs: number,
+): { rows: TimelineRow[]; truncated: boolean } {
   const tol = toleranceMs / 1000
   // epoch 缺失的报文:无法参与绝对时间对齐,退回 relative time(time 字段)。
   // 两侧 relative 基准不同,但缺 epoch 时这是唯一可排序的时间,如实降级并排序。
@@ -358,11 +362,16 @@ function buildTimeline(packetsA: Packet[], packetsB: Packet[], toleranceMs: numb
       x.side.localeCompare(y.side),
   )
 
-  // 截断护栏:保留最早 2000 行,超限置 truncated(报告层标注「已截断」)
-  if (rows.length > TIMELINE_MAX_ROWS) {
-    return rows.slice(0, TIMELINE_MAX_ROWS)
+  // 截断护栏:保留最早 2000 行,超限置 truncated(报告层标注「已截断」)。
+  // 改为「最早+最晚各半(各 1000 行)」:只保头部会丢掉会话后段的丢包恢复/重传风暴等核心证据 ——
+  // 取证报告宁可两头都在,不可把结尾的恢复证据整体丢弃。
+  // truncated 按截断前原始行数判定(> 而非 >=:恰 2000 行不算截断)。
+  const truncated = rows.length > TIMELINE_MAX_ROWS
+  if (truncated) {
+    const half = TIMELINE_MAX_ROWS / 2
+    return { rows: [...rows.slice(0, half), ...rows.slice(rows.length - half)], truncated }
   }
-  return rows
+  return { rows, truncated }
 }
 
 /** 方向相反判定:按 Packet.direction(request/response)。'other' 方向(无法判向)不参与合并 ——

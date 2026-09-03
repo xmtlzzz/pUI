@@ -138,6 +138,31 @@ describe('appStore 加载一致性', () => {
     expect(st.highlight).toEqual(many.slice(0, 2000).map((p) => p.number))
   })
 
+  it('setTimeRange 下钻遵循筛选:best 只在筛选后可见的会话中选择(被过滤掉的会话不得被选中)', async () => {
+    const httpPackets = [
+      { ...pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), time: 5.0 },
+      { ...pkt(2, 'http', '2.2.2.2', 80, '1.1.1.1', 5000), time: 5.01 },
+      { ...pkt(3, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), time: 5.02 },
+    ] as Packet[]
+    const dnsPackets = [
+      { ...pkt(4, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53), time: 5.1 },
+    ] as Packet[]
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [...httpPackets, ...dnsPackets], path: p }),
+    )
+    await useApp.getState().openFile('x.pcap')
+    // 激活筛选:只看 dns 会话(http 会话被过滤掉)
+    useApp.getState().setFilter({ protocol: ['dns'] })
+    expect(useApp.getState().filtered.map((c) => c.protocol)).toEqual(['dns'])
+    // 窗口 [5,6]:http 会话窗口内 3 包(最多),但已被筛选掉;若 best 扫全部会话会错选它
+    useApp.getState().setTimeRange({ start: 5, end: 6 })
+    const st = useApp.getState()
+    const dnsId = st.conversations.find((c) => c.protocol === 'dns')?.id
+    expect(st.selectedId).toBe(dnsId)
+    expect(st.filtered.map((c) => c.protocol)).toEqual(['dns'])
+    expect(st.highlight).toEqual([4])
+  })
+
   it('hexCache 超过上限按 LRU 逐出最旧条目', async () => {
     vi.mocked(fetchHex).mockImplementation((_p: string, n: number) => Promise.resolve(`hex${n}`))
     useApp.setState({ currentPath: 'x.pcap' })
@@ -158,6 +183,30 @@ describe('appStore 加载一致性', () => {
     useApp.setState({ currentPath: 'new.pcap' })
     await p
     expect(useApp.getState().hexCache[1]).toBeUndefined() // 旧结果未写入新文件缓存
+  })
+
+  it('fetchHexFor 旧文件取 #N 挂起时切换文件:新文件同号报文必须重新发起,不被旧 in-flight 复用', async () => {
+    // 旧文件 #1 的 hex 请求挂起(永不立即 resolve)
+    let resolveOld!: (v: string) => void
+    vi.mocked(fetchHex).mockImplementationOnce(
+      (_p: string, _n: number) => new Promise<string>((r) => { resolveOld = r }),
+    )
+    useApp.setState({ currentPath: 'old.pcap' })
+    const oldFetch = useApp.getState().fetchHexFor(1)
+
+    // 切换文件后立即选中同号报文 #1:新请求必须拿到新文件的 hex
+    useApp.setState({ currentPath: 'new.pcap' })
+    vi.mocked(fetchHex).mockResolvedValueOnce('NEWHEX')
+    const newFetch = useApp.getState().fetchHexFor(1)
+    const newRes = await newFetch
+    expect(newRes).toBe('NEWHEX')
+    expect(useApp.getState().hexCache[1]).toBe('NEWHEX')
+
+    // 旧 promise 最终 resolve:不得污染新文件的缓存
+    resolveOld('OLDHEX')
+    await oldFetch
+    expect(useApp.getState().hexCache[1]).toBe('NEWHEX')
+    expect(useApp.getState().hexCache[1]).not.toBe('OLDHEX')
   })
 })
 
@@ -264,6 +313,32 @@ describe('双点对照 store(副抓包状态)', () => {
     expect(s.dualPackets).toBeNull()
     expect(s.dualPath).toBe('')
     expect(s.dualError).toBeNull()
+  })
+
+  it('openFile 递增 dualLoadSeq:挂起中的 B 侧加载完成后不得写入新主抓包上下文', async () => {
+    // 慢 B 侧加载挂起(dualLoading=true,dualLoadSeq 已占位)
+    let resolveDual!: (v: { meta: ReturnType<typeof meta>; packets: Packet[]; path: string }) => void
+    vi.mocked(openSample).mockImplementation(
+      () => new Promise((r) => { resolveDual = r }),
+    )
+    const dualLoad = useApp.getState().openDualExample('slow-b')
+    expect(useApp.getState().dualLoading).toBe(true)
+
+    // 挂起期间切换主抓包:dual 状态被清零,且 dualLoadSeq 必须递增使挂起加载过期
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)], path: p }),
+    )
+    await useApp.getState().openFile('new-main.pcap')
+    expect(useApp.getState().dualLoading).toBe(false)
+    expect(useApp.getState().dualPackets).toBeNull()
+
+    // 挂起的 B 侧最终 resolve:结果必须被丢弃,不得写入新 A 侧抓包的对照上下文
+    resolveDual({ meta: meta('slow-b.pcapng'), packets: [pkt(99, 'tcp', '9.9.9.9', 100, '8.8.8.8', 53)], path: 'slow-b' })
+    await dualLoad
+    const s = useApp.getState()
+    expect(s.dualPackets).toBeNull()
+    expect(s.dualMeta).toBeNull()
+    expect(s.dualPath).toBe('')
   })
 
   it('clearDual 清空副抓包状态', async () => {

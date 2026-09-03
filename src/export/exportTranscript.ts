@@ -6,19 +6,33 @@ const DIR_CN: Record<string, string> = { request: '→ 请求', response: '← �
 /**
  * Markdown 表格单元格转义:报文字段(info/URI/DNS 查询名)是抓包文件里的不可信内容,
  * 裸拼会破坏表格(| 与换行)或在下游 Markdown 渲染器注入 HTML/图片标签。
- * 反引号包裹为代码形式并转义内部反引号,尖括号剥除防 <img onerror> 透传。
+ * 反引号包裹为代码形式并转义内部反引号,尖括号剥除防 <img onerror> 透传,
+ * & 实体转义(先于其它替换,否则 &amp;/&lt; 等字面量会被渲染器二次解码产生歧义)。
  * 转义串用 BS+BT 显式构造:字符串字面量 '\\`' 实际只是单个反引号(静默失效的转义)。
  */
 const MD_BS = String.fromCharCode(92) // 反斜杠
 const MD_BT = String.fromCharCode(96) // 反引号
 
 export function mdCell(s: string): string {
-  const noAngle = s.replace(/[<>]/g, '')
+  const noAngle = s.replace(/&/g, '&amp;').replace(/[<>]/g, '')
   return (
     MD_BT +
     noAngle.split(MD_BT).join(MD_BS + MD_BT).split('|').join(MD_BS + '|').replace(/\r?\n/g, ' ') +
     MD_BT
   )
+}
+
+/** 行内文本(Markdown 叙述行的非表格部分):剥尖括号(防 HTML 注入)、拍平换行。
+ *  与 renderReportMd.mdText / compare.render.mdText 同口径 —— 不包裹反引号。 */
+function mdText(s: string): string {
+  return s.replace(/[<>]/g, '').replace(/\r?\n/g, ' ')
+}
+
+/** 反引号代码包裹的行内值(客户端/服务端端点等):先转义 & 再剥尖括号,
+ *  内部反引号转义防逃逸出代码跨距(早闭后 <img onerror> 落入普通文本被渲染)。 */
+function mdInline(s: string): string {
+  const noAngle = s.replace(/&/g, '&amp;').replace(/[<>]/g, '')
+  return MD_BT + noAngle.split(MD_BT).join(MD_BS + MD_BT) + MD_BT
 }
 
 /** 时序表格行(仅表格:表头 + 分隔行 + 数据行,Markdown 转义由 mdCell 完成)。
@@ -67,13 +81,15 @@ export function exportTranscript(
   const lines: string[] = []
   lines.push('# 会话时序叙述')
   lines.push('')
-  lines.push('- 客户端: `' + displayHost(conv.client) + '`')
-  lines.push('- 服务端: `' + displayHost(conv.server) + '`')
-  lines.push('- 协议: ' + conv.protocol + ' · ' + conv.packetCount + ' 包 · ' + fmtBytes(conv.bytes) + ' · ' + conv.start.toFixed(3) + '~' + conv.end.toFixed(3) + 's')
+  // 头部行也是不可信抓包内容(端点串/协议名可含 HTML 标签),与 mdCell 同口径:
+  // 反引号包裹 + 内部反引号转义 + 剥尖括号(防 <img onerror> 透传给下游 Markdown 渲染器)
+  lines.push('- 客户端: ' + mdInline(displayHost(conv.client)))
+  lines.push('- 服务端: ' + mdInline(displayHost(conv.server)))
+  lines.push('- 协议: ' + mdText(conv.protocol) + ' · ' + conv.packetCount + ' 包 · ' + fmtBytes(conv.bytes) + ' · ' + conv.start.toFixed(3) + '~' + conv.end.toFixed(3) + 's')
   const anomalyOnly = mode === 'anomalies'
   if (anomalyOnly) lines.push('- 模式: 仅异常包(只列带 ⚠ 分析标记的报文,正常握手/ACK 已省略)')
   if (conv.issues.length) {
-    lines.push('- ⚠ 异常: ' + conv.issues.map((i) => i.message).join('; '))
+    lines.push('- ⚠ 异常: ' + conv.issues.map((i) => mdText(i.message)).join('; '))
   }
   lines.push('')
 

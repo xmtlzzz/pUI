@@ -1,5 +1,6 @@
 import type { Packet } from '../model/types'
 import { analyzeStream, type StreamAnalysisFacts, type StreamDirection } from '../analysis/tcp/streamAnalysis.ts'
+import { seqDiff, seqGt } from '../analysis/tcp/seq'
 
 /**
  * 序列号空间形态时序图(用户要求 2026-09-01:不要「两条生命线 + 水平报文箭头」
@@ -219,14 +220,16 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   }
 
   // ACK 游标:对向报文携带的最大累计确认(混入本方向自身的 ACK 会让游标
-  // 在两个 ISN 空间之间来回跳 —— m4 ackTrack 同一条原则)
+  // 在两个 ISN 空间之间来回跳 —— m4 ackTrack 同一条原则)。
+  // 跨 2^32 回绕:ack 是 32 位环序,用 seqGt(环上前进)取代数值 > ——
+  // 数值比较在回绕后会停在回绕前的大值(4294967290 > 100),游标画错位置。
   const finalAck: Record<StreamDirection, number | undefined> = { c2s: undefined, s2c: undefined }
   for (const sg of facts.segments) {
     const p = packetByNumber.get(sg.packetNumber)
     if (!p?.tcpAck) continue
     const target: StreamDirection = sg.direction === 'c2s' ? 's2c' : 'c2s'
     const cur = finalAck[target]
-    if (cur == null || p.tcpAck > cur) finalAck[target] = p.tcpAck
+    if (cur == null || seqGt(p.tcpAck, cur)) finalAck[target] = p.tcpAck
   }
 
   // 重传/证据标记:tcpAnalysis 含 retransmission → retx;越过缺口暴露缺口 →
@@ -256,7 +259,10 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   {
     const gapEnds = facts.gaps
       .map((g) => ({ dir: g.direction, end: g.end, done: false }))
-      .sort((a, b) => a.end - b.end)
+      // 按环序排序(seqDiff):raw 数值排序在跨回绕时会把回绕后的 gap end(如 100)
+      // 排到回绕前的大值(如 4294967260)之前 —— 与下方 ack 游标单调推进不匹配,
+      // 恢复标记会错位。seqDiff 是「环上有符号距离」,正常跨度(<2^31)下即环序。
+      .sort((a, b) => seqDiff(a.end, b.end))
     // 对向 ACK 序列:每方向收集(ack, number),按时间序(=ordered)天然按报文序
     const ackSeq: Record<StreamDirection, Array<{ ack: number; number: number }>> = { c2s: [], s2c: [] }
     for (const p of ordered) {
@@ -269,7 +275,10 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       let ai = 0
       for (const ge of gapEnds) {
         if (ge.dir !== dir || ge.done) continue
-        while (ai < list.length && list[ai].ack <= ge.end) ai++
+        // 环序判定:ack 是否「不越过」缺口终点(ge.end)。跨回绕时缺口终点回绕为
+        // 小值(如 100),数值比较会把 W+ 区间的 ACK(4294967260)误判为「<= 100」
+        // 而提前消费 —— 与 finalAck 游标修复同一原则,恢复标记也必须用环距。
+        while (ai < list.length && seqDiff(list[ai].ack, ge.end) <= 0) ai++
         if (ai < list.length) {
           ge.done = true
           marks[dir].push({ packetNumber: list[ai].number, seq: list[ai].ack, len: 0, kind: 'ack' })

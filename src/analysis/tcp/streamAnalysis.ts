@@ -215,82 +215,104 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     // (实测连续流量 23k 包 47s → 16ms;阶梯病态(数万不填补洞)也由
     //  受影响下标定位 + splice 限制在 O(log k + 搬移),不再全量遍历)。
     if (classification === 'new-ahead-of-gap' || classification === 'out-of-order-fill' || classification === 'overlapping-retransmit') {
-      const open = openGaps[dir] // 按 startAbs 升序、互不重叠(幸存者天然保持);原地更新
+      // 空洞对账(局部重算):以 tracker 的当前空洞集合为唯一事实来源,与已登记的
+      // 开放空洞做一次对齐。
+      //
+      // 核心不变量:一次 insert 合并后新区间在下标 ti,只有其**左右两个边界洞**
+      // (洞 ti = [区间 ti-1 的 end, 新区间.start]、洞 ti+1 = [新区间.end, 区间 ti+1 的 start])
+      // 会变化;ti 左侧与 ti+1 右侧的洞边界完全未动,对应 open 记录原样保留。
+      // 被吞并区间之间的旧洞(若有)落在受影响范围内,与任一新洞都不重叠 →
+      // 被判定「完全填平」标 filled,正确关闭。
+      //
+      // 对账只处理受影响绝对范围 [loAbs, hiAbs] 内的 open 记录段(二分定位):
+      //  - 新洞与段内记录重叠 → 继承最早记录的最早观察信息(宽洞被切成两段时
+      //    两段都继承同一 prior:缩小 ≠ 重新发现,不重复计入缺失);
+      //  - 段内记录与所有新洞都无重叠 → 被本次报文完全填平 → 标 filled 保留;
+      //  - 段内记录与任一新洞重叠 → 被新洞替代(丢弃,避免幻影洞/重复记录)。
+      //
+      // 复杂度:每包 O(log open + 受影响段长)。受影响段在正常/病态下都只有 O(1)
+      // 条记录(一次 add 只改变两个洞) —— 阶梯病态(只暴露不填,注释 215-216 声称
+      // 支持数万洞)下 open 单调膨胀但每包仍 O(log k),累计 O(k log k);
+      // 全量重算方案在此形态实测 20000 洞 70s(对抗审查),本方案恢复旧量级。
+      const open = openGaps[dir]
       const rc = ranges.rangeCount
-      // 受影响"洞下标":洞 ri = 区间 ri-1 与 ri 之间;insert 合并后新区间在 ti,
-      // 其左右两洞 (ti-1,ti) 与 (ti,ti+1) 可能变化
-      const ti = Math.min(Math.max(ranges.lastTouchedIndex(), 1), Math.max(rc - 1, 1))
-      const affected = new Set<number>([ti - 1, ti])
-      let oi = 0
-      let ri = 1
-      // open 的游标与洞游标同步前进;受影响洞用 splice 原地替换。
-      // 死循环护栏(真实 VDI 抓包 #9697 复现,进程假死):ri 的推进**必须以洞序为准**,
-      // 每轮至少 +1 —— 不能被 open.length 钳制成 0:重传风暴下 open 会先于洞被
-      // 删空,钳制版 skip=0 后 ri 永不前进,主线程无限自旋(用户实测「能滚动但
-      // 点不动」即此)。open 游标 oi 单独用 Math.min 钳在合法范围。
-      while (ri < rc) {
-        if (!affected.has(ri)) {
-          // 未受影响:洞与开放记录按原序一一对应,双方游标同步跳过
-          let runEnd = ri
-          while (runEnd < rc && !affected.has(runEnd)) runEnd++
-          const skip = runEnd - ri
-          oi = Math.min(oi + skip, open.length)
-          ri += skip
-          continue
+      const ti = Math.min(Math.max(ranges.lastTouchedIndex(), 0), Math.max(rc - 1, 0))
+      // 受影响洞的绝对范围:洞 ti 左端(区间 ti-1 的 end)到洞 ti+1 右端(区间 ti+1 的 start)
+      const loAbs = ti > 0 ? ranges.rangeAt(ti - 1)[1] : Number.NEGATIVE_INFINITY
+      const hiAbs = ti + 1 < rc ? ranges.rangeAt(ti + 1)[0] : Number.POSITIVE_INFINITY
+
+      const absStartOf = (g: SequenceGapFact): number => g.startAbs ?? g.start
+      const absEndOf = (g: SequenceGapFact): number => absStartOf(g) + g.byteCount
+
+      // 二分:受影响 open 记录段 [p0, p1) —— startAbs ∈ [loAbs, hiAbs) 且与之重叠
+      let p0 = open.length
+      {
+        let lo = 0
+        let hi = open.length
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1
+          if (absStartOf(open[mid]!) < loAbs) lo = mid + 1
+          else hi = mid
         }
-        const gs0abs = ranges.rangeAt(ri - 1)[1]
-        const ge0abs = ranges.rangeAt(ri)[0]
-        // a) 跳过完全落在当前空洞之前的开放记录:它们已消失 → 被本报文填平
-        while (oi < open.length && seqDiff(open[oi].end, ranges.wrapOf(gs0abs)) <= 0) {
-          const g = open[oi]
-          open.splice(oi, 1) // 原地删除(该记录已填平)
-          g.filled = true
-          g.filledByPacket = p.number
-          g.filledTime = p.time
-          g.durationSeconds = p.time - g.firstObservedTime
-          closedGaps.push(g)
+        p0 = lo
+      }
+      // 往回扩展:startAbs < loAbs 但 endAbs > loAbs 的部分重叠记录(至多一条,open 互不重叠)
+      while (p0 > 0 && absEndOf(open[p0 - 1]!) > loAbs) p0--
+      let p1 = p0
+      {
+        let lo = p0
+        let hi = open.length
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1
+          if (absStartOf(open[mid]!) < hiAbs) lo = mid + 1
+          else hi = mid
         }
-        // b) 收集与当前空洞重叠的开放记录,取最早者为 prior;
-        //    只有被完全覆盖(end <= ge0)的才前移 —— 部分重叠的最后一条
-        //    要留给下一条 current 空洞继续匹配(宽空洞被切成两段时,
-        //    两段幸存者继承同一个 prior:缩小 ≠ 重新发现)。
+        p1 = lo
+      }
+
+      // 受影响新洞(仅 ti、ti+1 两个边界洞;被吞区间之间的旧洞不产生新洞)
+      const newHoles: Array<{ rsAbs: number; reAbs: number }> = []
+      if (ti > 0) newHoles.push({ rsAbs: ranges.rangeAt(ti - 1)[1], reAbs: ranges.rangeAt(ti)[0] })
+      if (ti + 1 < rc) newHoles.push({ rsAbs: ranges.rangeAt(ti)[1], reAbs: ranges.rangeAt(ti + 1)[0] })
+
+      // 段内记录消费标记:true = 与新洞重叠(被替代),false = 完全填平(标 filled)
+      const consumed = new Array<boolean>(p1 - p0).fill(false)
+      const newOpen: SequenceGapFact[] = []
+      for (const hole of newHoles) {
         let prior: SequenceGapFact | undefined
-        let scan = oi
-        const ge0 = ranges.wrapOf(ge0abs)
-        while (scan < open.length && seqDiff(ge0, open[scan].start) > 0) {
-          if (prior === undefined) prior = open[scan]
-          if (seqDiff(open[scan].end, ge0) <= 0) scan++
-          else break
+        for (let k = p0; k < p1; k++) {
+          if (absStartOf(open[k]!) < hole.reAbs && absEndOf(open[k]!) > hole.rsAbs) {
+            if (prior === undefined) prior = open[k]
+            consumed[k - p0] = true
+          }
         }
-        // 重叠的旧记录原地删除(被收缩/覆盖,由下方新记录替代)
-        const eatenCount = scan - oi
-        if (eatenCount > 0) open.splice(oi, eatenCount)
-        const gs0 = ranges.wrapOf(gs0abs)
-        // 新洞记录插入到 oi 位置(保持 open 按 startAbs 升序)
-        open.splice(oi, 0, {
+        newOpen.push({
           direction: dir,
-          start: gs0,
-          end: ge0,
-          byteCount: seqDiff(ge0, gs0),
+          start: ranges.wrapOf(hole.rsAbs),
+          end: ranges.wrapOf(hole.reAbs),
+          byteCount: hole.reAbs - hole.rsAbs,
           firstObservedPacket: prior?.firstObservedPacket ?? p.number,
           firstObservedTime: prior?.firstObservedTime ?? p.time,
           sackCovered: prior?.sackCovered ?? false,
-          startAbs: gs0abs,
+          startAbs: hole.rsAbs,
           filled: false,
         })
-        oi++
-        ri++
       }
-      // c) 尾部剩余的开放记录:不再出现于 tracker → 已被本报文填平
-      while (oi < open.length) {
-        const g = open[oi]
-        open.splice(oi, 1)
+      // 段内未被消费的旧记录:与所有新洞无重叠 → 完全填平
+      for (let k = p0; k < p1; k++) {
+        if (consumed[k - p0]) continue
+        const g = open[k]!
         g.filled = true
         g.filledByPacket = p.number
         g.filledTime = p.time
         g.durationSeconds = p.time - g.firstObservedTime
         closedGaps.push(g)
       }
+      // 原地替换受影响段 [p0,p1) 为新洞(未受影响的洞与 open 记录保持一一对应)。
+      // 用 splice 而非「slice 三拼」:后者每包复制整个 open 数组,阶梯病态
+      // (open 单调膨胀)下累计 O(k²);splice 只搬移受影响段之后的尾部,
+      // 阶梯形态受影响段在尾部 → 近 O(1),FIFO 填洞形态也远低于三拼。
+      open.splice(p0, p1 - p0, ...newOpen)
     }
 
     segments.push({

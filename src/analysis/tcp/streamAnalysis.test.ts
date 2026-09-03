@@ -367,3 +367,97 @@ describe('analyzeStream — 回绕排序、不可信输入与部分填补去重(
     expect(detectTcpEvents(f, packets)).toHaveLength(3)
   })
 })
+
+describe('analyzeStream — 空洞对账在区间吞并/洞内插入场景的账本正确性(回归)', () => {
+  it('区间吞并重传:右侧新洞存活、不被误标 filled,缺失量如实为 100B', () => {
+    const packets = [
+      c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 0, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 2, time: 0.01, tcpFlags: PSHACK, tcpSeq: 200, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 3, time: 0.02, tcpFlags: PSHACK, tcpSeq: 400, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 600, tcpAck: 1, tcpLen: 100 }),
+      // 重叠重传 [150,550):吞并 [200,300) 与 [400,500),合并区间右侧新洞 [550,600)
+      // 必须被对账。此前 affected 只含 [ti-1, ti] 漏掉 ti+1:右侧旧宽记录残留、
+      // 被尾部循环误标 filled,输出互相重叠的幻影洞 + 虚报缺失。
+      c2s({ number: 5, time: 0.04, tcpFlags: PSHACK, tcpSeq: 150, tcpAck: 1, tcpLen: 400 }),
+    ]
+    const f = analyzeStream(packets)
+    // 无重叠、边界正确的洞集合:[300,400) 是被本次重传填上的真实缺口(可标 filled)
+    expect(f.gaps.map((g) => [g.start, g.end])).toEqual([
+      [100, 150],
+      [300, 400],
+      [550, 600],
+    ])
+    // 真实仍未补的缺失 = [100,150)+[550,600) = 100B
+    const unfilled = f.gaps.filter((g) => !g.filled)
+    expect(unfilled.map((g) => [g.start, g.end])).toEqual([
+      [100, 150],
+      [550, 600],
+    ])
+    expect(unfilled.reduce((n, g) => n + g.byteCount, 0)).toBe(100)
+    expect(unfilled.every((g) => g.filledByPacket === undefined)).toBe(true)
+    // 任意两洞不得互相重叠(幻影空洞的铁律)
+    const sorted = [...f.gaps].sort((a, b) => (a.startAbs ?? a.start) - (b.startAbs ?? b.start))
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1]
+      const cur = sorted[i]
+      expect(seqDiffOf(cur.start, prev.end)).toBeGreaterThan(0)
+    }
+  })
+
+  it('部分重叠重传:宽洞缩小而非残留重叠幻影洞(流此刻终止即暴露)', () => {
+    const packets = [
+      c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 0, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 2, time: 0.01, tcpFlags: PSHACK, tcpSeq: 200, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 3, time: 0.05, tcpFlags: PSHACK, tcpSeq: 150, tcpAck: 1, tcpLen: 70 }), // [150,220)
+    ]
+    const f = analyzeStream(packets)
+    // 真实仅剩 [100,150) 未补:不允许残留 [100,200] 的幻影记录(同一段字节一次未补一次已补)
+    expect(f.gaps.map((g) => [g.start, g.end])).toEqual([[100, 150]])
+    expect(f.gaps[0].filled).toBe(false)
+    expect(f.gaps[0].filledByPacket).toBeUndefined()
+    expect(f.gaps[0].byteCount).toBe(50)
+  })
+
+  it('洞内插入后流终止:不残留互相重叠的幻影洞,事件 id 互异', () => {
+    const packets = [
+      c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 1000, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 2, time: 0.01, tcpFlags: PSHACK, tcpSeq: 1500, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 3, time: 0.02, tcpFlags: PSHACK, tcpSeq: 1200, tcpAck: 1, tcpLen: 100 }), // 洞内插入
+    ]
+    const f = analyzeStream(packets)
+    expect(f.gaps.map((g) => [g.start, g.end])).toEqual([
+      [1100, 1200],
+      [1300, 1500],
+    ])
+    expect(f.gaps.reduce((n, g) => n + g.byteCount, 0)).toBe(300)
+    // 两个洞起点不同 → 事件 id 必须互异(此前 [1100,1200] 与 [1100,1500] 共用 anchor 1100)
+    const events = detectTcpEvents(f, packets)
+    const ids = events.map((e) => e.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('FIFO 逐个填洞:每个被填平的洞标 filled 关闭,不留未关闭残留(对抗审查 P1 回归)', () => {
+    // 先暴露 3 个交错洞,再逐个用洞内补段填平(无 SACK 时发送端每 RTT 补一个 MSS 的形态)
+    const packets = [
+      c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 1000, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 2, time: 0.01, tcpFlags: PSHACK, tcpSeq: 1200, tcpAck: 1, tcpLen: 100 }), // 洞 [1100,1200)
+      c2s({ number: 3, time: 0.02, tcpFlags: PSHACK, tcpSeq: 1400, tcpAck: 1, tcpLen: 100 }), // 洞 [1300,1400)
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1600, tcpAck: 1, tcpLen: 100 }), // 洞 [1500,1600)
+      c2s({ number: 5, time: 0.04, tcpFlags: PSHACK, tcpSeq: 1100, tcpAck: 1, tcpLen: 100 }), // 填 [1100,1200)
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 1300, tcpAck: 1, tcpLen: 100 }), // 填 [1300,1400)
+      c2s({ number: 7, time: 0.06, tcpFlags: PSHACK, tcpSeq: 1500, tcpAck: 1, tcpLen: 100 }), // 填 [1500,1600)
+    ]
+    const f = analyzeStream(packets)
+    // 三个洞都被填平:记录保留但 filled=true(账本「及时关闭」,不留未关闭残留)
+    expect(f.gaps).toHaveLength(3)
+    expect(f.gaps.every((g) => g.filled)).toBe(true)
+    expect(f.gaps.every((g) => g.filledByPacket !== undefined)).toBe(true)
+    // 缺失总量 = 300(3×100,记录保留所以总量仍是 300 —— 语义是「已补全」而非「从未缺失」)
+    expect(f.gaps.reduce((n, g) => n + g.byteCount, 0)).toBe(300)
+  })
+})
+
+/** 半开区间的序列空间先后判定(辅助断言,负值也视为"后"的普通序用 abs 更稳) */
+function seqDiffOf(a: number, b: number): number {
+  return (a >>> 0) - (b >>> 0) > 0 ? 1 : (a >>> 0) - (b >>> 0) === 0 ? 0 : -1
+}

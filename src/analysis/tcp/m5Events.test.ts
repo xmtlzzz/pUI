@@ -106,6 +106,41 @@ describe('detectFullWindowEvents — 对端窗口耗尽(发送方视角的停滞
     ]
     expect(detectFullWindowEvents(packets)).toEqual([])
   })
+
+  it('2^32 回绕:high 回绕到小值后不得误报窗口耗尽(unackedBytes 用环距)', () => {
+    // 发送方 seq 跨过 2^32 回绕:4294967000 → 4294967295(高字节) → 96(回绕后)
+    // 对端 ACK 同步回绕。正常流(在途 0)不得产出 full-window 事件。
+    const packets = [
+      c2s({ number: 1, time: 1.0, tcpFlags: PSHACK, tcpSeq: 4294967000, tcpAck: 4294967000, tcpLen: 100 }),
+      c2s({ number: 2, time: 1.01, tcpFlags: PSHACK, tcpSeq: 4294967100, tcpAck: 4294967100, tcpLen: 100 }),
+      c2s({ number: 3, time: 1.02, tcpFlags: PSHACK, tcpSeq: 4294967200, tcpAck: 4294967200, tcpLen: 100 }),
+      // 对端 ACK 已回绕到 96(= 4294967200 回绕后),窗口 65535
+      s2c({ number: 4, time: 1.03, tcpFlags: ACK, tcpSeq: 5000, tcpAck: 96, tcpLen: 0, tcpWindow: 65535 }),
+      // 发送方继续回绕后发送 100B:seq 96,最高未确认 = 196,ACK 96 → 在途 100 < 窗口
+      c2s({ number: 5, time: 1.04, tcpFlags: PSHACK, tcpSeq: 96, tcpAck: 5000, tcpLen: 100 }),
+    ]
+    const events = detectFullWindowEvents(packets)
+    // 回绕后 high(196) 与 ack(96) 的环距 = 100,远小于窗口 65535 —— 不得误报
+    expect(events).toEqual([])
+  })
+
+  it('同一停滞条件多个重复 ACK 只产出 1 条 full-window 事件(去重归并)', () => {
+    const packets: Packet[] = [
+      c2s({ number: 1, time: 1.0, tcpFlags: PSHACK, tcpSeq: 1000, tcpAck: 5000, tcpLen: 100 }),
+      s2c({ number: 2, time: 1.01, tcpFlags: ACK, tcpSeq: 5000, tcpAck: 1100, tcpLen: 0, tcpWindow: 100 }),
+      // 发送方连发 200B:最高未确认 1300,窗口右沿 1200 → 触发(首个)
+      c2s({ number: 3, time: 1.02, tcpFlags: PSHACK, tcpSeq: 1100, tcpAck: 5000, tcpLen: 100 }),
+      c2s({ number: 4, time: 1.03, tcpFlags: PSHACK, tcpSeq: 1200, tcpAck: 5000, tcpLen: 100 }),
+      // 对端 10 个重复 ACK(ack 恒 1100,窗口恒 100):停滞条件未变化
+      ...[5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map((n) =>
+        s2c({ number: n, time: 1.1 + n * 0.01, tcpFlags: ACK, tcpSeq: 5000, tcpAck: 1100, tcpLen: 0, tcpWindow: 100 }),
+      ),
+    ]
+    const events = detectFullWindowEvents(packets)
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe('full-window')
+    expect(events[0].unackedBytes).toBe(200)
+  })
 })
 
 describe('detectRstEvents — 连接重置', () => {

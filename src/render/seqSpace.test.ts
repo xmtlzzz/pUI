@@ -88,6 +88,19 @@ describe('computeSeqSpaceLayout', () => {
     expect(lay.lanes[1].finalAck).toBe(301)
   })
 
+  it('ACK 游标跨 2^32 回绕:取环上最靠后的 ack(不得停在回绕前的大值)', () => {
+    // c2s 数据推进序列空间;对向(s2c)报文携带的 ack 从 4294967000 经 4294967290 回绕到 100
+    const ps = [
+      pkt(1, { srcIp: 'a', dstIp: 'b', tcpSeq: 0, tcpLen: 100 }),
+      pkt(2, { srcIp: 'b', dstIp: 'a', tcpSeq: 0, tcpAck: 4294967000, tcpLen: 0 }),
+      pkt(3, { srcIp: 'b', dstIp: 'a', tcpSeq: 0, tcpAck: 4294967290, tcpLen: 0 }),
+      pkt(4, { srcIp: 'b', dstIp: 'a', tcpSeq: 0, tcpAck: 100, tcpLen: 0 }), // 回绕后
+    ]
+    const lay = computeSeqSpaceLayout(ps, { client: 'a:1', server: 'b:2' })
+    // 环上 ack 前进方向:…→4294967290→100(回绕后),finalAck 应为 100 而非回绕前的大值
+    expect(lay.lanes[0].finalAck).toBe(100)
+  })
+
   it('重传标记:tcpAnalysis 含 retransmission 的报文 seq 落进带内', () => {
     const ps = [
       pkt(1, { srcIp: 'a', dstIp: 'b', tcpSeq: 0, tcpLen: 100 }),

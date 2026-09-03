@@ -1,4 +1,5 @@
 import type { Packet } from '../../model/types'
+import { seqDiff } from './seq'
 
 /**
  * M5 事件扩展(plan M5 第一块):零窗口 / 窗口耗尽 / RST / SYN 重传。
@@ -135,56 +136,85 @@ export function detectZeroWindowEvents(packets: Packet[]): M5Event[] {
 export function detectFullWindowEvents(packets: Packet[]): M5Event[] {
   const ordered = [...packets].sort(timeOrder)
   const events: M5Event[] = []
-  // 逐方向跟踪:发送方累计 ACK 与最高已发送字节沿;通告方取反向报文的 window
+  // 逐方向跟踪:发送方累计 ACK 与最高已发送字节沿(展开坐标,跨回绕单调);
+  // 通告方取反向报文的 window。highRaw = 最高字节边界(下一期望 seq)的 32 位读数,
+  // highAbs 展开坐标仅用于正确推进 highRaw 的"前进"判定;环距一律用 seqDiff。
+  // openEvt:该方向尚未收束的 full-window 事件 —— 同一停滞条件(窗口/ACK 未前进)
+  // 的后续重复通告归并进当前事件,不再每条重复 ACK 刷屏一条事件。
   const st = {
-    c2s: { ack: null as number | null, high: -1, win: Infinity, winPkt: null as Packet | null },
-    s2c: { ack: null as number | null, high: -1, win: Infinity, winPkt: null as Packet | null },
+    c2s: { highRaw: 0, highAbs: 0, hasHigh: false, ack: null as number | null, win: Infinity, winPkt: null as Packet | null, openEvt: null as M5Event | null },
+    s2c: { highRaw: 0, highAbs: 0, hasHigh: false, ack: null as number | null, win: Infinity, winPkt: null as Packet | null, openEvt: null as M5Event | null },
   }
 
   for (const p of ordered) {
     const f = flagsOf(p)
     const dir = directionOf(p)
     const opp = dir === 'c2s' ? 's2c' : 'c2s'
-    // 本方向报文推进"已发送字节沿"
+    // 本方向报文推进"已发送字节沿":回绕安全 —— end 回绕到小值时用 seqDiff
+    // 判定前进(此前直接 end > high 数值比较,回绕后 high 永不更新,误报窗口耗尽)
     if (p.tcpLen != null && p.tcpLen > 0 && p.tcpSeq != null && (f & F_RST) === 0) {
-      const end = (p.tcpSeq + p.tcpLen) >>> 0
-      if (end > st[dir].high) st[dir].high = end
+      const endRaw = (p.tcpSeq + p.tcpLen) >>> 0
+      const s = st[dir]
+      if (!s.hasHigh) {
+        s.hasHigh = true
+        s.highRaw = endRaw
+        s.highAbs = p.tcpLen
+      } else {
+        const fwd = seqDiff(endRaw, s.highRaw)
+        if (fwd > 0) {
+          s.highAbs += fwd
+          s.highRaw = endRaw
+        }
+      }
     }
     // 反方向报文携带对本方向的确认与窗口通告
     if (p.tcpAck != null) st[opp].ack = p.tcpAck
     if (p.tcpWindow != null && (f & F_RST) === 0) {
       st[opp].win = p.tcpWindow
       st[opp].winPkt = p
-      // 在途未确认字节超出通告窗口右沿 → 窗口耗尽(首次通告即检查,不要求收缩)
-      const ack = st[opp].ack
-      if (ack != null && st[opp].high > ack + p.tcpWindow && st[opp].high - ack >= 100) {
-        const unacked = st[opp].high - ack
-        events.push({
-          kind: 'full-window',
-          direction: opp,
-          startTime: p.time,
-          endTime: p.time,
-          severity: 'medium',
-          startPacket: p.number,
-          advertisedWindow: p.tcpWindow,
-          unackedBytes: unacked,
-          observations: [
-            {
-              statement: `该报文把接收窗口收缩到 ${p.tcpWindow} 字节,而发送方仍有约 ${unacked} 字节未被确认(超出窗口右沿)`,
-              packetNumber: p.number,
+      const s = st[opp]
+      const ack = s.ack
+      // 在途未确认 = 最高已发送字节边界与累计 ACK 的环距(回绕安全)
+      const unacked = ack != null && s.hasHigh ? seqDiff(s.highRaw, ack) : null
+      if (unacked != null && unacked > p.tcpWindow && unacked >= 100) {
+        if (s.openEvt) {
+          // 同一停滞条件继续(窗口/ACK 未变化):归并进当前事件
+          s.openEvt.endPacket = p.number
+          s.openEvt.endTime = p.time
+        } else {
+          const evt: M5Event = {
+            kind: 'full-window',
+            direction: opp,
+            startTime: p.time,
+            endTime: p.time,
+            severity: 'medium',
+            startPacket: p.number,
+            advertisedWindow: p.tcpWindow,
+            unackedBytes: unacked,
+            observations: [
+              {
+                statement: `该报文把接收窗口收缩到 ${p.tcpWindow} 字节,而发送方仍有约 ${unacked} 字节未被确认(超出窗口右沿)`,
+                packetNumber: p.number,
+              },
+            ],
+            inference: {
+              statement:
+                '发送方的在途未确认字节已达到/超过对端通告的接收窗口:后续发送将被窗口机制暂停,直到窗口前进。这是发送停滞的窗口侧解释',
+              confidence: 'medium',
             },
-          ],
-          inference: {
-            statement:
-              '发送方的在途未确认字节已达到/超过对端通告的接收窗口:后续发送将被窗口机制暂停,直到窗口前进。这是发送停滞的窗口侧解释',
-            confidence: 'medium',
-          },
-          limitations: [SINGLE_POINT, '在途字节按"最高已发送 - 累计 ACK"近似,含重传字节,实际有效在途量可能更小'],
-        })
+            limitations: [SINGLE_POINT, '在途字节按"最高已发送 - 累计 ACK"近似,含重传字节,实际有效在途量可能更小'],
+          }
+          s.openEvt = evt
+          events.push(evt)
+        }
+      } else if (s.openEvt) {
+        // 条件解除(窗口前进/ACK 推进):停滞期结束,后续再触发另开新事件
+        s.openEvt = null
       }
     }
   }
-  return events
+  // 事件仍按时间升序(与 M3 的未恢复优先不同:这里同 kind 无需跨事件排序)
+  return events.sort((a, b) => a.startTime - b.startTime)
 }
 
 // ---------------------------------------------------------------------------

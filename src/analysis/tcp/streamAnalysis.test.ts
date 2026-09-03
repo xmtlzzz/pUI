@@ -361,6 +361,22 @@ describe('analyzeStream — 回绕排序、不可信输入与部分填补去重(
     expect(f.segments.filter((s) => s.classification === 'pure-duplicate')).toHaveLength(0)
   })
 
+  it('RST 之后同方向数据段标 post-rst,不推进序列空间(审计 P2 #5)', () => {
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+      // 客户端发 RST 终止连接(方向 c2s)
+      c2s({ number: 5, time: 0.04, tcpFlags: '0x0004', tcpSeq: 101, tcpAck: 1, tcpLen: 0 }),
+      // RST 之后同方向的数据段(新连接/镜像噪声):不得推进序列空间
+      c2s({ number: 6, time: 0.05, tcpFlags: PSHACK, tcpSeq: 5000000, tcpAck: 1, tcpLen: 100 }),
+    ]
+    const f = analyzeStream(packets)
+    const seg6 = f.segments.find((s) => s.packetNumber === 6)
+    expect(seg6?.classification).toBe('post-rst')
+    // 该段不推进序列空间:序列空间不含 5000000 起的字节(无 5GB 幻影空洞)
+    expect(f.gaps.every((g) => g.byteCount <= 0x4000_0000)).toBe(true)
+  })
+
   it('部分填补去重回归:宽空洞被缩小而非残留重复记录,缺失量如实为 700B', () => {
     const packets = [
       c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 1000, tcpAck: 1, tcpLen: 100 }),

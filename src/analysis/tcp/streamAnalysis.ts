@@ -20,6 +20,10 @@ export type SegmentClassification =
    *  与 pure-duplicate 的关键区别:pure-duplicate 是「字节已见过」的重发,
    *  rejected 是「从未见过也不能定序」的段 —— 事件层不得为它生成伪重传。 */
   | 'rejected'
+  /** RST 之后同方向的段:连接已由 RST 终止,后续报文属新连接/镜像噪声,
+   *  不推进序列空间(否则会制造巨大假空洞)。单观察点限制:不臆断新连接,
+   *  只做「RST 后该方向序列结论不可靠」的保守处理。 */
+  | 'post-rst'
 
 /** 方向:c2s = 发起方→对端,s2c = 反向。以流内首个观察到的报文源端点为 c2s。 */
 export type StreamDirection = 'c2s' | 's2c'
@@ -79,6 +83,7 @@ export interface StreamAnalysisFacts {
 
 const F_FIN = 0x01
 const F_SYN = 0x02
+const F_RST = 0x04
 
 function flags(p: Packet): number {
   if (!p.tcpFlags) return 0
@@ -141,6 +146,9 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
   const segments: SegmentFact[] = []
   const openGaps: Record<StreamDirection, SequenceGapFact[]> = { c2s: [], s2c: [] }
   const closedGaps: SequenceGapFact[] = []
+  // 每方向是否已见 RST:连接由 RST 终止后,该方向后续段属新连接/镜像噪声,
+  // 不推进序列空间(审计 P2 #5:数据→RST→后续报文 曾并入同流造假空洞)
+  const rstSeen: Record<StreamDirection, boolean> = { c2s: false, s2c: false }
 
   let lengthUnavailable = false
 
@@ -151,8 +159,29 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
       const target: StreamDirection = dir === 'c2s' ? 's2c' : 'c2s'
       for (const [l, r] of p.tcpSackBlocks) sacked[target].add(l, r)
     }
+    // RST 标志:本方向连接终止(后续段不再推进该方向序列空间)
+    if ((flags(p) & F_RST) !== 0) {
+      rstSeen[dir] = true
+      // RST 自身不占序列空间(seqLen=0 走下方 no-payload 分支)
+    }
 
     if (p.tcpSeq == null) continue
+    const payloadLen0 = p.tcpLen ?? 0
+    // RST 之后本方向的数据段:序列结论不可靠,如实标 post-rst、不推进序列空间
+    // (不臆断新连接 —— 单观察点无法区分新连接/镜像噪声,只做保守截断)
+    if (rstSeen[dir] && (flags(p) & F_RST) === 0 && seqLenOf(p, payloadLen0) > 0) {
+      segments.push({
+        packetNumber: p.number,
+        time: p.time,
+        direction: dir,
+        seq: p.tcpSeq,
+        payloadLen: payloadLen0,
+        seqLen: seqLenOf(p, payloadLen0),
+        classification: 'post-rst',
+        newBytes: 0,
+      })
+      continue
+    }
     if (p.tcpLen == null && (flags(p) & (F_SYN | F_FIN)) === 0) {
       // 无 tcp.len 且非 SYN/FIN:无法确定该段是否携带数据。绝不用 frame.len 冒充载荷长度
       // (帧长含各层头部),否则序列号会推进过头、造出根本不存在的 Gap。

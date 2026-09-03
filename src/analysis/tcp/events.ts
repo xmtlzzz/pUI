@@ -229,6 +229,10 @@ export function detectTcpEvents(facts: StreamAnalysisFacts, packets: Packet[]): 
     // 复杂度护栏:窗口上限 DUP_ACK_SCAN_WINDOW(缺口暴露后的 RTT 内出现;未填补缺口
     // 不再扫到抓包尾 —— 乱序风暴 1.1 万缺口 × 全程扫描是 O(events×N) 冻结源之一)。
     // dupAck 计数超窗即停(计数上限 DUP_ACK_COUNT_CAP 足以支撑分类器:0/少量/大量)。
+    // 已知边界(审计 P3 #7):缺口暴露到填补之间若有 >512 个对向报文,窗口被截断,
+    // dupAck 计数偏低 → 分类可能从「快重传」误落「模糊区」。真实 RTT 内 512 报文
+    // 余量极大,触发概率极低;「扫满窗口但计数封顶」的解耦会重引入 O(events×N)
+    // 冻结(正是本窗口存在的原因),故保留截断、仅在此注明取舍。
     const ackDir: StreamDirection = gap.direction === 'c2s' ? 's2c' : 'c2s'
     const dupAckPackets: number[] = []
     let sackPresent = gap.sackCovered

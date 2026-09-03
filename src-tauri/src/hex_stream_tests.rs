@@ -49,7 +49,15 @@ fn run_hex_streaming_callback_error_propagates() {
     let chunks = |_: &str| -> Result<(), String> { Err("send failed".into()) };
     let out = run_hex_streaming(Path::new(NONEXISTENT), "x.pcapng", 1, chunks);
     assert!(out.is_err());
-    assert_eq!(out.unwrap_err(), "failed to run tshark: 系统找不到指定的路径。 (os error 3)");
+    // 只断言「前缀 + os error 码」,不断言系统错误文案 —— 系统消息随 OS 语言变化
+    // (中文 Windows「系统找不到指定的路径」/英文 runner「The system cannot find
+    //  the path specified」),CI 英文环境曾因此挂掉。语义核心是:spawn 失败的
+    // 错误向上传播且未被吞掉(os error 3 = ERROR_PATH_NOT_FOUND)。
+    let err = out.unwrap_err();
+    assert!(
+        err.starts_with("failed to run tshark: ") && err.contains("(os error 3)"),
+        "error must propagate spawn failure with os error 3, got: {err}"
+    );
 }
 
 /// TSHARK_BIN/TSHARK 指向真实 tshark 时才跑的端到端(与前端 TSHARK env 模式一致)

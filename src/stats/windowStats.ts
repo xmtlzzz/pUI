@@ -56,3 +56,23 @@ export function computeWindowStats(packets: Packet[]): WindowStats {
     maxBytes: Math.max(...samples),
   }
 }
+
+/** 窗口通告随时间的变化曲线样本:每个「不同值通告」一个点(首样本 + 变化点,重复通告跳过),
+ *  按时间升序输出(输入乱序也先排序 —— 确定性)。供摘要面板画迷你曲线(阶梯/折线)。 */
+export interface WindowSample {
+  time: number
+  windowBytes: number
+}
+
+export function windowTimeline(packets: Packet[]): WindowSample[] {
+  const ordered = [...packets].sort((a, b) => a.time - b.time || a.number - b.number)
+  const out: WindowSample[] = []
+  let prev: number | null = null
+  for (const p of ordered) {
+    const w = p.tcpWindow
+    if (w === undefined) continue // 字段缺失 ≠ 0,不编造
+    if (prev == null || w !== prev) out.push({ time: p.time, windowBytes: w })
+    prev = w
+  }
+  return out
+}

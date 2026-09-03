@@ -189,3 +189,54 @@ describe('SummaryPanel 应用层事件(M6 插件接入)', () => {
     expect(container.querySelector('[data-testid="summary-app"]')).toBeNull()
   })
 })
+
+describe('SummaryPanel 吞吐双条形 + 窗口曲线(统计图形化)', () => {
+  it('时间分布区渲染吞吐条形(报文数+KB)与峰值;无报文时不渲染', () => {
+    const pkts: Packet[] = [
+      { ...pkt(1), time: 0, tcpLen: 1000, srcPort: 5000, dstPort: 80 },
+      { ...pkt(2), time: 5, tcpLen: 2000, srcPort: 5000, dstPort: 80 },
+      { ...pkt(3), time: 10, tcpLen: 500, srcPort: 5000, dstPort: 80 },
+    ]
+    useApp.setState({ packets: pkts, conversations: [conv('1', pkts)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const tp = container.querySelector('[data-testid="summary-throughput"]')!
+    expect(tp.querySelectorAll('.tp-bar')).toHaveLength(24) // 与报文数直方图同 24 桶
+    expect(tp.textContent).toContain('峰值')
+    expect(tp.textContent).toContain('KB')
+    // 无报文:时间分布吞吐区不渲染
+    useApp.setState({ packets: [], conversations: [] })
+    const v2 = render(<SummaryPanel />)
+    expect(v2.container.querySelector('[data-testid="summary-throughput"]')).toBeNull()
+  })
+
+  it('窗口通告可用时渲染迷你曲线(polyline 点按样本缩放);无窗口字段不渲染', () => {
+    const pkts: Packet[] = [
+      { ...pkt(1), time: 0, tcpFlags: '0x0018', tcpLen: 100, srcPort: 5000, dstPort: 80 },
+      { ...pkt(2), time: 0.02, tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 65535, srcPort: 80, dstPort: 5000 },
+      { ...pkt(3), time: 0.04, tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 8760, srcPort: 80, dstPort: 5000 },
+      { ...pkt(4), time: 0.06, tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 17520, srcPort: 80, dstPort: 5000 },
+    ]
+    useApp.setState({ conversations: [conv('1', pkts)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const curve = container.querySelector('[data-testid="summary-win-curve"] polyline')
+    expect(curve).not.toBeNull()
+    const pts = curve!.getAttribute('points')!
+    expect(pts.split(' ').filter(Boolean)).toHaveLength(3) // 3 个变化点样本
+    // 无窗口字段:不渲染曲线
+    useApp.setState({ conversations: [conv('2', [pkt(5), pkt(6)])], selectedId: '2' })
+    const v2 = render(<SummaryPanel />)
+    expect(v2.container.querySelector('[data-testid="summary-win-curve"]')).toBeNull()
+  })
+
+  it('窗口曲线在单一样本(无变化)时也渲染(不除零)', () => {
+    const pkts: Packet[] = [
+      { ...pkt(1), time: 0, tcpFlags: '0x0018', tcpLen: 100, srcPort: 5000, dstPort: 80 },
+      { ...pkt(2), time: 0.02, tcpFlags: '0x0010', tcpLen: 0, tcpWindow: 65535, srcPort: 80, dstPort: 5000 },
+    ]
+    useApp.setState({ conversations: [conv('1', pkts)], selectedId: '1' })
+    const { container } = render(<SummaryPanel />)
+    const curve = container.querySelector('[data-testid="summary-win-curve"] polyline')
+    expect(curve).not.toBeNull()
+    expect(curve!.getAttribute('points')!.split(' ').filter(Boolean)).toHaveLength(1)
+  })
+})

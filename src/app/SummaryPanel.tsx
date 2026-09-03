@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
 import { useApp } from '../state/appStore'
 import { deriveSummary } from '../stats/summaryStats'
-import { buildHistogram } from '../stats/histogram'
+import { buildHistogram, throughputBuckets } from '../stats/histogram'
 import { deriveTcpStats } from '../stats/tcpStats'
 import { tcpStatRows } from '../stats/tcpStatHints'
 import { computeRttStats, MIN_RTT_SAMPLES } from '../stats/rttStats'
 import { computeCaptureQuality } from '../stats/captureQuality'
-import { computeWindowStats } from '../stats/windowStats'
+import { computeWindowStats, windowTimeline } from '../stats/windowStats'
 import { computeHealthScore } from '../stats/healthScore'
 import { countAppEvents, runApplicationAnalyzers } from '../analysis/app/analyzers'
 import { protocolColor } from '../model/protocolColors'
@@ -25,6 +25,7 @@ export function SummaryPanel() {
   const setHighlight = useApp((s) => s.setHighlight)
   const summary = useMemo(() => deriveSummary(conversations), [conversations])
   const buckets = useMemo(() => buildHistogram(packets, 24), [packets])
+  const throughput = useMemo(() => throughputBuckets(packets, 24), [packets])
   // TCP 异常统计:针对当前选中会话的全量报文(不受分段/抽稀影响),点击行高亮下钻
   const conv = useMemo(() => conversations.find((c) => c.id === selectedId) ?? null, [conversations, selectedId])
   const tcpRows = useMemo(
@@ -35,6 +36,7 @@ export function SummaryPanel() {
   const rtt = useMemo(() => (conv ? computeRttStats(conv.packets) : null), [conv])
   const cq = useMemo(() => (conv ? computeCaptureQuality(conv.packets) : null), [conv])
   const ws = useMemo(() => (conv ? computeWindowStats(conv.packets) : null), [conv])
+  const winCurve = useMemo(() => (conv ? windowTimeline(conv.packets) : []), [conv])
   const health = useMemo(() => (conv ? computeHealthScore(conv.packets) : null), [conv])
   // M6:应用层事件(HTTP/DNS/TLS 插件,只消费已解析字段)。慢响应阈值沿用全局慢响应阈值。
   const slowThreshold = useApp((s) => s.slowThreshold)
@@ -54,6 +56,7 @@ export function SummaryPanel() {
   }
   const maxProto = Math.max(...summary.protocolCounts.map((p) => p.count), 1)
   const maxBucket = Math.max(...buckets.map((b) => b.count), 1)
+  const maxThroughput = Math.max(...throughput.map((b) => b.bytes), 1)
   return (
     <>
       <div className="pane-title">分析摘要</div>
@@ -144,6 +147,19 @@ export function SummaryPanel() {
               </span>
             )}
           </div>
+          {/* 窗口通告迷你曲线:每个变化点一个样本,折线一眼看出收缩/恢复形态(数值之外补形态)。
+              曲线只画「对端通告值」沿,同 computeWindowStats 语义,不编造字段缺失段 */}
+          {winCurve.length > 0 && (
+            <div className="win-curve" data-testid="summary-win-curve" title="窗口通告随时间(秒):每个不同值一个样本点;陡降=窗口收缩,回抬=对端缓冲恢复">
+              <svg viewBox="0 0 240 44" preserveAspectRatio="none" aria-hidden="true">
+                <polyline points={windowPolyline(winCurve, 240, 44)} fill="none" stroke="#3b82f6" strokeWidth="2" />
+              </svg>
+              <span className="win-curve-cap">
+                窗口 {winCurve[0]!.windowBytes >= 1024 ? `${(winCurve[0]!.windowBytes / 1024).toFixed(1)}KB` : `${winCurve[0]!.windowBytes}B`}→
+                {winCurve[winCurve.length - 1]!.windowBytes >= 1024 ? `${(winCurve[winCurve.length - 1]!.windowBytes / 1024).toFixed(1)}KB` : `${winCurve[winCurve.length - 1]!.windowBytes}B`}
+              </span>
+            </div>
+          )}
           {/* RTT 分布直方图(评估空缺:分位数数值之外补分布形态 —— p90 接近 p50 还是长尾
               一眼可见;对数桶 1/10/100ms,计数之和=样本数) */}
           {rtt.available && rtt.histogramMs.length > 0 && (
@@ -215,6 +231,26 @@ export function SummaryPanel() {
           )
         })}
       </div>
+      {/* 吞吐(字节)双条形:与报文数直方图同桶,峰值一眼可见哪个时间窗传输最密集。
+          评估空缺补位:histogram 只数报文数,这里按 tcpLen(缺失回落 frame.len)累计字节 */}
+      {throughput.length > 0 && (
+        <div className="tp-wrap" data-testid="summary-throughput">
+          <div className="tp-legend">
+            <span><i className="tp-dot byte" /> 吞吐(KB)</span>
+            <span>峰值 <b>{fmtBytes(maxThroughput)}</b></span>
+          </div>
+          <div className="tp-bars">
+            {throughput.map((b) => (
+              <span
+                key={b.index}
+                className="tp-bar"
+                title={`${b.start.toFixed(2)}~${b.end.toFixed(2)}s · ${(b.bytes / 1024).toFixed(1)}KB · ${b.packets} 报文`}
+                style={{ height: `${Math.max(2, (b.bytes / maxThroughput) * 44)}px` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
       {timeRange && (
         <div className="range-line">
           已下钻 {timeRange.start.toFixed(2)}~{timeRange.end.toFixed(2)}s · 会话 {summary.conversationCount}
@@ -231,4 +267,21 @@ function fmtBytes(b: number): string {
   if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)}MB`
   if (b >= 1024) return `${(b / 1024).toFixed(1)}KB`
   return `${b}B`
+}
+
+/** 窗口通告曲线 → SVG polyline points(viewBox WxH)。x=时间, y=窗口字节(反轴,高=大窗口)。
+ *  单样本时落在左上角(无时间跨度时归一),窗口全 0 时落到基线不除零。 */
+function windowPolyline(samples: Array<{ time: number; windowBytes: number }>, w: number, h: number): string {
+  const tMin = samples[0]!.time
+  const tMax = samples[samples.length - 1]!.time
+  const tSpan = Math.max(tMax - tMin, 1e-9)
+  const wMin = Math.min(...samples.map((s) => s.windowBytes))
+  const wSpan = Math.max(Math.max(...samples.map((s) => s.windowBytes)) - wMin, 1)
+  return samples
+    .map((s) => {
+      const x = ((s.time - tMin) / tSpan) * (w - 4) + 2
+      const y = h - 3 - ((s.windowBytes - wMin) / wSpan) * (h - 6)
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
 }

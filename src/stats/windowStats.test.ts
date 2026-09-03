@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Packet } from '../model/types'
-import { computeWindowStats } from './windowStats'
+import { computeWindowStats, windowTimeline } from './windowStats'
 
 /**
  * M5 窗口变化统计:接收窗口通告的演化(两方向合并呈现对端接收侧)。
@@ -89,5 +89,85 @@ describe('computeWindowStats — 接收窗口变化', () => {
       Sw(3, 8760),
     ]
     expect(JSON.stringify(computeWindowStats(packets))).toBe(JSON.stringify(computeWindowStats(packets)))
+  })
+})
+
+describe('windowTimeline — 窗口通告随时间的变化曲线', () => {
+  /** 数据段被 #2..#6 的 ACK 确认;窗口通告沿:65535 → 8760 → 8760 → 17520 → 65535 */
+  const chain = (): Packet[] => [
+    C({ number: 1, time: 0, tcpFlags: '0x0018', tcpLen: 100 }),
+    Sw(2, 65535),
+    C({ number: 3, time: 0.1, tcpLen: 100 }),
+    Sw(4, 8760), // 收缩
+    Sw(5, 8760), // 重复通告(不产生新样本)
+    Sw(6, 17520),
+    Sw(7, 65535),
+  ]
+
+  it('无窗口字段/空输入 → 空曲线', () => {
+    expect(windowTimeline([])).toEqual([])
+    expect(windowTimeline([C({ number: 1, time: 0, tcpLen: 100 })])).toEqual([])
+  })
+
+  it('每个「不同值通告」一个样本:首样本 + 变化点,重复通告跳过', () => {
+    const tl = windowTimeline(chain())
+    expect(tl).toEqual([
+      { time: 0.02, windowBytes: 65535 },
+      { time: 0.04, windowBytes: 8760 },
+      { time: 0.06, windowBytes: 17520 },
+      { time: 0.07, windowBytes: 65535 },
+    ])
+  })
+
+  it('单个窗口通告 → 单样本', () => {
+    expect(windowTimeline([Sw(2, 65535)])).toEqual([{ time: 0.02, windowBytes: 65535 }])
+  })
+
+  it('输入乱序时按时间序输出(确定性);零窗口也落样本', () => {
+    const pkts = [Sw(5, 17520), Sw(2, 65535), Sw(4, 8760), Sw(7, 0), Sw(6, 17520)]
+    expect(windowTimeline(pkts).map((s) => s.windowBytes)).toEqual([65535, 8760, 17520, 0])
+    expect(windowTimeline(pkts).map((s) => s.time)).toEqual([0.02, 0.04, 0.05, 0.07])
+  })
+
+  it('样本数与 computeWindowStats.changes 一致(available 时 = changes + 1)', () => {
+    const packets = chain()
+    const stats = computeWindowStats(packets)
+    const tl = windowTimeline(packets)
+    expect(stats.available).toBe(true)
+    expect(stats.changes).toBe(3)
+    expect(tl).toHaveLength(stats.changes + 1)
+  })
+
+  it('随机输入不变量:空输入 available=false;时间单调;窗口值∈[min,max];无相邻重复值;确定性', () => {
+    const rand = (n: number) => Math.floor(Math.random() * n)
+    for (let trial = 0; trial < 30; trial++) {
+      const n = trial % 9
+      const pkts = Array.from({ length: n }, (_, i) => P({ number: i + 1, time: rand(100) / 10, tcpWindow: rand(3) === 0 ? undefined : rand(65536) }))
+      const stats = computeWindowStats(pkts)
+      if (n === 0) {
+        expect(stats.available).toBe(false)
+        expect(windowTimeline(pkts)).toEqual([])
+        continue
+      }
+      const values = pkts.map((p) => p.tcpWindow).filter((v): v is number => v !== undefined)
+      const tl = windowTimeline(pkts)
+      if (values.length === 0) {
+        expect(stats.available).toBe(false)
+        expect(tl).toEqual([])
+        continue
+      }
+      expect(stats.available).toBe(true)
+      for (let i = 1; i < tl.length; i++) {
+        expect(tl[i]!.time).toBeGreaterThanOrEqual(tl[i - 1]!.time) // 时间单调
+        expect(tl[i]!.windowBytes).not.toBe(tl[i - 1]!.windowBytes) // 相邻值必不同
+      }
+      for (const s of tl) {
+        expect(s.windowBytes).toBeGreaterThanOrEqual(Math.min(...values))
+        expect(s.windowBytes).toBeLessThanOrEqual(Math.max(...values))
+      }
+      expect(stats.samples).toBe(values.length)
+      expect(stats.changes).toBe(Math.max(0, tl.length - 1))
+      expect(JSON.stringify(stats)).toBe(JSON.stringify(computeWindowStats(pkts))) // 确定性
+    }
   })
 })

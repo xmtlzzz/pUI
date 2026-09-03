@@ -32,6 +32,10 @@ export function ConversationList() {
   const searchQuery = useApp((s) => s.searchQuery)
   const setSearchQuery = useApp((s) => s.setSearchQuery)
   const setHighlight = useApp((s) => s.setHighlight)
+  const hitList = useApp((s) => s.searchHits)
+  const hitIndex = useApp((s) => s.searchHitIndex)
+  const nextSearchHit = useApp((s) => s.nextSearchHit)
+  const prevSearchHit = useApp((s) => s.prevSearchHit)
   const [scrollTop, setScrollTop] = useState(0)
   const truncated = filtered.length > LIST_TRUNCATE
   // 搜索:命中会话+报文号;高亮联动在行点击时设置
@@ -64,7 +68,7 @@ export function ConversationList() {
     return (
       <>
         <div className="pane-title">会话列表 ({filtered.length})</div>
-        <SearchBox query={searchQuery} setQuery={setSearchQuery} />
+        <SearchBox query={searchQuery} setQuery={setSearchQuery} hits={hitList} hitIndex={hitIndex} onPrev={prevSearchHit} onNext={nextSearchHit} />
         <div className="empty">无匹配「{searchQuery.trim()}」的报文,请调整关键词</div>
       </>
     )
@@ -73,7 +77,7 @@ export function ConversationList() {
   return (
     <>
       <div className="pane-title">会话列表 ({searchActive ? visible.length : filtered.length})</div>
-      <SearchBox query={searchQuery} setQuery={setSearchQuery} />
+      <SearchBox query={searchQuery} setQuery={setSearchQuery} hits={hitList} hitIndex={hitIndex} onPrev={prevSearchHit} onNext={nextSearchHit} />
       {truncated && <div className="truncate-hint">已显示前 {LIST_TRUNCATE} 个会话(共 {filtered.length} 个),请使用筛选缩小范围</div>}
       <div className="cl-head">
         <span className="col-issue" aria-label="状态" />
@@ -140,7 +144,23 @@ function fmtBytes(b: number): string {
   return b >= 1024 ? `${(b / 1024).toFixed(1)}KB` : `${b}B`
 }
 
-function SearchBox({ query, setQuery }: { query: string; setQuery: (q: string) => void }) {
+function SearchBox({
+  query,
+  setQuery,
+  hits,
+  hitIndex,
+  onPrev,
+  onNext,
+}: {
+  query: string
+  setQuery: (q: string) => void
+  /** 当前搜索的命中报文号列表(空 = 无命中) */
+  hits: number[]
+  /** 当前定位到的命中下标(-1 = 无命中) */
+  hitIndex: number
+  onPrev: () => void
+  onNext: () => void
+}) {
   const [text, setText] = useState(query)
   // 防抖:输入只写本地 state 即时回显,停笔 200ms 后才写 store,避免逐字触发几十万报文的全量搜索
   useEffect(() => {
@@ -151,6 +171,7 @@ function SearchBox({ query, setQuery }: { query: string; setQuery: (q: string) =
   useEffect(() => {
     setText(query)
   }, [query])
+  const hasHits = hits.length > 0 && hitIndex >= 0
 
   return (
     <div className="search-box">
@@ -159,8 +180,20 @@ function SearchBox({ query, setQuery }: { query: string; setQuery: (q: string) =
         value={text}
         placeholder="搜索报文(协议/地址/端口/URL/DNS)…"
         aria-label="搜索报文"
+        className={hasHits ? 'has-hit-count' : undefined}
         onChange={(e) => setText(e.target.value)}
       />
+      {hasHits && (
+        <span className="search-hit-count">
+          <button type="button" className="search-nav" aria-label="上一个命中" onClick={onPrev} title="上一个命中">
+            ↑
+          </button>
+          {hitIndex + 1}/{hits.length}
+          <button type="button" className="search-nav" aria-label="下一个命中" onClick={onNext} title="下一个命中">
+            ↓
+          </button>
+        </span>
+      )}
       {text && (
         <button
           type="button"

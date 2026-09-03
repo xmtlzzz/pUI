@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { act } from 'react'
 import { render, fireEvent } from '@testing-library/react'
 import type { RefObject } from 'react'
 import { FlowTimeline } from './FlowTimeline.tsx' // 显式扩展名:与 flowTimeline.ts 仅大小写之差(Win 大小写不敏感盘歧义)
+import { useApp } from '../state/appStore'
 import type { Conversation, Packet } from '../model/types'
+
+beforeEach(() => {
+  useApp.setState({ seqSegIdx: null, seqSpaceWindows: {}, selectedPacket: null })
+})
 
 const packets: Packet[] = [
   { number: 1, time: 0, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP SYN' },
@@ -183,5 +188,87 @@ describe('FlowTimeline 时间流时序图', () => {
     })
     // viewBox 跟随 1200(整页板块不再右侧留白,与 C 形态同要求)
     expect(svg.getAttribute('viewBox')!.split(' ')[2]).toBe('1200')
+  })
+
+  it('分段导航读取 store.seqSegIdx 并控制段内渲染(切形态保留阅读上下文)', () => {
+    // 构造两段:前 3 包 time<1s,后 2 包 time>2s(>idleGap 切段)
+    const segPackets: Packet[] = [
+      ...packets.map((p) => ({ ...p, time: p.time })),
+      { number: 4, time: 3, len: 60, transport: 'tcp', proto: 'tcp', direction: 'response', info: 'TCP' },
+      { number: 5, time: 3.1, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP' },
+    ]
+    const convSeg: Conversation = { ...conv, packets: segPackets, packetCount: 5, bytes: 310 }
+
+    // store 里 segIdx=1 → 只渲染第 2 段(包 4、5)
+    useApp.setState({ seqSegIdx: 1 })
+    const { container, rerender } = renderFlow({ conv: convSeg })
+    let rows = container.querySelectorAll('.flow-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('#4')
+    expect(container.textContent).not.toContain('#1')
+
+    // store 里 segIdx=null → 全部 5 行
+    useApp.setState({ seqSegIdx: null })
+    rerender(<FlowTimeline conv={convSeg} onSelect={() => {}} svgRef={{ current: null } as RefObject<SVGSVGElement | null>} zoom={1} />)
+    rows = container.querySelectorAll('.flow-row')
+    expect(rows).toHaveLength(5)
+  })
+
+  it('点击分段按钮写回 store(与 A/B/C 共用同一阅读上下文)', () => {
+    const segPackets: Packet[] = [
+      ...packets.map((p) => ({ ...p, time: p.time })),
+      { number: 4, time: 3, len: 60, transport: 'tcp', proto: 'tcp', direction: 'response', info: 'TCP' },
+    ]
+    const convSeg: Conversation = { ...conv, packets: segPackets, packetCount: 4, bytes: 310 }
+    const { container } = renderFlow({ conv: convSeg })
+    const segButtons = container.querySelectorAll('.seg-nav button')
+    expect(segButtons.length).toBeGreaterThanOrEqual(2)
+    fireEvent.click(segButtons[1]) // 「1段」
+    expect(useApp.getState().seqSegIdx).toBe(0)
+    // 段内只渲染前 3 包
+    expect(container.querySelectorAll('.flow-row')).toHaveLength(3)
+  })
+
+  it('超 2000 行时切段后段内渲染不截断(段内 1300 行 < DOM 上限)', () => {
+    // 2600 包:前 1300 一段(time 0..1.299s),后 1300 一段(time 5s 起,间隔 >1s 切段)
+    const many: Packet[] = Array.from({ length: 2600 }, (_, i) => ({
+      number: i + 1,
+      time: i < 1300 ? i * 0.001 : 5 + (i - 1300) * 0.001,
+      len: 60,
+      transport: 'tcp',
+      proto: 'tcp',
+      direction: 'request',
+      info: 'TCP',
+    }))
+    const convMany: Conversation = { ...conv, packets: many, packetCount: 2600, bytes: 156000 }
+    const { container } = renderFlow({ conv: convMany })
+    // 全量:截断提示存在
+    expect(container.textContent).toContain('已截断')
+
+    // 切到段 1(1300 包):段内全量渲染,无截断提示
+    act(() => {
+      useApp.setState({ seqSegIdx: 0 })
+    })
+    const rows = container.querySelectorAll('.flow-row')
+    expect(rows).toHaveLength(1300)
+    expect(container.textContent).not.toContain('已截断')
+  })
+
+  it('缩放到当前选中报文:store 选中变化后滚动到该行(scrollIntoView 被调用)', () => {
+    // jsdom 未实现 scrollIntoView:全局桩,断言「选中后组件主动滚动到该行」
+    const scrollIntoView = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(Element.prototype as any).scrollIntoView = scrollIntoView
+    const onSelect = vi.fn()
+    const svgRef = { current: null } as RefObject<SVGSVGElement | null>
+    const { container } = render(<FlowTimeline conv={conv} onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    act(() => {
+      useApp.setState({ selectedPacket: 2 })
+    })
+    expect(scrollIntoView).toHaveBeenCalled()
+    expect(container.querySelector('[data-pkt="2"]')).toBeTruthy()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(Element.prototype as any).scrollIntoView = orig
   })
 })

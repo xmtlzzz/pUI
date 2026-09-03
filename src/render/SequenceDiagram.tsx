@@ -1,9 +1,11 @@
-import { useMemo, useRef, useState, type RefObject } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { layoutSequence, CLIENT_X, SERVER_X, HEADER_H, type LayoutMessage } from './layout'
 import { displayHost } from '../model/types'
 import { protocolColor } from '../model/protocolColors'
 import { formatEpoch } from './timeFormat'
 import { segmentConversation } from '../aggregate/segmentConversation'
+import { SegmentNav } from './SegmentNav'
+import { useApp } from '../state/appStore'
 import type { Conversation } from '../model/types'
 
 export type TimeMode = 'relative' | 'absolute'
@@ -31,9 +33,11 @@ interface Props {
 
 export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight, onSelect, svgRef, zoom }: Props) {
   const [hover, setHover] = useState<LayoutMessage | null>(null)
+  // 分段导航阅读上下文:段下标提升到 store(跨 A/B/C/D 形态保留),会话变化时 store 侧重置
+  const segIdx = useApp((s) => s.seqSegIdx)
+  const setSegIdx = useApp((s) => s.setSeqSegIdx)
   // 长会话分段:当前段为空表示全部;切段后时序图只渲染该段报文
   const segments = useMemo(() => (conv ? segmentConversation(conv.packets) : []), [conv])
-  const [segIdx, setSegIdx] = useState<number | null>(null)
   const convId = conv?.id
   const prevConvRef = useRef(convId)
   if (convId !== prevConvRef.current) {
@@ -63,6 +67,23 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
   // 高亮报文号集合:highlight 数组线性扫描在每条报文渲染时是 O(行数·k)(大抓包高亮可达数十万元素);
   // 提前转 Set 后单条命中判定降到 O(1),与数组 includes 语义一致
   const hlSet = useMemo(() => (highlight ? new Set(highlight) : null), [highlight])
+  // 「缩放到当前选中报文」:store 选中报文变化时聚焦。仅用于聚焦导航,组件自身不派发 onSelect
+  const onSelectTarget = useApp((s) => s.selectedPacket)
+  useEffect(() => {
+    if (!conv || !onSelectTarget) return
+    if (segIdx == null) {
+      if (!segments.some((sg) => sg.packets.some((p) => p.number === onSelectTarget))) {
+        const hitIdx = segments.findIndex((sg) => sg.packets.some((p) => p.number === onSelectTarget))
+        if (hitIdx >= 0) setSegIdx(hitIdx)
+      }
+    } else {
+      const cur = segments[segIdx]
+      if (cur && !cur.packets.some((p) => p.number === onSelectTarget)) {
+        const hitIdx = segments.findIndex((sg) => sg.packets.some((p) => p.number === onSelectTarget))
+        if (hitIdx >= 0) setSegIdx(hitIdx)
+      }
+    }
+  }, [conv, segments, segIdx, setSegIdx, onSelectTarget])
 
   if (!conv) {
     return <div className="empty">从左侧选择一个会话查看时序图</div>
@@ -108,24 +129,7 @@ export function SequenceDiagram({ conv, style, timeMode = 'relative', highlight,
             报文较多:已抽稀显示 {downsampled.length}/{activePackets.length} 条(步长 {stride}),建议分段查看
           </span>
         )}
-        {segments.length > 1 && (
-          <span className="seg-nav">
-            <button type="button" className={segIdx == null ? 'on' : ''} onClick={() => setSegIdx(null)}>
-              全部
-            </button>
-            {segments.map((sg) => (
-              <button
-                key={sg.index}
-                type="button"
-                className={segIdx === sg.index ? 'on' : ''}
-                title={`${sg.start.toFixed(2)}~${sg.end.toFixed(2)}s · ${sg.packetCount} 包`}
-                onClick={() => setSegIdx(sg.index)}
-              >
-                {sg.index + 1}段
-              </button>
-            ))}
-          </span>
-        )}
+        {segments.length > 1 && <SegmentNav segments={segments} segIdx={segIdx} onSelect={setSegIdx} />}
       </div>
       {/* 盒尺寸随 zoom 同步放大:滚动容器按盒子尺寸计算,否则放大后图的下半部永远滚不到 */}
       <svg

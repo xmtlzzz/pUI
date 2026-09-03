@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { computeSeqSpaceLayout, type SeqSpaceLane } from './seqSpace.ts'
 import { wheelZoom } from '../m4/viewModel'
+import { segmentConversation } from '../aggregate/segmentConversation'
+import { SegmentNav } from './SegmentNav'
+import { useApp, type SeqSpaceWindow } from '../state/appStore'
 import type { Conversation } from '../model/types'
 
 /**
@@ -14,17 +17,13 @@ import type { Conversation } from '../model/types'
  *
  * 交互(2026-09-02 用户要求:大会话太紧凑,与故障分析同款缩放):
  * 滚轮以指针位置为锚缩放、按住拖拽平移、双击复位 —— 与 SeqSpaceGraphic
- * 的 zoomRange/onZoomRange 同一套语义;窗口状态归组件(每方向带独立)。
+ * 的 zoomRange/onZoomRange 同一套语义;窗口状态提升到 store(跨形态保留,
+ * 切 A/B/D 再回 C 时回到原缩放位置)。
  *
  * 布局逻辑在 seqSpace.ts 纯函数中,本组件只做 SVG 映射;报文标记可点击
  * (onSelect 帧号),与其它形态的点击详情联动一致。
+ * 分段导航与 A/B 共用 store.seqSegIdx:段内报文喂布局函数,段内渲染不截断。
  */
-
-/** 字节轴缩放窗口(null = 全轴;与 FaultCompare.ZoomRange 同构) */
-interface AxisWindow {
-  start: number
-  end: number
-}
 
 export interface SeqSpaceTimelineProps {
   conv: Conversation | null
@@ -56,16 +55,34 @@ const TICK_LINE_Y = 128
 const LANE_H = 150 // 与 FaultCompare H=150 同档
 const LANE_GAP = 10
 
+/** 「缩放到当前选中报文」:把窗口中心落在 value 附近,钳制在轴内。
+ *  窗口宽取轴跨度的 20%(长轴下足够聚焦,短轴下不塌成一条线)。 */
+function windowAround(value: number, axisMin: number, axisMax: number, spanFrac = 0.2): SeqSpaceWindow {
+  const full = axisMax - axisMin
+  const span = Math.max(1, Math.min(full, full * spanFrac))
+  let start = value - span / 2
+  start = Math.min(Math.max(start, axisMin), axisMax - span)
+  return { start, end: start + span }
+}
+
 export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: SeqSpaceTimelineProps) {
-  const layout = useMemo(() => computeSeqSpaceLayout(conv ? conv.packets : [], { client: conv?.client ?? '' }), [conv])
+  // 分段导航阅读上下文(与 A/B 共用 store.seqSegIdx;切形态保留)
+  const segIdx = useApp((s) => s.seqSegIdx)
+  const setSegIdx = useApp((s) => s.setSeqSegIdx)
+  const segments = useMemo(() => (conv ? segmentConversation(conv.packets) : []), [conv])
+  const activePackets = conv ? (segIdx != null ? (segments[segIdx]?.packets ?? conv.packets) : conv.packets) : []
+  // 布局按当前段报文计算:段内渲染不截断(每段独立序列空间还原)
+  const layout = useMemo(
+    () => computeSeqSpaceLayout(activePackets, { client: conv?.client ?? '' }),
+    [activePackets, conv?.client],
+  )
   const hlSet = useMemo(() => (highlight ? new Set(highlight) : null), [highlight])
-  // 每方向带的缩放窗口(切会话整体复位)
-  const [windows, setWindows] = useState<Record<string, AxisWindow | null>>({})
-  useEffect(() => {
-    setWindows({})
-  }, [conv])
+  // 每方向带的缩放窗口:提升到 store(跨形态保留,切 A/B/D 再回 C 仍在原位置);
+  // 会话变化时 store.select 已重置,组件不再自己复位
+  const windows = useApp((s) => s.seqSpaceWindows)
+  const setWindows = useApp((s) => s.setSeqSpaceWindows)
   const svgElRef = useRef<SVGSVGElement | null>(null)
-  const dragRef = useRef<{ pointerId: number; x: number; laneKey: string; win: AxisWindow; width: number; moved: boolean } | null>(null)
+  const dragRef = useRef<{ pointerId: number; x: number; laneKey: string; win: SeqSpaceWindow; width: number; moved: boolean } | null>(null)
 
   // 占满容器(用户要求 2026-09-02:整页板块右侧留白太怪):viewBox 宽跟随
   // 容器实际宽度(布局 720 只是下限),ResizeObserver 监听;jsdom 无布局,
@@ -203,6 +220,66 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
     }
   }, [])
 
+  // 「缩放到当前选中报文」(基础版):store 选中报文变化时把视图聚焦到该报文 ——
+  // 段外报文先切到所在段(段内渲染不截断),再在段布局中把窗口平移到报文 seq 附近。
+  // 两个 effect 分工:selection effect 只响应选中变化(用 lastSelRef 挡住 seg-nav 等
+  // 其它状态变化导致的重复执行);layout effect 在「切段后布局重建」那一轮完成窗口聚焦。
+  // 切形态时组件重挂载,lastSelRef 初始值 = 当前选中 → 不覆盖 store 已保存的缩放窗口。
+  const focusWindow = useCallback(
+    (target: number) => {
+      const p = activePackets.find((pp) => pp.number === target)
+      if (!p || layout.lanes.length === 0) return
+      const ordered = [...activePackets].sort((a, b) => a.time - b.time || a.number - b.number)
+      const c2sKey = ordered.length ? `${ordered[0].srcIp ?? ordered[0].srcMac ?? '?'}:${ordered[0].srcPort ?? 0}` : ''
+      const srcKey = `${p.srcIp ?? p.srcMac ?? '?'}:${p.srcPort ?? 0}`
+      const dir = srcKey === c2sKey ? 'c2s' : 's2c'
+      for (let li = 0; li < layout.lanes.length; li++) {
+        const lane = layout.lanes[li]
+        let value: number | null = null
+        if (lane.kind === 'fallback') {
+          const m = lane.messages.find((mm) => mm.packetNumber === target)
+          if (m) value = m.t
+        } else if (lane.direction === dir) {
+          value = p.tcpSeq != null ? p.tcpSeq : 0
+        }
+        if (value != null) {
+          const key = `${lane.kind}-${lane.direction}-${li}`
+          setWindows((prev) => ({ ...prev, [key]: windowAround(value, lane.axisMin, lane.axisMax) }))
+          return
+        }
+      }
+    },
+    [activePackets, layout.lanes, setWindows],
+  )
+  const selectedPacket = useApp((s) => s.selectedPacket)
+  const lastSelRef = useRef(selectedPacket)
+  const pendingFocusRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (selectedPacket === lastSelRef.current) return // 非选中变化(seg-nav 等)不聚焦
+    lastSelRef.current = selectedPacket
+    pendingFocusRef.current = null
+    if (selectedPacket == null || !conv) return
+    const inCurrent = activePackets.some((p) => p.number === selectedPacket)
+    if (!inCurrent && segments.length > 1) {
+      const hitIdx = segments.findIndex((sg) => sg.packets.some((p) => p.number === selectedPacket))
+      if (hitIdx >= 0 && hitIdx !== segIdx) {
+        pendingFocusRef.current = selectedPacket // 布局随切段重建后由下方 effect 完成聚焦
+        setSegIdx(hitIdx)
+        return
+      }
+    }
+    focusWindow(selectedPacket)
+  }, [selectedPacket, activePackets, segments, segIdx, focusWindow, conv])
+  useEffect(() => {
+    // 切段后布局重建这一轮:完成之前挂起的窗口聚焦
+    const target = pendingFocusRef.current
+    if (target == null) return
+    if (activePackets.some((p) => p.number === target)) {
+      pendingFocusRef.current = null
+      focusWindow(target)
+    }
+  }, [activePackets, focusWindow])
+
   if (!conv) {
     return <div className="empty">从左侧选择一个会话查看时序图</div>
   }
@@ -224,6 +301,11 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
       {layout.lanes.length === 0 && (
         <div className="many-warn" style={{ margin: '2px 0 4px' }}>
           该会话没有可还原序列空间的 TCP 数据段(非 TCP 或缺少 seq/len 字段)
+        </div>
+      )}
+      {segments.length > 1 && (
+        <div style={{ margin: '2px 0 4px' }}>
+          <SegmentNav segments={segments} segIdx={segIdx} onSelect={setSegIdx} />
         </div>
       )}
       {zoomedAny && (

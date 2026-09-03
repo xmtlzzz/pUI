@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
+import { searchConversations } from '../search/searchPackets'
 import { openCapture, openSample, fetchHex, getTsharkVersion, setTsharkPath as setTsharkPathCmd } from '../bridge/tauri'
 import { cancelParse } from '../parse/parseAsync'
 import { emptyFilter } from '../model/types'
@@ -16,6 +17,27 @@ export interface TimeRange {
 function deriveFiltered(conversations: Conversation[], filter: FilterCondition, timeRange: TimeRange | null): Conversation[] {
   const base = filterConversations(conversations, filter)
   return timeRange ? overlapRange(base, timeRange) : base
+}
+
+/** 搜索命中的跨会话扁平报文号数组:按帧号升序(帧号即抓包帧序/时间序),
+ *  供「上一个/下一个命中」逐条导航与计数展示。空查询/无命中返回空数组。 */
+function searchHitNumbers(conversations: Conversation[], query: string): number[] {
+  const q = query.trim()
+  if (!q) return []
+  const out: number[] = []
+  for (const m of searchConversations(conversations, q)) {
+    for (const n of m.numbers) out.push(n)
+  }
+  return out.sort((a, b) => a - b)
+}
+
+/** 命中的报文号 → 所在会话 id + 报文号;会话按 packets 内的 number 归属查找
+ *  (跨会话跳转不需要会话在当前筛选列表里)。无命中返回 null。 */
+function locateHit(conversations: Conversation[], hits: number[], idx: number): { id: string; number: number } | null {
+  const n = hits[idx]
+  if (n == null) return null
+  const conv = conversations.find((c) => c.packets.some((p) => p.number === n))
+  return conv ? { id: conv.id, number: n } : null
 }
 
 /** hexCache 条目上限:长会话反复浏览报文时内存只增不减,超过上限按 LRU 逐出最旧条目 */
@@ -58,6 +80,31 @@ export interface CompareResume {
   stageIndex: number
 }
 
+/** 序号空间形态(C)单方向带的字节轴缩放窗口;null = 全轴。
+ *  与 FaultCompare.ZoomRange 同构,值合法范围 [lane.axisMin, lane.axisMax]。 */
+export interface SeqSpaceWindow {
+  start: number
+  end: number
+}
+
+/**
+ * 时序图「阅读上下文」:跨形态共享的导航性 UI 状态(不入派生数据红线,与
+ * compareFor/compareEventIndex 同先例)。四形态(A/B/C/D)切换时组件卸载重建,
+ * 各自局部 state(C 的缩放窗口、A/B 的 segIdx)会全部丢失 —— 提升到 store 后,
+ * 切形态回到原阅读位置。
+ */
+export interface DiagramContext {
+  /** A/B 分段导航当前段下标;null = 全部(C/D 同用) */
+  seqSegIdx: number | null
+  /** C 形态每方向带的缩放窗口(key = `${lane.kind}-${lane.direction}-${li}`) */
+  seqSpaceWindows: Record<string, SeqSpaceWindow | null>
+}
+
+/** 重置阅读上下文(切换会话/打开新文件/时间窗重新定位时调用) */
+function resetDiagramContext(): DiagramContext {
+  return { seqSegIdx: null, seqSpaceWindows: {} }
+}
+
 export interface AppState {
   meta: CaptureMeta | null
   packets: Packet[]
@@ -94,6 +141,14 @@ export interface AppState {
   setSort: (key: SortKey) => void
   searchQuery: string
   setSearchQuery: (q: string) => void
+  /** 当前搜索的命中报文号列表(按帧号升序,跨会话扁平);空查询/无命中 = 空数组 */
+  searchHits: number[]
+  /** 当前定位到 searchHits 的第几条(-1 = 无命中) */
+  searchHitIndex: number
+  /** 跳到下一条命中(循环);无命中时不动 */
+  nextSearchHit: () => void
+  /** 跳到上一条命中(循环);无命中时不动 */
+  prevSearchHit: () => void
   /** 搜索命中待高亮的报文号(时序图定位跳转) */
   highlight: number[]
   setHighlight: (nums: number[]) => void
@@ -124,6 +179,14 @@ export interface AppState {
   /** 取走并清空 resume(读改一体,避免双渲染竞态);无则返回 null */
   consumeCompareResume: () => CompareResume | null
   clearCompareResume: () => void
+  /** A/B 分段导航当前段下标(null = 全部;C/D 复用同一阅读上下文)。
+   *  跨形态共享:切形态时组件卸载重建,段位置仍保留 */
+  seqSegIdx: number | null
+  /** C 序号空间形态每方向带的缩放窗口(byte 轴窗口;null = 全轴)。
+   *  跨形态共享:切到 A/B/D 再切回 C 时回到原窗口位置 */
+  seqSpaceWindows: Record<string, SeqSpaceWindow | null>
+  setSeqSegIdx: (i: number | null) => void
+  setSeqSpaceWindows: (w: Record<string, SeqSpaceWindow | null> | ((prev: Record<string, SeqSpaceWindow | null>) => Record<string, SeqSpaceWindow | null>)) => void
   /** 双点对照:副抓包(B 侧)元信息;null = 未加载 */
   dualMeta: CaptureMeta | null
   /** 副抓包报文;null = 未加载(与空数组区分:空数组是合法的空抓包) */
@@ -157,6 +220,8 @@ export const useApp = create<AppState>((set, get) => ({
   sortKey: 'start',
   sortDir: 'asc',
   searchQuery: '',
+  searchHits: [],
+  searchHitIndex: -1,
   highlight: [],
   timeRange: null,
   tsharkVersion: null,
@@ -168,6 +233,8 @@ export const useApp = create<AppState>((set, get) => ({
   compareFor: null,
   compareEventIndex: 0,
   compareResume: null,
+  seqSegIdx: null,
+  seqSpaceWindows: {},
   dualMeta: null,
   dualPackets: null,
   dualPath: '',
@@ -186,6 +253,11 @@ export const useApp = create<AppState>((set, get) => ({
     return r
   },
   clearCompareResume: () => set({ compareResume: null }),
+
+  // ---- 时序图阅读上下文(跨形态保留;导航性 UI 状态,非派生数据) ----
+  setSeqSegIdx: (i) => set({ seqSegIdx: i }),
+  setSeqSpaceWindows: (w) =>
+    set((s) => ({ seqSpaceWindows: typeof w === 'function' ? w(s.seqSpaceWindows) : w })),
 
   // ---- 双点对照:副抓包加载。模式与主抓包完全同构(独立 seq 防过期、流式进度),
   //      但不触碰主视图任何状态 —— 两侧是两个平行的观察点,加载互不干扰 ----
@@ -246,9 +318,11 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
+        currentPath: realPath, hexCache: resetHexCache(), searchQuery: '', searchHits: [], searchHitIndex: -1, highlight: [], timeRange: null, loading: false,
         // 换文件后旧对照上下文全部失效
         compareFor: null, compareEventIndex: 0, compareResume: null,
+        // 换文件后时序图阅读上下文失效(旧会话的段位置/缩放窗口不再有意义)
+        ...resetDiagramContext(),
         // 主抓包更换 → 副抓包必须重新提供(两侧必须同源同批,旧 B 侧与新 A 侧无可比性)
         dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null,
         // 递增 dualLoadSeq:让挂起中的 B 侧加载(其 seq 已被占用)自然过期,
@@ -276,9 +350,10 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         meta: { ...meta, parseMs: performance.now() - t0 }, packets, conversations, options: collectFilterOptions(packets),
         filter, filtered: conversations, selectedId: null, selectedPacket: null,
-        currentPath: path, hexCache: resetHexCache(), searchQuery: '', highlight: [], timeRange: null, loading: false,
+        currentPath: path, hexCache: resetHexCache(), searchQuery: '', searchHits: [], searchHitIndex: -1, highlight: [], timeRange: null, loading: false,
         compareFor: null, compareEventIndex: 0, compareResume: null,
         // 示例同样替换主抓包:同源同批约束与 openFile 一致
+        ...resetDiagramContext(),
         dualMeta: null, dualPackets: null, dualPath: '', dualLoading: false, dualLoadingFrames: 0, dualError: null,
         dualLoadSeq: get().dualLoadSeq + 1,
       })
@@ -323,6 +398,9 @@ export const useApp = create<AppState>((set, get) => ({
       if (best && bestCount > 0) {
         patch.selectedId = best.id
         patch.selectedPacket = null
+        // 时序图阅读上下文跟随定位的会话(时间窗下钻改变阅读对象)
+        patch.seqSegIdx = null
+        patch.seqSpaceWindows = {}
         // 高亮仅用于视觉定位,窗口内命中报文超过上限时只保留前 2000 个报文号;
         // 截断只作用于写入 highlight 的数组,bestCount 判定仍用完整计数
         patch.highlight = bestNums.length > HIGHLIGHT_LIMIT ? bestNums.slice(0, HIGHLIGHT_LIMIT) : bestNums
@@ -332,6 +410,8 @@ export const useApp = create<AppState>((set, get) => ({
         patch.selectedId = null
         patch.selectedPacket = null
         patch.highlight = []
+        patch.seqSegIdx = null
+        patch.seqSpaceWindows = {}
       }
     } else {
       patch.highlight = [] // 清除区间时一并清掉高亮,避免残留
@@ -344,7 +424,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({ slowThreshold: v })
   },
   select(id) {
-    set({ selectedId: id, selectedPacket: null })
+    // 切换会话时重置时序图阅读上下文(段位置/缩放窗口跟随新会话);同会话再选保留
+    set(get().selectedId === id ? { selectedId: id, selectedPacket: null } : { selectedId: id, selectedPacket: null, ...resetDiagramContext() })
   },
   selectPacket(n) {
     set({ selectedPacket: n })
@@ -365,7 +446,43 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   setSearchQuery(q) {
-    set({ searchQuery: q, highlight: [] })
+    // 每次查询重算命中(对当前全量会话搜索,跨会话扁平、按帧号升序),命中时定位到第一条。
+    // 无命中/空查询:沿用旧语义仅清空高亮,不触碰选中(与旧实现 set({ searchQuery, highlight: [] }) 对齐)
+    const hits = searchHitNumbers(get().conversations, q)
+    if (hits.length === 0) {
+      set({ searchQuery: q, searchHits: [], searchHitIndex: -1, highlight: [] })
+    } else {
+      const hit = locateHit(get().conversations, hits, 0)
+      set({ searchQuery: q, searchHits: hits, searchHitIndex: 0, highlight: [hits[0]] })
+      if (hit) {
+        get().select(hit.id) // 选中所在会话(复用现有会话切换联动)
+        set({ selectedPacket: hit.number }) // 选中该报文触发详情
+      }
+    }
+  },
+  nextSearchHit() {
+    const s = get()
+    const n = s.searchHits.length
+    if (n === 0) return
+    const idx = (s.searchHitIndex + 1) % n // 循环:末尾 → 第一条
+    const hit = locateHit(s.conversations, s.searchHits, idx)
+    set({ searchHitIndex: idx, highlight: [s.searchHits[idx]] })
+    if (hit) {
+      get().select(hit.id)
+      set({ selectedPacket: hit.number })
+    }
+  },
+  prevSearchHit() {
+    const s = get()
+    const n = s.searchHits.length
+    if (n === 0) return
+    const idx = (s.searchHitIndex - 1 + n) % n // 循环:开头 → 最后一条
+    const hit = locateHit(s.conversations, s.searchHits, idx)
+    set({ searchHitIndex: idx, highlight: [s.searchHits[idx]] })
+    if (hit) {
+      get().select(hit.id)
+      set({ selectedPacket: hit.number })
+    }
   },
   setHighlight(nums) {
     set({ highlight: nums })

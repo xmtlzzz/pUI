@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import {
   computeFlowLayout,
   FLOW_CLIENT_X,
@@ -9,6 +9,9 @@ import {
 } from './flowTimeline.ts' // 显式扩展名:与 FlowTimeline.tsx 仅大小写之差,无扩展名在 Win 大小写不敏感盘上会解析到本文件自身
 import { protocolColor } from '../model/protocolColors'
 import { formatEpoch } from './timeFormat'
+import { segmentConversation } from '../aggregate/segmentConversation'
+import { SegmentNav } from './SegmentNav'
+import { useApp } from '../state/appStore'
 import type { Conversation } from '../model/types'
 
 /**
@@ -21,8 +24,9 @@ import type { Conversation } from '../model/types'
  * flowTimeline.ts 纯函数中,本组件只做 SVG 映射。
  *
  * Props 与 SequenceDiagram 对齐(conv/highlight/onSelect/svgRef/zoom),
- * 方便 AppLayout/SequenceBoard 按 diagramStyle==='C' 一行三元切换。
- * 分段导航(segmentConversation)由父层负责;组件只兜底 2000 行 DOM 上限。
+ * 方便 AppLayout/SequenceBoard 按 diagramStyle==='D' 一行三元切换。
+ * 分段导航与 A/B/C 共用 store.seqSegIdx:段内报文喂布局函数,段内渲染不截断;
+ * 组件只在段内仍超 DOM 上限时兜底截断。
  */
 export interface FlowTimelineProps {
   conv: Conversation | null
@@ -41,13 +45,19 @@ const DIR_COLOR: Record<string, string> = { a2b: '#3b82f6', b2a: '#f97316', neut
 const DIR_LABEL: Record<string, string> = { a2b: '请求', b2a: '响应', neutral: '其他' }
 
 export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEvery }: FlowTimelineProps) {
-  // 布局只在会话/密度变化时重算:zoom、highlight、选中等变化不再全量重排
+  // 分段导航阅读上下文(与 A/B/C 共用 store.seqSegIdx;切形态保留)
+  const segIdx = useApp((s) => s.seqSegIdx)
+  const setSegIdx = useApp((s) => s.setSeqSegIdx)
+  const segments = useMemo(() => (conv ? segmentConversation(conv.packets) : []), [conv])
+  const activePackets = conv ? (segIdx != null ? (segments[segIdx]?.packets ?? conv.packets) : conv.packets) : []
+  // 布局只在会话/密度/分段变化时重算:段内报文全量喂布局函数,段内渲染不截断。
+  // zoom、highlight、选中等状态变化不再全量重排
   const layout = useMemo(() => {
     const opts: FlowLayoutOptions = { client: conv?.client ?? '' }
     if (conv?.server) opts.server = conv.server
     if (tickEvery != null) opts.tickEvery = tickEvery
-    return computeFlowLayout(conv ? conv.packets : [], opts)
-  }, [conv, tickEvery])
+    return computeFlowLayout(activePackets, opts)
+  }, [activePackets, conv?.client, conv?.server, tickEvery])
   // 高亮集合:O(行数·k) 的数组扫描转 O(1) 命中(同 SequenceDiagram 注释)
   const hlSet = useMemo(() => (highlight ? new Set(highlight) : null), [highlight])
 
@@ -77,6 +87,45 @@ export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEver
     }
   }, [])
 
+  // 「缩放到当前选中报文」(基础版):store 选中变化后滚动到该行。段外报文先切到
+  // 所在段;切段后布局重建的那一轮由第二个 effect 完成滚动(lastSelRef 挡住非选中
+  // 变化,切形态时组件重挂载 → 初始值=当前选中 → 不滚动,保持阅读位置)。
+  const selectedPacket = useApp((s) => s.selectedPacket)
+  const lastSelRef = useRef(selectedPacket)
+  const pendingScrollRef = useRef<number | null>(null)
+  const scrollToRow = useCallback(
+    (n: number) => {
+      const el = svgRef.current?.querySelector(`[data-pkt="${n}"]`)
+      if (el && typeof (el as Element).scrollIntoView === 'function') {
+        pendingScrollRef.current = null
+        ;(el as Element).scrollIntoView({ block: 'nearest' })
+      }
+    },
+    [svgRef],
+  )
+  useEffect(() => {
+    if (!conv || selectedPacket == null) return
+    if (selectedPacket === lastSelRef.current) return // 非选中变化(seg-nav 等)不滚动
+    lastSelRef.current = selectedPacket
+    pendingScrollRef.current = null
+    const inCurrent = activePackets.some((p) => p.number === selectedPacket)
+    if (!inCurrent && segments.length > 1) {
+      const hitIdx = segments.findIndex((sg) => sg.packets.some((p) => p.number === selectedPacket))
+      if (hitIdx >= 0 && hitIdx !== segIdx) {
+        pendingScrollRef.current = selectedPacket // 布局随切段重建后由下方 effect 完成滚动
+        setSegIdx(hitIdx)
+        return
+      }
+    }
+    scrollToRow(selectedPacket)
+  }, [selectedPacket, activePackets, segments, segIdx, setSegIdx, conv, scrollToRow])
+  useEffect(() => {
+    // 切段后布局重建这一轮:完成之前挂起的行滚动
+    const target = pendingScrollRef.current
+    if (target == null) return
+    if (activePackets.some((p) => p.number === target)) scrollToRow(target)
+  }, [activePackets, scrollToRow])
+
   if (!conv) {
     // 与 SequenceDiagram 相同的空态文案:两个组件切换时用户感知一致
     return <div className="empty">从左侧选择一个会话查看时序图</div>
@@ -100,6 +149,11 @@ export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEver
       {layout.truncated && (
         <div className="many-warn" style={{ margin: '2px 0 4px' }}>
           报文较多:已截断显示 {layout.rows.length}/{layout.total} 条(DOM 上限),建议分段查看
+        </div>
+      )}
+      {segments.length > 1 && (
+        <div style={{ margin: '2px 0 4px' }}>
+          <SegmentNav segments={segments} segIdx={segIdx} onSelect={setSegIdx} />
         </div>
       )}
       <svg
@@ -132,6 +186,7 @@ export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEver
           return (
             <g
               key={r.number}
+              data-pkt={r.number}
               className={`flow-row ${r.dir}${r.anomaly ? ' anomaly' : ''}${isHit ? ' hl' : ''}`}
               style={{ cursor: 'pointer' }}
               onClick={() => onSelect(r.number)}

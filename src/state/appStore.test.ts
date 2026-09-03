@@ -11,7 +11,7 @@ vi.mock('../bridge/tauri', () => ({
 
 import { openCapture, openSample, fetchHex, getTsharkVersion, setTsharkPath } from '../bridge/tauri'
 import { useApp } from './appStore'
-import type { Packet } from '../model/types'
+import type { Conversation, Packet } from '../model/types'
 
 function pkt(n: number, proto: string, srcIp: string, srcPort: number, dstIp: string, dstPort: number): Packet {
   return { number: n, time: n, len: 60, transport: 'tcp', proto, srcIp, dstIp, srcPort, dstPort, direction: 'other' }
@@ -250,6 +250,79 @@ describe('appStore 加载一致性', () => {
   })
 })
 
+describe('时序图阅读上下文(跨形态保留)', () => {
+  beforeEach(() => {
+    useApp.setState({ selectedId: null, selectedPacket: null, seqSegIdx: null, seqSpaceWindows: {} })
+  })
+
+  it('select 切换会话时重置 segIdx/缩放窗口;同会话保留', () => {
+    useApp.setState({ selectedId: 'a', seqSegIdx: 2, seqSpaceWindows: { 'tcp-c2s-0': { start: 1, end: 2 } } })
+    useApp.getState().select('b')
+    expect(useApp.getState().seqSegIdx).toBeNull()
+    expect(useApp.getState().seqSpaceWindows).toEqual({})
+    expect(useApp.getState().selectedPacket).toBeNull()
+
+    // 同会话再次 select:阅读上下文保留(切换 A/B/C/D 形态依赖)
+    useApp.setState({ seqSegIdx: 1, seqSpaceWindows: { 'tcp-c2s-0': { start: 5, end: 9 } } })
+    useApp.getState().select('b')
+    expect(useApp.getState().seqSegIdx).toBe(1)
+    expect(useApp.getState().seqSpaceWindows).toEqual({ 'tcp-c2s-0': { start: 5, end: 9 } })
+  })
+
+  it('setSeqSegIdx/setSeqSpaceWindows 更新状态,窗口支持函数式更新与 null(全轴)', () => {
+    useApp.getState().setSeqSegIdx(2)
+    expect(useApp.getState().seqSegIdx).toBe(2)
+    useApp.getState().setSeqSegIdx(null)
+    expect(useApp.getState().seqSegIdx).toBeNull()
+
+    useApp.getState().setSeqSpaceWindows({ 'tcp-c2s-0': { start: 5, end: 9 } })
+    expect(useApp.getState().seqSpaceWindows).toEqual({ 'tcp-c2s-0': { start: 5, end: 9 } })
+    // 函数式更新:滚轮缩放以 prev 为基础增量写入
+    useApp.getState().setSeqSpaceWindows((prev) => ({ ...prev, 'tcp-s2c-1': { start: 0, end: 3 } }))
+    expect(useApp.getState().seqSpaceWindows).toEqual({ 'tcp-c2s-0': { start: 5, end: 9 }, 'tcp-s2c-1': { start: 0, end: 3 } })
+    // null 值 = 该带回到全轴(双击复位后逐带清空)
+    useApp.getState().setSeqSpaceWindows({ 'tcp-c2s-0': null })
+    expect(useApp.getState().seqSpaceWindows['tcp-c2s-0']).toBeNull()
+  })
+
+  it('openFile 打开新文件时重置阅读上下文', async () => {
+    useApp.setState({ selectedId: 'a', seqSegIdx: 1, seqSpaceWindows: { 'tcp-c2s-0': { start: 1, end: 2 } } })
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)], path: p }),
+    )
+    await useApp.getState().openFile('b.pcap')
+    expect(useApp.getState().seqSegIdx).toBeNull()
+    expect(useApp.getState().seqSpaceWindows).toEqual({})
+  })
+
+  it('setTimeRange 自动定位到新会话时重置阅读上下文', async () => {
+    const early = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
+    const late = [pkt(3, 'dns', '1.1.1.1', 5000, '8.8.8.8', 53), pkt(4, 'dns', '8.8.8.8', 53, '1.1.1.1', 5000)]
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [...early, ...late], path: p }),
+    )
+    await useApp.getState().openFile('x.pcap')
+    const dns = useApp.getState().conversations.find((c) => c.protocol === 'dns')!
+    useApp.getState().select(dns.id)
+    useApp.getState().setSeqSegIdx(3)
+    // 时间窗定位到 http 会话(selectedId 变化)→ 阅读上下文重置
+    useApp.getState().setTimeRange({ start: 0, end: 2 })
+    expect(useApp.getState().selectedId).not.toBe(dns.id)
+    expect(useApp.getState().seqSegIdx).toBeNull()
+    expect(useApp.getState().seqSpaceWindows).toEqual({})
+  })
+
+  it('setDiagramStyle 切换形态不清空阅读上下文(跨形态保留的核心)', () => {
+    useApp.setState({ seqSegIdx: 1, seqSpaceWindows: { 'tcp-c2s-0': { start: 5, end: 9 } } })
+    useApp.getState().setDiagramStyle('A')
+    useApp.getState().setDiagramStyle('C')
+    useApp.getState().setDiagramStyle('D')
+    useApp.getState().setDiagramStyle('B')
+    expect(useApp.getState().seqSegIdx).toBe(1)
+    expect(useApp.getState().seqSpaceWindows).toEqual({ 'tcp-c2s-0': { start: 5, end: 9 } })
+  })
+})
+
 describe('M4 对照页导航状态', () => {
   const R = {
     conversationId: 'conv-1',
@@ -409,5 +482,116 @@ describe('双点对照 store(副抓包状态)', () => {
     // 设置成功后重拉版本(路径变化后旧版本号已不准确)
     expect(getTsharkVersion).toHaveBeenCalled()
     expect(useApp.getState().tsharkVersion).toBe('4.6.6')
+  })
+})
+
+describe('搜索命中逐条导航', () => {
+  /** c1 命中 #1 #4,c2 命中 #3:跨会话 + 全局帧号排序(3 在 4 前)都覆盖 */
+  function navConvs(): Conversation[] {
+    const c1: Conversation = {
+      id: 'c1', client: 'a', server: 'b', protocol: 'http', packetCount: 3, bytes: 180,
+      start: 0, end: 0.3, duration: 0.3, packets: [], issues: [],
+    }
+    c1.packets = [
+      { ...pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), info: 'GET /alpha' } as Packet,
+      { ...pkt(2, 'http', '1.1.1.1', 5000, '2.2.2.2', 80) } as Packet,
+      { ...pkt(4, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), info: 'POST /alpha' } as Packet,
+    ]
+    const c2: Conversation = {
+      id: 'c2', client: 'x', server: 'y', protocol: 'http', packetCount: 2, bytes: 120,
+      start: 0, end: 0.2, duration: 0.2, packets: [], issues: [],
+    }
+    c2.packets = [
+      { ...pkt(3, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), info: 'GET /alpha' } as Packet,
+      { ...pkt(5, 'http', '1.1.1.1', 5000, '2.2.2.2', 80) } as Packet,
+    ]
+    return [c1, c2]
+  }
+
+  it('setSearchQuery 重算命中并按帧号升序,index 置 0 并定位到第一条命中', () => {
+    useApp.setState({ conversations: navConvs(), selectedId: null, selectedPacket: null, highlight: [99] })
+    useApp.getState().setSearchQuery('alpha')
+    const s = useApp.getState()
+    expect(s.searchHits).toEqual([1, 3, 4]) // 跨会话后仍按帧号排序(3 在 4 前)
+    expect(s.searchHitIndex).toBe(0)
+    expect(s.selectedId).toBe('c1') // 定位:第一条命中所在会话
+    expect(s.selectedPacket).toBe(1) // 并选中该报文触发详情
+    expect(s.highlight).toEqual([1]) // 新查询把旧高亮替换为当前命中
+  })
+
+  it('setSearchQuery 空查询/无命中清空 hits 并置 index=-1', () => {
+    useApp.setState({ conversations: navConvs() })
+    useApp.getState().setSearchQuery('alpha')
+    useApp.getState().setSearchQuery('zzz')
+    expect(useApp.getState().searchHits).toEqual([])
+    expect(useApp.getState().searchHitIndex).toBe(-1)
+  })
+
+  it('nextSearchHit 逐条前进,跨会话定位命中报文所在会话并联动高亮', () => {
+    useApp.setState({ conversations: navConvs(), selectedId: null, selectedPacket: null, highlight: [] })
+    useApp.getState().setSearchQuery('alpha') // index=0 → #1(c1)
+    useApp.getState().nextSearchHit() // → #3(c2):跨会话跳转
+    let s = useApp.getState()
+    expect(s.searchHitIndex).toBe(1)
+    expect(s.selectedId).toBe('c2')
+    expect(s.selectedPacket).toBe(3)
+    expect(s.highlight).toEqual([3])
+    useApp.getState().nextSearchHit() // → #4(c1)
+    s = useApp.getState()
+    expect(s.searchHitIndex).toBe(2)
+    expect(s.selectedId).toBe('c1')
+    expect(s.selectedPacket).toBe(4)
+    expect(s.highlight).toEqual([4])
+  })
+
+  it('nextSearchHit 到末尾后循环回第一条', () => {
+    useApp.setState({ conversations: navConvs(), selectedId: null, selectedPacket: null, highlight: [] })
+    useApp.getState().setSearchQuery('alpha') // 0
+    useApp.getState().nextSearchHit() // 1
+    useApp.getState().nextSearchHit() // 2
+    useApp.getState().nextSearchHit() // 回绕到 0
+    const s = useApp.getState()
+    expect(s.searchHitIndex).toBe(0)
+    expect(s.selectedPacket).toBe(1)
+    expect(s.highlight).toEqual([1])
+  })
+
+  it('prevSearchHit 从第一条循环回最后一条,并定位', () => {
+    useApp.setState({ conversations: navConvs(), selectedId: null, selectedPacket: null, highlight: [] })
+    useApp.getState().setSearchQuery('alpha') // 0
+    useApp.getState().prevSearchHit() // → 2(循环到最后一条)
+    let s = useApp.getState()
+    expect(s.searchHitIndex).toBe(2)
+    expect(s.selectedId).toBe('c1')
+    expect(s.selectedPacket).toBe(4)
+    expect(s.highlight).toEqual([4])
+    useApp.getState().prevSearchHit() // → 1
+    s = useApp.getState()
+    expect(s.searchHitIndex).toBe(1)
+    expect(s.selectedId).toBe('c2')
+    expect(s.selectedPacket).toBe(3)
+  })
+
+  it('无命中时 next/prev 不动 index 也不定位', () => {
+    useApp.setState({ conversations: navConvs(), selectedId: null, selectedPacket: null, highlight: [] })
+    useApp.getState().setSearchQuery('zzz')
+    useApp.getState().nextSearchHit()
+    useApp.getState().prevSearchHit()
+    const s = useApp.getState()
+    expect(s.searchHitIndex).toBe(-1)
+    expect(s.selectedPacket).toBeNull()
+    expect(s.highlight).toEqual([])
+  })
+
+  it('打开新文件清空搜索命中导航状态', async () => {
+    useApp.setState({ conversations: navConvs(), searchQuery: 'alpha', searchHits: [1, 3, 4], searchHitIndex: 2 })
+    vi.mocked(openCapture).mockImplementation((p: string) =>
+      Promise.resolve({ meta: meta(p), packets: [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)], path: p }),
+    )
+    await useApp.getState().openFile('new.pcap')
+    const s = useApp.getState()
+    expect(s.searchQuery).toBe('')
+    expect(s.searchHits).toEqual([])
+    expect(s.searchHitIndex).toBe(-1)
   })
 })

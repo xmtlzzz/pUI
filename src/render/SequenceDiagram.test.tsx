@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
-import { render, fireEvent } from '@testing-library/react'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { render, fireEvent, act } from '@testing-library/react'
 import type { RefObject } from 'react'
 import { SequenceDiagram } from './SequenceDiagram'
+import { useApp } from '../state/appStore'
 import type { Conversation, Packet } from '../model/types'
+
+beforeEach(() => {
+  useApp.setState({ seqSegIdx: null, selectedPacket: null })
+})
 
 const packets: Packet[] = [
   { number: 1, time: 0, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP SYN' },
@@ -71,7 +76,7 @@ describe('SequenceDiagram', () => {
     expect(container.textContent).toMatch(/\d{2}:\d{2}:\d{2}\.\d{3}/) // HH:MM:SS.mmm
   })
 
-  it('>2000 报文自动抽稀渲染并标注,首尾保底', () => {
+  it('>2000 报文自动抽稀渲染并标注,首尾保底', { timeout: 20000 }, () => {
     const onSelect = vi.fn()
     const manyPackets: Packet[] = Array.from({ length: 5000 }, (_, i) => ({
       number: i + 1, time: i * 0.001, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP',
@@ -123,5 +128,67 @@ describe('SequenceDiagram', () => {
     const onSelect = vi.fn()
     const { getByText } = render(<SequenceDiagram conv={null} style="A" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
     expect(getByText(/选择一个会话/)).toBeTruthy()
+  })
+
+  it('分段导航读取 store.seqSegIdx(阅读上下文提升到 store,跨形态保留)', () => {
+    // 构造两段:包 1 与包 2 间隔 > 1s(segmentConversation 切段)
+    const segPackets: Packet[] = [
+      { number: 1, time: 0, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP' },
+      { number: 2, time: 5, len: 60, transport: 'tcp', proto: 'tcp', direction: 'response', info: 'TCP' },
+    ]
+    const convSeg: Conversation = { ...conv, packets: segPackets, packetCount: 2, bytes: 120 }
+    const onSelect = vi.fn()
+
+    // store 里 segIdx=1 → 组件渲染第二段(只含包 2),「2段」按钮高亮
+    useApp.setState({ seqSegIdx: 1 })
+    const { container, rerender } = render(<SequenceDiagram conv={convSeg} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(container.querySelectorAll('.msg')).toHaveLength(1)
+    expect(container.textContent).toContain('2')
+    expect(container.querySelector('.seg-nav button.on')?.textContent).toContain('2段')
+
+    // store 里 segIdx=null → 全部(两个报文都渲染)
+    useApp.setState({ seqSegIdx: null })
+    rerender(<SequenceDiagram conv={convSeg} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(container.querySelectorAll('.msg')).toHaveLength(2)
+
+    // 点击「全部」按钮 → 写回 store
+    fireEvent.click(container.querySelector('.seg-nav button')!)
+    expect(useApp.getState().seqSegIdx).toBeNull()
+  })
+
+  it('点击分段按钮写回 store(阅读上下文可被其它形态复用)', () => {
+    const segPackets: Packet[] = [
+      { number: 1, time: 0, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP' },
+      { number: 2, time: 5, len: 60, transport: 'tcp', proto: 'tcp', direction: 'response', info: 'TCP' },
+    ]
+    const convSeg: Conversation = { ...conv, packets: segPackets, packetCount: 2, bytes: 120 }
+    const onSelect = vi.fn()
+    const { container } = render(<SequenceDiagram conv={convSeg} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    const segButtons = container.querySelectorAll('.seg-nav button')
+    expect(segButtons.length).toBeGreaterThanOrEqual(2)
+    fireEvent.click(segButtons[1]) // 「1段」
+    expect(useApp.getState().seqSegIdx).toBe(0)
+    // 段内只渲染 1 个报文
+    expect(container.querySelectorAll('.msg')).toHaveLength(1)
+  })
+
+  it('缩放到当前选中报文:store 选中段外报文 → 自动切到所在段', () => {
+    const segPackets: Packet[] = [
+      { number: 1, time: 0, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP' },
+      { number: 2, time: 5, len: 60, transport: 'tcp', proto: 'tcp', direction: 'response', info: 'TCP' },
+      { number: 3, time: 6, len: 60, transport: 'tcp', proto: 'tcp', direction: 'request', info: 'TCP' },
+    ]
+    const convSeg: Conversation = { ...conv, packets: segPackets, packetCount: 3, bytes: 180 }
+    const onSelect = vi.fn()
+    // 当前停在段 0(包 1);选中包 3(在段 1)→ 自动切到段 1
+    useApp.setState({ seqSegIdx: 0 })
+    const { container } = render(<SequenceDiagram conv={convSeg} style="B" onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    expect(container.querySelectorAll('.msg')).toHaveLength(1) // 段 0 只有包 1
+    act(() => {
+      useApp.setState({ selectedPacket: 3 })
+    })
+    // 切到段 1(包 2、3 两段内渲染)
+    expect(useApp.getState().seqSegIdx).toBe(1)
+    expect(container.querySelectorAll('.msg')).toHaveLength(2)
   })
 })

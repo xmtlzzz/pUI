@@ -108,4 +108,50 @@ describe('ConversationList 超长列表', () => {
     // 再点 → 降序:a(33) → c(22) → b(11)
     expect(container.querySelectorAll('.cl-row')[0].textContent).toContain('c1')
   })
+
+  it('搜索有命中时展示 N/M 计数与上一个/下一个导航按钮', () => {
+    const c1: Conversation = {
+      ...conv('k1'), client: 'a', start: 1,
+      packets: [{ number: 3, time: 0, len: 60, transport: 'tcp', proto: 'http', srcIp: 'a', dstIp: 'b', direction: 'request', info: 'HTTP GET /search' }],
+    }
+    useApp.setState({
+      filtered: [c1], conversations: [c1],
+      searchQuery: 'search', searchHits: [3], searchHitIndex: 0,
+    })
+    const { container, getByText } = render(<ConversationList />)
+    expect(getByText('1/1')).toBeTruthy() // 计数条
+    // 导航按钮存在,且不匹配表头「命中」列文案
+    const prev = container.querySelector('[aria-label="上一个命中"]') as HTMLElement
+    const next = container.querySelector('[aria-label="下一个命中"]') as HTMLElement
+    expect(prev).not.toBeNull()
+    expect(next).not.toBeNull()
+  })
+
+  it('搜索有命中时点「下一个命中」调用 store 导航并推进计数', () => {
+    const c1: Conversation = {
+      ...conv('k1'), client: 'a', start: 1,
+      packets: [{ number: 3, time: 0, len: 60, transport: 'tcp', proto: 'http', srcIp: 'a', dstIp: 'b', direction: 'request', info: 'HTTP GET /search' }],
+    }
+    useApp.setState({
+      filtered: [c1], conversations: [c1],
+      searchQuery: 'search', searchHits: [3], searchHitIndex: 0,
+    })
+    const { container, getByText } = render(<ConversationList />)
+    fireEvent.click(container.querySelector('[aria-label="下一个命中"]') as Element)
+    expect(getByText('1/1')).toBeTruthy() // 循环回第一条(3 命中中的第 1 条)
+    expect(useApp.getState().searchHitIndex).toBe(0)
+    expect(useApp.getState().selectedPacket).toBe(3)
+    expect(useApp.getState().highlight).toEqual([3])
+  })
+
+  it('搜索无命中时不显示计数条与导航按钮', () => {
+    useApp.setState({
+      filtered: [conv('k1')], conversations: [conv('k1')],
+      searchQuery: 'zzz', searchHits: [], searchHitIndex: -1,
+    })
+    const { container } = render(<ConversationList />)
+    expect(container.querySelector('.search-hit-count')).toBeNull()
+    expect(container.querySelector('[aria-label="上一个命中"]')).toBeNull()
+    expect(container.querySelector('[aria-label="下一个命中"]')).toBeNull()
+  })
 })

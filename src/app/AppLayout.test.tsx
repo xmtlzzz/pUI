@@ -55,6 +55,41 @@ describe('AppLayout smoke (real http fixture)', () => {
     vi.unstubAllGlobals()
   })
 
+  it('工具栏 zoom 对 D 形态(时间流)生效:盒尺寸随 zoom 放大(viewBox 不变)', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+
+    const { packets, conversations, conv } = loadHttpFixture()
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      options: collectFilterOptions(packets),
+      meta: { fileName: 'http.pcapng', packetCount: packets.length, interfaces: 1, timeStart: 0, timeEnd: 0.26, fileSize: 936 },
+      filter: { protocol: [], srcIp: [], dstIp: [], srcPort: [], dstPort: [], negate: false, issueOnly: false },
+      selectedId: conv.id,
+      diagramStyle: 'D',
+      seqSegIdx: null,
+      seqSpaceWindows: {},
+    })
+
+    const { container } = render(<AppLayout />)
+    const svg = container.querySelector('svg[data-testid="flow-timeline"]') as SVGSVGElement
+    expect(svg).toBeTruthy()
+    const w0 = Number(svg.getAttribute('width'))
+    const vw = Number(svg.getAttribute('viewBox')!.split(' ')[2])
+    expect(w0).toBe(vw) // 初始 zoom=1:盒宽 = viewBox 宽
+
+    // 工具栏「放大」→ zoom 1.1 → 盒宽随之放大(viewBox 不变,导出/坐标不受影响)。
+    // 用 title 精确定位放大按钮:相邻兄弟选择器(.seg + .seg + .btn.icon)会被
+    // 工具栏新增按钮(tshark 设置 ⚙)推位,误点成「缩小」(实测 468<520 回归)
+    fireEvent.click(container.querySelector('.toolbar button[title="放大"]')!)
+    const w1 = Number(svg.getAttribute('width'))
+    expect(w1).toBeGreaterThan(w0)
+    expect(Number(svg.getAttribute('viewBox')!.split(' ')[2])).toBe(vw)
+
+    vi.unstubAllGlobals()
+  })
+
   it('打开文件后未选中会话 → 点击会话列表选中 → 时序图渲染且不白屏(真实路径回归)', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
 

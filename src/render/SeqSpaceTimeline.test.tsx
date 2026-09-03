@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { createRef } from 'react'
 import { SeqSpaceTimeline } from './SeqSpaceTimeline.tsx'
+import { useApp } from '../state/appStore'
 import type { Packet, Conversation } from '../model/types'
+
+beforeEach(() => {
+  useApp.setState({ seqSegIdx: null, seqSpaceWindows: {}, selectedPacket: null })
+})
 
 function pkt(n: number, o: Partial<Packet>): Packet {
   return {
@@ -202,5 +207,59 @@ describe('SeqSpaceTimeline', () => {
     fireEvent.pointerUp(svg, { pointerId: 1 })
     // 平移后文本应变化(刻度值范围移动)
     expect(svg.textContent).not.toBe(before)
+  })
+
+  it('缩放窗口从 store 读取(阅读上下文跨形态保留)', () => {
+    useApp.setState({ seqSpaceWindows: { 'tcp-c2s-0': { start: 0, end: 50 } } })
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    // store 里的窗口生效:带标题出现放大范围,且刻度轴按窗口重算(轴说明不再全轴)
+    expect(svg.textContent).toContain('· 放大')
+  })
+
+  it('滚轮缩放写回 store.seqSpaceWindows(切形态后回到原缩放位置)', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    fireEvent.wheel(svg, { deltaY: -100 })
+    // 缩放后的窗口已写入 store(至少一条带非全轴)
+    expect(Object.values(useApp.getState().seqSpaceWindows).some((w) => w != null)).toBe(true)
+  })
+
+  it('双击复位清空 store 缩放窗口(全图回到全轴)', () => {
+    useApp.setState({ seqSpaceWindows: { 'tcp-c2s-0': { start: 0, end: 50 } } })
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    expect(svg.textContent).toContain('· 放大')
+    fireEvent.dblClick(svg)
+    expect(useApp.getState().seqSpaceWindows).toEqual({})
+    expect(svg.textContent).not.toContain('· 放大')
+  })
+
+  it('分段导航接入 C:store.seqSegIdx 控制段内渲染,点击段按钮写回 store', () => {
+    // 构造两段:前 4 包一段(time<1s),后 3 包一段(time>5s)
+    const segPackets = packets.map((p, i) => ({ ...p, time: i < 4 ? i * 0.001 : 5 + (i - 4) * 0.001 }))
+    const convSeg = conv(segPackets)
+    const { container } = render(<SeqSpaceTimeline conv={convSeg} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    // 段按钮出现
+    expect(container.querySelector('.seg-nav')).toBeTruthy()
+    // 全部:ACK 301 可见(它在第 2 段,由包 6 携带)
+    expect(container.textContent).toContain('累计确认 ACK 301')
+    // 点击「1段」→ store.seqSegIdx=0,只渲染第 1 段(无 ACK 301)
+    fireEvent.click(container.querySelectorAll('.seg-nav button')[1]!)
+    expect(useApp.getState().seqSegIdx).toBe(0)
+    expect(container.textContent).not.toContain('累计确认 ACK 301')
+  })
+
+  it('缩放到当前选中报文:store 选中报文 → 窗口平移到该报文 seq 附近', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    act(() => {
+      useApp.setState({ selectedPacket: 3 }) // 包 3:seq=1 len=100(c2s 带)
+    })
+    const w = useApp.getState().seqSpaceWindows['tcp-c2s-0']
+    expect(w).toBeTruthy()
+    expect(w!.start).toBeLessThanOrEqual(1)
+    expect(w!.end).toBeGreaterThanOrEqual(1)
+    // 组件渲染出现放大范围
+    expect(container.textContent).toContain('· 放大')
   })
 })

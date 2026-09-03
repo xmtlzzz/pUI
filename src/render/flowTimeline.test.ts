@@ -135,6 +135,18 @@ describe('computeFlowLayout 2000 行截断', () => {
     }
   })
 
+  it('total % stride === 1(采样恰好命中末尾包)时不产生重复 packetNumber 行', () => {
+    // total=2501,stride=ceil(2501/2000)=2 → 采样 i=0,2,...,2500 恰好命中最后一包,
+    // 旧实现 else-if(w<maxRows) 会把尾包再次 push → 重复行(同 packetNumber 两个 React key)
+    const ps = Array.from({ length: 2501 }, (_, i) => pkt(i + 1, i * 0.001, 'request', 'TCP'))
+    const l = computeFlowLayout(ps, { client: 'c' })
+    const nums = l.rows.map((r) => r.number)
+    expect(new Set(nums).size).toBe(nums.length)
+    expect(l.truncated).toBe(true)
+    // 尾包保底:最后一包可见(本次采样已命中,无需追加)
+    expect(nums[nums.length - 1]).toBe(2501)
+  })
+
   it('未超上限 truncated=false,total=行数', () => {
     const l = computeFlowLayout(packets, { client: 'c' })
     expect(l.truncated).toBe(false)

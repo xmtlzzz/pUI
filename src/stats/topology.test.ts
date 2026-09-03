@@ -60,4 +60,31 @@ describe('buildTopology', () => {
       expect(new Set(t.edges.map((x) => x.key)).size).toBe(t.edges.length)
     }
   })
+
+  it('Top-N 截断:边两端都在 nodes 集才保留,指向被截主机的会话边被丢弃', () => {
+    // 3 台主机按字节取前 2:a=190 > b=150 > c=140(c 被截断)。
+    // 涉及 c 的会话(a↔c、b↔c)必须被丢弃,不得留下 from/to 不在 nodes 里的边
+    // (否则渲染层 nodeById 找不到坐标 → 无坐标 <line>)。
+    const convs = [
+      conv('1', 'a:80', 'b:443', 100),
+      conv('2', 'a:80', 'c:53', 90),
+      conv('3', 'b:443', 'c:53', 50),
+    ]
+    const t = buildTopology(convs, 2)
+    expect(t.nodes.map((n) => n.host)).toEqual(['a', 'b'])
+    // 仅保留两端都入图的主机对
+    expect(t.edges).toHaveLength(1)
+    expect(t.edges[0].from).toBe('a')
+    expect(t.edges[0].to).toBe('b')
+    // 不变量:每条边的两端都存在于 nodes 集(渲染层必有坐标)
+    const ids = new Set(t.nodes.map((n) => n.id))
+    for (const e of t.edges) {
+      expect(ids.has(e.from)).toBe(true)
+      expect(ids.has(e.to)).toBe(true)
+      const from = t.nodes.find((n) => n.id === e.from)!
+      const to = t.nodes.find((n) => n.id === e.to)!
+      expect(typeof from.x).toBe('number')
+      expect(typeof to.x).toBe('number')
+    }
+  })
 })

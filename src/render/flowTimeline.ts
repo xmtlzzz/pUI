@@ -132,11 +132,14 @@ export function computeFlowLayout(packets: Packet[], opts: FlowLayoutOptions): F
     for (let i = 0; i < total && w < maxRows; i += stride) {
       rows[w++] = makeRow(packets[i], w, clientHost, serverHost)
     }
-    // 尾包保底:采样可能错过最后一个报文
+    // 尾包保底:采样可能错过最后一个报文。两种路径都不得产生重复 packetNumber
+    // (同帧两行 → FlowTimeline key 冲突 + 同包画两行):
+    // 采样恰好命中尾包(i 递增步长跨到 total-1,total % stride === 1)时
+    // rows 里已有尾包,此时不应再追加;rows.some 避免最后两行同号。
     const last = packets[total - 1]
     if (w > 0 && rows[w - 1] !== undefined && (rows[w - 1] as FlowRow).number !== last.number) {
       rows[w - 1] = makeRow(last, w, clientHost, serverHost)
-    } else if (w < maxRows) {
+    } else if (w < maxRows && !rows.some((r) => r !== undefined && r.number === last.number)) {
       rows[w++] = makeRow(last, w, clientHost, serverHost)
     }
     rows = rows.slice(0, w)

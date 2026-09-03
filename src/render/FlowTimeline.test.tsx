@@ -139,6 +139,33 @@ describe('FlowTimeline 时间流时序图', () => {
     expect(container.textContent).toContain('2600')
   })
 
+  it('total % stride === 1(采样恰好命中尾包)时不产生重复 key 的行', () => {
+    // total=2501,stride=2 → 采样 i=0,2,...,2500 恰好命中最后一包;旧实现会把尾包
+    // 追加两行 → 两个 .flow-row 同 packetNumber(React key 冲突 + 同包画两行)
+    const many: Packet[] = Array.from({ length: 2501 }, (_, i) => ({
+      number: i + 1,
+      time: i * 0.001,
+      len: 60,
+      transport: 'tcp',
+      proto: 'tcp',
+      direction: 'request',
+      info: 'TCP',
+    }))
+    const convMany: Conversation = { ...conv, packets: many, packetCount: 2501, bytes: 150060 }
+    const onSelect = vi.fn()
+    const svgRef = { current: null } as RefObject<SVGSVGElement | null>
+    const { container } = render(<FlowTimeline conv={convMany} onSelect={onSelect} svgRef={svgRef} zoom={1} />)
+    const rows = container.querySelectorAll('.flow-row')
+    // 每行标注「#N 协议 · 长度」,抽帧号;渲染后帧号两两不同(无重复 React key)
+    const nums = Array.from(rows, (r) => {
+      const m = r.querySelector('.flow-label')?.textContent?.match(/#(\d+)/)
+      return m ? Number(m[1]) : NaN
+    })
+    expect(new Set(nums).size).toBe(rows.length)
+    // 尾包保底可见,且只画一次
+    expect(nums.filter((n) => n === 2501)).toHaveLength(1)
+  })
+
   it('占满容器宽度:容器比默认 520 宽时 viewBox 宽跟随容器(jsdom mock 1200)', () => {
     // jsdom 无真实布局,通过 mock getBoundingClientRect + resize/观察者钩子驱动
     const { container } = renderFlow()

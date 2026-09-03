@@ -159,6 +159,24 @@ describe('SeqSpaceTimeline', () => {
     expect(svg.textContent).toContain('服务端 →')
   })
 
+  it('全轴状态滚轮不 preventDefault(容器可滚动);缩放生效后才拦截', () => {
+    const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
+    const svg = container.querySelector('svg')!
+    // 全轴(各带窗口均为 null):滚轮交还容器,不拦截默认滚动
+    // (多带会话图高超过滚动容器时,指针在 svg 上必须还能上下滚动)
+    const e1 = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    act(() => {
+      svg.dispatchEvent(e1)
+    })
+    expect(e1.defaultPrevented).toBe(false)
+    // 缩放生效后(窗口非全轴):滚轮缩放拦截默认滚动,缩放不与容器滚动串动
+    const e2 = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true })
+    act(() => {
+      svg.dispatchEvent(e2)
+    })
+    expect(e2.defaultPrevented).toBe(true)
+  })
+
   it('滚轮缩放:向上滚(放大)后带标题出现放大范围,双击复位', () => {
     const { container } = render(<SeqSpaceTimeline conv={conv(packets)} onSelect={() => {}} svgRef={createRef()} zoom={1} />)
     const svg = container.querySelector('svg')!

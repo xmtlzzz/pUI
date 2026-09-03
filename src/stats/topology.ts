@@ -62,11 +62,15 @@ export function buildTopology(convs: Conversation[], maxNodes = 24): Topology {
     return { id: host, x: pos.get(host)!.x, y: pos.get(host)!.y, host, conversations: st.conversations, bytes: st.bytes, issues: st.issues }
   })
   // 2) 会话 → 边,同主机对合并
+  // 先对所有会话造边(Top-N 截断前不丢信息,便于合并统计),
+  // 再按 nodes 集重过滤:边两端都必须在图内,否则渲染层 nodeById
+  // 找不到坐标 → 无坐标 <line>(3 台截到 2 台时,指向被截主机的边被丢弃)。
+  const nodeIds = new Set(nodes.map((n) => n.id))
   const edgeMap = new Map<string, TopologyEdge>()
   for (const c of convs) {
     const a = displayHost(c.client)
     const b = displayHost(c.server)
-    if (a === b || !pos.has(a) || !pos.has(b)) continue
+    if (a === b) continue
     const key = a < b ? a + SEP + b : b + SEP + a
     let e = edgeMap.get(key)
     if (!e) { e = { from: a, to: b, key, bytes: 0, protocols: [], hasIssue: false, convIds: [] }; edgeMap.set(key, e) }
@@ -75,7 +79,9 @@ export function buildTopology(convs: Conversation[], maxNodes = 24): Topology {
     if (c.issues.length) e.hasIssue = true
     e.convIds.push(c.id)
   }
-  const edges: TopologyEdge[] = [...edgeMap.values()].sort((a, b) => b.bytes - a.bytes)
+  const edges: TopologyEdge[] = [...edgeMap.values()]
+    .filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to))
+    .sort((a, b) => b.bytes - a.bytes)
   return { nodes, edges }
 }
 

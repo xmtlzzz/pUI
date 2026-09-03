@@ -88,4 +88,24 @@ describe('computeRttStats — 单观察点 RTT 近似', () => {
     expect(stats.available).toBe(false) // 样本 < MIN_RTT_SAMPLES:重传链本身不足以给出分位数
     expect(stats.maxMs).toBeUndefined()
   })
+
+  it('重传段不覆盖字节沿首次发送时刻(Karn 单观察点:ACK 归属首次发送)', () => {
+    // 每个字节沿:首发 t=0 → 重传 t=2(同 seq+len,ACK 尚未越过)→ ACK t=2.5。
+    // Karn 语义样本 = ACK − 首次发送 = 2500ms;旧实现重传无条件 set 覆盖 → 500ms。
+    const packets: Packet[] = []
+    let n = 1
+    for (const s of [1, 101, 201, 301, 401]) {
+      packets.push(pkt(n++, 0, 'c2s', { tcpFlags: PSHACK, tcpSeq: s, tcpLen: 100 })) // 首发
+      packets.push(pkt(n++, 2, 'c2s', { tcpFlags: PSHACK, tcpSeq: s, tcpLen: 100 })) // 重传
+    }
+    for (const ack of [101, 201, 301, 401, 501]) {
+      packets.push(pkt(n++, 2.5, 's2c', { tcpFlags: ACK, tcpAck: ack }))
+    }
+    const stats = computeRttStats(packets)
+    expect(stats.available).toBe(true)
+    expect(stats.samples).toBe(5)
+    // 全部样本 2500ms:min=p50=p90=max(分位数毫秒粒度,全部相等)
+    expect(stats.maxMs).toBe(2500)
+    expect(stats.p50Ms).toBe(2500)
+  })
 })

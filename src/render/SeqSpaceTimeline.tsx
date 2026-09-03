@@ -97,10 +97,15 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
   // 双击复位所有带窗口(简明交互:全图回到全轴)
   const resetWindows = useCallback(() => setWindows({}), [])
 
-  // 滚轮缩放:以指针在带内的横向位置为锚;根据 y 找到所在带(独立窗口)
+  // 滚轮缩放:以指针在带内的横向位置为锚;根据 y 找到所在带(独立窗口)。
+  // 仅当已有带缩放(非全轴)时 preventDefault 拦截容器滚动 —— 全轴状态滚轮
+  // 交还容器(多带会话图高超过滚动容器时,指针在 svg 上滚轮必须还能上下滚动),
+  // 缩放依然执行:浏览器原生滚轮在「未被 preventDefault」时按轴距滚动容器,
+  // 但 deltaY 缩放本就要跟随指针位置,容器微滚不影响当前带,故不冲突。
   const onWheelNative = useCallback(
     (ev: WheelEvent) => {
-      ev.preventDefault()
+      const zoomed = zoomedRef.current
+      if (zoomed) ev.preventDefault()
       const svg = svgElRef.current
       if (!svg || layout.lanes.length === 0) return
       const rect = svg.getBoundingClientRect()
@@ -129,6 +134,10 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
   }, [onWheelNative])
 
   // 拖拽平移:横向像素位移换算字节位移,窗口钳制在轴内。
+  // 滚轮状态:仅当有带已缩放(窗口非全轴)时拦截 preventDefault,
+  // 全轴状态交还容器默认滚动(多带会话图高超过容器时,指针在 svg 上滚轮仍可上下滚动)
+  const zoomedRef = useRef(false)
+  zoomedRef.current = Object.values(windows).some((w) => w != null)
   // 点击护栏(用户实测:点报文无详情):pointerdown 只记录起点、**不捕获指针** ——
   // setPointerCapture 会把后续 click 的 target 重定向到捕获元素(svg 根),
   // 图元的 onClick 永远收不到(真实浏览器行为,jsdom 模拟不出)。改为移动超过

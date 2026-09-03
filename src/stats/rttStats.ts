@@ -60,10 +60,11 @@ export function computeRttStats(packets: Packet[]): RttStats {
     const dir = dirOf(p)
     const f = flags(p)
     if (f & 0x04) continue // RST:之后不再有可靠确认
-    // 数据段:登记字节沿首次发出时刻
+    // 数据段:登记字节沿首次发出时刻(Karn 单观察点近似 —— 只保留首次发送时刻,
+    // 重传段不得覆盖:否则 ACK 落在重传后会把 RTT 算成「重传→ACK」的低估)
     if (p.tcpLen != null && p.tcpLen > 0 && p.tcpSeq != null) {
       const end = (p.tcpSeq + p.tcpLen) >>> 0
-      if (end > dirs[dir].ackedTo) dirs[dir].sentAt.set(end, p.time)
+      if (end > dirs[dir].ackedTo && !dirs[dir].sentAt.has(end)) dirs[dir].sentAt.set(end, p.time)
     }
     // 反向 ACK:确认沿前进 → 产生一个 RTT 样本(Karn 近似:归属首次发送)
     if (p.tcpAck != null) {

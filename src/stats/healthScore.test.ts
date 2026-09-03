@@ -98,4 +98,36 @@ describe('computeHealthScore — 透明健康分(仅筛选用)', () => {
     const total = h.deductions.reduce((a, d) => a + d.points, 0)
     expect(h.score! + total).toBe(100) // 满分 100 减扣分明细
   })
+
+  it('缺口阈值:等于 100B 时计为缺口(注释说≥100B,代码用 >= 常量)', () => {
+    // ackedTo=0 时,seq=100 的段起点距确认沿恰好 100B:>= 时算缺口,> 时不算。
+    const pkts: Packet[] = [
+      C({ number: 1, time: 0, tcpFlags: '0x0002', tcpLen: 0 }),
+      S({ number: 2, time: 0.01, tcpFlags: '0x0012', tcpAck: 0 }),
+      C({ number: 3, time: 0.02, tcpFlags: '0x0010', tcpLen: 0 }),
+      C({ number: 4, time: 0.1, tcpSeq: 100, tcpLen: 100 }), // seq=100,len=100
+      // 没有推进 ackedTo 的 ACK → 缺口未恢复
+    ]
+    const h = computeHealthScore(pkts)
+    const gap = h.deductions.find((d) => d.key === 'unrecovered-gap')
+    expect(gap).toBeTruthy()
+    expect(gap!.points).toBe(20)
+  })
+
+  it('对向 ACK 字段全缺失:确认沿从不推进,但也不触发缺口(无 ACK 信息无法判断)', () => {
+    // 对向(s2c)报文缺少 tcpAck 字段 → ackedTo 始终为 -1,
+    // st.ackedTo >= 0 为 false → 不触发缺口判定,分数不受影响。
+    const pkts: Packet[] = [
+      C({ number: 1, time: 0, tcpFlags: '0x0002', tcpLen: 0 }),
+      C({ number: 2, time: 0.1, tcpSeq: 1, tcpLen: 100 }),
+      C({ number: 3, time: 0.2, tcpSeq: 501, tcpLen: 100 }), // 明显跳跃,但无 ACK 信息
+    ]
+    const h = computeHealthScore(pkts)
+    // 对向无 tcpAck → 无法确认任何字节,但也不产生缺口(保守:无信息则不扣分)
+    const gap = h.deductions.find((d) => d.key === 'unrecovered-gap')
+    expect(gap).toBeUndefined()
+    // 不应当是负数(回退到 0 分)
+    expect(h.available).toBe(true)
+    expect(h.score).toBeGreaterThanOrEqual(0)
+  })
 })

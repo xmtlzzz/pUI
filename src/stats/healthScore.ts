@@ -39,6 +39,10 @@ export interface HealthScore {
 
 const F_RST = 0x04
 
+/** 缺口判定阈值:数据段起点越过确认沿的字节数 ≥ 此值记为缺口(含等号;
+ *  与头部注释「≥100B」一致 —— 起点正好越过 100B 也算缺口) */
+const GAP_OVERSHOOT_BYTES = 100
+
 export function computeHealthScore(packets: Packet[]): HealthScore {
   if (packets.length === 0 || !packets.some((p) => p.transport === 'tcp')) {
     return { available: false, deductions: [], formula: HEALTH_FORMULA_VERSION }
@@ -74,10 +78,12 @@ export function computeHealthScore(packets: Packet[]): HealthScore {
     const f = flagsOf(p)
     if (f & F_RST) continue // RST 后确认不再可靠
     const dir = dirOf(p)
-    // 本方向数据段:起点越过本方向确认沿 ≥100B → 缺口期开始
+    // 本方向数据段:起点越过本方向确认沿 ≥ GAP_OVERSHOOT_BYTES → 缺口期开始
+    // (ackedTo 仅在收到对向 ACK 时推进 —— 对向缺 tcpAck 字段则确认沿恒为 -1,
+    // 判定不触发:无 ACK 信息时保守不扣分,而不是把一切数据段都判为缺口)
     if (p.tcpLen != null && p.tcpLen > 0 && p.tcpSeq != null) {
       const st = stateOf(p.tcpStream, dir)
-      if (st.ackedTo >= 0 && p.tcpSeq > st.ackedTo + 100) st.hole = true
+      if (st.ackedTo >= 0 && p.tcpSeq - st.ackedTo >= GAP_OVERSHOOT_BYTES) st.hole = true
     }
     // 对向报文携带本方向的确认:推进**对向**的确认沿,闭合其对向未决缺口
     if (p.tcpAck != null) {

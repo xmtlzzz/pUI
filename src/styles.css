@@ -124,6 +124,18 @@ table.list .time-col { color: #94a3b8; }
 .rtt-hist-bar { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; flex: 1; height: 100%; gap: 2px; min-width: 0; }
 .rtt-hist-bar i { display: block; width: 100%; background: #3b82f6; border-radius: 2px 2px 0 0; opacity: .85; }
 .rtt-hist-bar em { font-style: normal; font-size: 9px; color: #94a3b8; white-space: nowrap; overflow: hidden; max-width: 100%; }
+/* 窗口通告迷你曲线:每个变化点一个样本(阶梯/折线),一眼看出收缩与恢复形态 */
+.win-curve { margin: 2px 8px 4px; padding: 6px 8px 4px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+.win-curve svg { display: block; width: 100%; height: 44px; }
+.win-curve-cap { display: block; margin-top: 2px; font-size: 10px; color: #64748b; }
+/* 吞吐(字节)双条形:与报文数直方图同桶,高度=该桶字节量,峰值标签一眼可读 */
+.tp-wrap { padding: 4px 8px 6px; }
+.tp-legend { display: flex; justify-content: space-between; font-size: 10px; color: #64748b; margin-bottom: 2px; }
+.tp-legend b { color: #1e293b; }
+.tp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 3px; vertical-align: 1px; }
+.tp-dot.byte { background: #10b981; }
+.tp-bars { display: flex; align-items: flex-end; gap: 2px; height: 48px; }
+.tp-bar { flex: 1; min-width: 0; background: linear-gradient(180deg, #34d399, #10b981); border-radius: 2px 2px 0 0; opacity: .9; }
 /* 摘要面板:选中会话的 TCP 异常统计表(标记/数量/解读,点击行下钻高亮) */
 .tcp-stat { margin: 0 8px 4px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
 .tcp-stat-head { display: grid; grid-template-columns: 1fr 44px 1.6fr; gap: 6px; padding: 4px 8px; font-size: 11px; color: #94a3b8; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
@@ -149,7 +161,14 @@ table.list .time-col { color: #94a3b8; }
 /* 搜索框 */
 .search-box { position: relative; margin: 4px 8px 2px; }
 .search-box input { width: 100%; box-sizing: border-box; padding: 5px 26px 5px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 12px; }
+/* 左侧让出命中计数条空间,避免输入文字压在计数条下 */
+.search-box input.has-hit-count { padding-left: 58px; }
 .search-box .search-clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: none; background: none; color: #94a3b8; cursor: pointer; font-size: 11px; }
+.search-box .search-clear:hover { color: #475569; }
+/* 搜索命中计数 + 上一个/下一个导航(仅命中时显示,置于输入框左内侧) */
+.search-box .search-hit-count { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; gap: 3px; color: #7c3aed; font-size: 10px; font-weight: 600; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 4px; padding: 1px 4px; pointer-events: auto; }
+.search-box .search-hit-count .search-nav { border: none; background: none; color: #7c3aed; cursor: pointer; font-size: 10px; line-height: 1; padding: 0 2px; }
+.search-box .search-hit-count .search-nav:hover { color: #4c1d95; }
 
 /* 时序图搜索命中高亮 */
 .msg.hl .arr { stroke: #7c3aed !important; filter: drop-shadow(0 0 2px rgba(124, 58, 237, .6)); }
@@ -181,11 +200,15 @@ table.list .time-col { color: #94a3b8; }
 .detail-bar { animation: fadeSlideIn .22s ease; border-top: 1px solid #e2e8f0; padding: 10px; font-size: 12px; height: 100%; overflow: auto; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(15, 23, 42, .06); }
 .detail-bar .detail-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #94a3b8; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
 .detail-bar .detail-title::before { content: ''; width: 3px; height: 12px; border-radius: 2px; background: #f97316; }
-.detail-hex { background: #0f172a; color: #a5f3fc; border-radius: 6px; padding: 8px; overflow: auto; font: 11px ui-monospace, monospace; animation: fadeSlideIn .2s ease; }
+.detail-hex { background: #0f172a; color: #a5f3fc; border-radius: 6px; padding: 8px; overflow: auto; font: 11px/16px ui-monospace, monospace; animation: fadeSlideIn .2s ease; max-height: 260px; white-space: pre; }
+.detail-hex-hint { font-size: 10px; color: #94a3b8; margin: 4px 0 2px; }
+.detail-hex-line { display: block; white-space: pre; }
+.detail-hex-line.hl { background: #f97316; color: #0f172a; border-radius: 3px; }
 .detail-group { margin: 2px 0; font-size: 12px; }
 .detail-group-title { cursor: pointer; color: #1e3a8a; font-weight: 600; user-select: none; }
 .detail-group-title:hover { color: #2563eb; }
-.detail-kv { display: flex; gap: 8px; padding: 1px 0; color: #475569; }
+.detail-kv { display: flex; gap: 8px; padding: 1px 0; color: #475569; cursor: pointer; }
+.detail-kv:hover { background: #f1f5f9; }
 .detail-k { color: #94a3b8; min-width: 72px; flex: none; }
 .detail-v { word-break: break-all; }
 .seg-nav { display: inline-flex; gap: 4px; margin-left: 6px; }

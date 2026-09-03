@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
-import { openCapture, openSample, fetchHex, getTsharkVersion } from '../bridge/tauri'
+import { openCapture, openSample, fetchHex, getTsharkVersion, setTsharkPath as setTsharkPathCmd } from '../bridge/tauri'
 import { cancelParse } from '../parse/parseAsync'
 import { emptyFilter } from '../model/types'
 import { overlapRange } from '../stats/histogram'
@@ -106,6 +106,8 @@ export interface AppState {
   /** tshark 版本(顶部信息条展示),解析引擎就绪后置位 */
   tsharkVersion: string | null
   loadTsharkVersion: () => Promise<void>
+  /** 设置 tshark 可执行文件路径(Rust 侧强校验);成功后重拉版本号 */
+  setTsharkPath: (path: string) => Promise<void>
   fetchHexFor: (n: number) => Promise<string>
   getHex: (n: number) => string | null
   /** M4 故障对照页:进入时记录会话 id;派生数据(事件/阶段)在渲染时按需重算,不入 store */
@@ -371,6 +373,11 @@ export const useApp = create<AppState>((set, get) => ({
   async loadTsharkVersion() {
     const v = await getTsharkVersion()
     set({ tsharkVersion: v })
+  },
+  async setTsharkPath(path) {
+    await setTsharkPathCmd(path)
+    // 设置成功后重新拉取版本(路径变化后旧版本号已不准确)
+    await get().loadTsharkVersion()
   },
   async fetchHexFor(n) {
     const path = get().currentPath

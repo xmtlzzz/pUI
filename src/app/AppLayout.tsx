@@ -14,7 +14,7 @@ import { SequenceBoard } from './SequenceBoard'
 import { useApp, selectSelected } from '../state/appStore'
 import type { CompareResume } from '../state/appStore'
 import { isTauri } from '../bridge/tauri'
-import { exportSvgPng, defaultPngName } from '../export/exportPng'
+import { exportSvgPng, exportSvgVector, defaultPngName, defaultSvgName } from '../export/exportPng'
 import { exportCompareReport, defaultCompareReportName } from '../export/exportCompareReport'
 import { exportEvidenceHtml, defaultEvidenceHtmlName } from '../export/evidenceHtml'
 import { buildReportModel, defaultReportName } from '../export/report/reportModel'
@@ -316,6 +316,15 @@ export function AppLayout() {
     }
   }
 
+  const onExportSvg = async () => {
+    if (!selected) return
+    try {
+      await exportSvgVector(svgRef.current, defaultSvgName(selected.client, selected.server, selected.protocol))
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   // 「紧凑叙述」:报告时序章节将连续相同报文合并为 #X–#Y 区间(巨大会话文档不卡顿)
   const [compactTranscript, setCompactTranscript] = useState(false)
   // 「仅异常包」:时序章节只列带 TCP 分析标记(重传/乱序/丢失/dup-ack 等)的报文,适合周报
@@ -504,6 +513,7 @@ export function AppLayout() {
             zoom={zoom}
             setZoom={setZoom}
             onExport={onExport}
+            onExportSvg={onExportSvg}
             onExportReport={onExportReport}
             reportFormat={reportFormat}
             setReportFormat={setReportFormat}

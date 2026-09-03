@@ -6,9 +6,10 @@ vi.mock('../bridge/tauri', () => ({
   openSample: vi.fn(),
   fetchHex: vi.fn(),
   getTsharkVersion: vi.fn(),
+  setTsharkPath: vi.fn(),
 }))
 
-import { openCapture, openSample, fetchHex } from '../bridge/tauri'
+import { openCapture, openSample, fetchHex, getTsharkVersion, setTsharkPath } from '../bridge/tauri'
 import { useApp } from './appStore'
 import type { Packet } from '../model/types'
 
@@ -397,5 +398,16 @@ describe('双点对照 store(副抓包状态)', () => {
     })
     await useApp.getState().openDualExample('dual-b')
     expect(useApp.getState().dualLoadingFrames).toBe(123)
+  })
+
+  it('setTsharkPath 调用桥接并成功后重拉版本号', async () => {
+    vi.mocked(setTsharkPath).mockResolvedValue(undefined)
+    vi.mocked(getTsharkVersion).mockResolvedValue('4.6.6')
+    useApp.setState({ tsharkVersion: null })
+    await useApp.getState().setTsharkPath('C:/Wireshark/tshark.exe')
+    expect(setTsharkPath).toHaveBeenCalledWith('C:/Wireshark/tshark.exe')
+    // 设置成功后重拉版本(路径变化后旧版本号已不准确)
+    expect(getTsharkVersion).toHaveBeenCalled()
+    expect(useApp.getState().tsharkVersion).toBe('4.6.6')
   })
 })

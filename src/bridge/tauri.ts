@@ -139,6 +139,13 @@ export async function locateTshark(): Promise<string | null> {
   }
 }
 
+/** 设置 tshark 可执行文件路径(Rust 侧 validate_tshark_path 强校验:绝对路径/exe/文件名含 tshark/非符号链接)。
+ *  校验失败会 reject,由调用方展示错误。非 Tauri 环境(浏览器 dev)无 Rust 命令,直接返回。 */
+export async function setTsharkPath(path: string): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_tshark_path', { path })
+}
+
 export async function saveText(
   defaultName: string,
   content: string,

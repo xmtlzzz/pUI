@@ -92,4 +92,22 @@ describe('bridge 命令路由(流式打开,Tauri 分支)', () => {
     expect(args.onChunk).toBeTruthy()
     vi.unstubAllGlobals()
   })
+
+  it('setTsharkPath → set_tshark_path,携带路径(tshark 设置入口接线)', async () => {
+    const { setTsharkPath } = await import('./tauri')
+    invokeMock.mockResolvedValue(undefined)
+    await setTsharkPath('C:/Wireshark/tshark.exe')
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    const [cmd, args] = invokeMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(cmd).toBe('set_tshark_path')
+    expect(args.path).toBe('C:/Wireshark/tshark.exe')
+  })
+
+  it('setTsharkPath 非 Tauri 环境直接返回(浏览器 dev 无 Rust 命令)', async () => {
+    const { setTsharkPath } = await import('./tauri')
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    await expect(setTsharkPath('x')).resolves.toBeUndefined()
+    expect(invokeMock).not.toHaveBeenCalled()
+    ;(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
+  })
 })

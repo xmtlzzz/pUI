@@ -40,6 +40,8 @@ interface Props {
   setZoom: (z: number) => void
   /** 导出 PNG 回调;缺省则不渲染该按钮(仅主视图时序场景在选中会话后提供) */
   onExport?: () => void
+  /** 导出 SVG 矢量图回调;缺省则不渲染(评估空缺:PNG 栅格化之外的矢量格式) */
+  onExportSvg?: () => void
   /** 导出分析报告回调(格式由 reportFormat 决定);缺省则不渲染(仅主视图提供,
    *  对照页的导出走 FaultCompare 的「导出报告/证据 JSON」) */
   onExportReport?: () => void
@@ -55,7 +57,7 @@ interface Props {
   hasConversation: boolean
 }
 
-export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat = 'md', setReportFormat, compactTranscript = false, setCompactTranscript, anomaliesOnly = false, setAnomaliesOnly, hasConversation }: Props) {
+export function Toolbar({ zoom, setZoom, onExport, onExportSvg, onExportReport, reportFormat = 'md', setReportFormat, compactTranscript = false, setCompactTranscript, anomaliesOnly = false, setAnomaliesOnly, hasConversation }: Props) {
   const meta = useApp((s) => s.meta)
   const openFile = useApp((s) => s.openFile)
   const openExample = useApp((s) => s.openExample)
@@ -67,12 +69,34 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
   const setTimeMode = useApp((s) => s.setTimeMode)
   const tsharkVersion = useApp((s) => s.tsharkVersion)
   const loadTsharkVersion = useApp((s) => s.loadTsharkVersion)
+  const setTsharkPath = useApp((s) => s.setTsharkPath)
+  const [tsharkErr, setTsharkErr] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 解析引擎版本:应用启动后拉取一次,顶部信息条展示
   useEffect(() => {
     loadTsharkVersion()
   }, [loadTsharkVersion])
+
+  // tshark 路径设置(Tauri:原生文件选择器选 tshark.exe;浏览器 dev:prompt 输入)。
+  // Rust 侧 set_tshark_path 有强校验(绝对路径/exe/文件名含 tshark/非符号链接),
+  // 校验失败会 reject,这里把错误展示给用户 —— 此前只有报错文案没有设置入口(断点)
+  const setTsharkPathUi = async (): Promise<void> => {
+    setTsharkErr(null)
+    try {
+      let path: string | null = null
+      if (isTauri()) {
+        const { open: openDialog } = await import('@tauri-apps/plugin-dialog')
+        const picked = await openDialog({ multiple: false, filters: [{ name: 'tshark 可执行文件', extensions: ['exe'] }] })
+        if (typeof picked === 'string') path = picked
+      } else {
+        path = window.prompt('输入 tshark 可执行文件的完整路径(如 C:\\Program Files\\Wireshark\\tshark.exe):')
+      }
+      if (path) await setTsharkPath(path)
+    } catch (e) {
+      setTsharkErr(e instanceof Error ? e.message : String(e))
+    }
+  }
   // 解析耗时标签(毫秒/秒),供信息条展示
   const parseMs = meta?.parseMs
   const parseMsLabel = parseMs != null && parseMs > 0 ? (parseMs < 1000 ? `${Math.round(parseMs)}ms` : `${(parseMs / 1000).toFixed(1)}s`) : null
@@ -139,6 +163,13 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
       </div>
 
       <div className="toolbar-right">
+        {/* tshark 路径设置:解析引擎全局配置,不依赖会话。此前只有报错文案
+            「tshark not found: set its path in settings」却没有设置入口(断点),
+            这里补上 —— Rust 侧 set_tshark_path 强校验,失败信息就地展示 */}
+        <button className="btn icon" onClick={setTsharkPathUi} title={tsharkVersion ? `tshark ${tsharkVersion} · 点击更换路径` : '设置 tshark 路径(未检测到 tshark)'}>
+          ⚙
+        </button>
+        {tsharkErr && <span className="meta err" title="tshark 路径校验失败">{tsharkErr}</span>}
         {hasConversation && (
           <>
             <div className="seg">
@@ -177,6 +208,11 @@ export function Toolbar({ zoom, setZoom, onExport, onExportReport, reportFormat 
             {onExport && (
               <button className="btn primary" onClick={onExport}>
                 导出 PNG
+              </button>
+            )}
+            {onExportSvg && (
+              <button className="btn" onClick={onExportSvg} title="导出当前时序图为 SVG 矢量图(放大不糊,可进编辑器)">
+                导出 SVG
               </button>
             )}
             {onExportReport && (

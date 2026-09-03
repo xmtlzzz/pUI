@@ -5,7 +5,7 @@ import { FlowTimeline } from '../render/FlowTimeline.tsx'
 import { PacketDetail } from '../detail/PacketDetail'
 import { ErrorBoundary } from './ErrorBoundary'
 import { useApp, selectSelected } from '../state/appStore'
-import { exportSvgPng, defaultPngName } from '../export/exportPng'
+import { exportSvgPng, exportSvgVector, defaultPngName, defaultSvgName } from '../export/exportPng'
 // 整页板块复用 dc-* 骨架(页面留白/工具栏/标题),必须引入对应样式:
 // 不 import 则时序图整页板块的 dc-page padding 不生效,按钮贴窗口边缘
 import './dualCompare.css'
@@ -67,6 +67,15 @@ export function SequenceBoard({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const onExportSvg = async () => {
+    if (!selected) return
+    try {
+      await exportSvgVector(svgRef.current, defaultSvgName(selected.client, selected.server, selected.protocol))
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   if (!selected) {
     return (
       <div className="dc-page" data-testid="seq-board-empty">
@@ -104,6 +113,9 @@ export function SequenceBoard({ onClose }: { onClose: () => void }) {
         </button>
         <button type="button" className="btn" onClick={onExport} data-testid="seq-board-export">
           导出 PNG
+        </button>
+        <button type="button" className="btn" onClick={onExportSvg} data-testid="seq-board-export-svg">
+          导出 SVG
         </button>
       </div>
 

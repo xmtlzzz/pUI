@@ -13,6 +13,9 @@ src-tauri/target/
 # 本地探针/临时抓包(字段形态验证用,非源码)
 .probe/
 
+# 本地原型/视觉验证产物(Archify 图/截图,一次性参考,非源码)
+prototype/
+
 # misc
 *.log
 .DS_Store

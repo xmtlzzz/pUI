@@ -155,8 +155,10 @@ describe('DualComparePanel · 配对渲染', () => {
 })
 
 describe('DualComparePanel · 超预算 pair', () => {
-  it('两侧包数合计超 30000 时该对显示「点击分析」按钮,点击后完成分析', async () => {
-    // 构造 16001+16001 包的大会话(超预算),但 diff 本身轻量
+  it('两侧包数合计超 30000 时该对显示「点击分析」按钮,点击后完成分析(大包量,放宽超时)', async () => {
+    // 构造 16001+16001 包的大会话(超预算),但 diff 本身轻量。
+    // 超时放宽:3.2 万包聚合在全量并发下接近 5s 上限(单跑 5.3s 通过),
+    // 并发资源争抢会偶发超时 —— 重测试单独给足预算
     const n = 16001
     const mkMany = (shift: number): Packet[] => {
       const arr: Packet[] = []
@@ -199,5 +201,5 @@ describe('DualComparePanel · 超预算 pair', () => {
     // 点击后单独分析并展示
     fireEvent.click(analyzeBtn)
     await waitFor(() => expect(container.querySelector('[data-testid="dc-pair-stats"]')).toBeTruthy())
-  })
+  }, 20000)
 })

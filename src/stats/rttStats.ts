@@ -24,6 +24,10 @@ export interface RttStats {
   p50Ms?: number
   p90Ms?: number
   maxMs?: number
+  /** 分布直方图(毫秒,对数桶 1-10/10-100/100-1000/…,可视化 RTT 形态用)。
+   *  RTT 是长尾分布,线性桶在低延迟段太粗;对数桶让 p50 密集区与长尾都可见。
+   *  available=false 时为空数组(不编造分布)。桶覆盖 [0, maxMs],计数之和 = samples。 */
+  histogramMs: Array<{ lo: number; hi: number; count: number }>
 }
 
 interface DirState {
@@ -86,7 +90,7 @@ export function computeRttStats(packets: Packet[]): RttStats {
   }
 
   if (samples.length < MIN_RTT_SAMPLES) {
-    return { available: false, samples: samples.length }
+    return { available: false, samples: samples.length, histogramMs: [] }
   }
   const sorted = [...samples].sort((a, b) => a - b)
   return {
@@ -95,5 +99,28 @@ export function computeRttStats(packets: Packet[]): RttStats {
     p50Ms: percentile(sorted, 0.5),
     p90Ms: percentile(sorted, 0.9),
     maxMs: sorted[sorted.length - 1],
+    histogramMs: buildRttHistogram(sorted),
   }
+}
+
+/** RTT 对数桶直方图:按数量级分桶([0,1)/[1,10)/[10,100)/…),覆盖 [0, maxMs]。
+ *  桶计数之和恒等于样本数;可用空桶占位保持桶序列连续(视觉上 p50 密集区与长尾同图)。 */
+function buildRttHistogram(sorted: number[]): Array<{ lo: number; hi: number; count: number }> {
+  if (sorted.length === 0) return []
+  const bucketOf = (v: number): number => (v < 1 ? -1 : Math.floor(Math.log10(v)))
+  const maxK = bucketOf(sorted[sorted.length - 1]!)
+  const counts = new Map<number, number>()
+  for (const s of sorted) {
+    const k = bucketOf(s)
+    counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  const out: Array<{ lo: number; hi: number; count: number }> = []
+  for (let k = -1; k <= maxK; k++) {
+    out.push({
+      lo: k < 0 ? 0 : Math.pow(10, k),
+      hi: k < 0 ? 1 : Math.pow(10, k + 1),
+      count: counts.get(k) ?? 0,
+    })
+  }
+  return out
 }

@@ -119,6 +119,11 @@ table.list .time-col { color: #94a3b8; }
 .bar-fill { height: 100%; border-radius: 4px; transition: width .25s ease; }
 .bar-val { width: 30px; color: #94a3b8; }
 .issue-line { padding: 2px 8px 4px; font-size: 12px; color: #b45309; line-height: 1.6; }
+/* RTT 分布直方图(对数桶):每格一段数量级,条形高度=样本占比;零计数格只占位不显标签 */
+.rtt-hist { display: flex; align-items: flex-end; gap: 3px; height: 44px; padding: 8px; }
+.rtt-hist-bar { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; flex: 1; height: 100%; gap: 2px; min-width: 0; }
+.rtt-hist-bar i { display: block; width: 100%; background: #3b82f6; border-radius: 2px 2px 0 0; opacity: .85; }
+.rtt-hist-bar em { font-style: normal; font-size: 9px; color: #94a3b8; white-space: nowrap; overflow: hidden; max-width: 100%; }
 /* 摘要面板:选中会话的 TCP 异常统计表(标记/数量/解读,点击行下钻高亮) */
 .tcp-stat { margin: 0 8px 4px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; }
 .tcp-stat-head { display: grid; grid-template-columns: 1fr 44px 1.6fr; gap: 6px; padding: 4px 8px; font-size: 11px; color: #94a3b8; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }

@@ -67,6 +67,32 @@ describe('computeRttStats — 单观察点 RTT 近似', () => {
     expect(stats.samples).toBe(0)
   })
 
+  it('分布直方图:样本按毫秒对数桶聚合,桶计数之和等于样本数(可视化 RTT 形态)', () => {
+    const stats = computeRttStats(sampleChain())
+    expect(stats.available).toBe(true)
+    // 样本(ms): 10,20,30,50,80 → 对数桶(如 1-10/10-100/100-1000)内计数
+    expect(stats.histogramMs.length).toBeGreaterThan(0)
+    const total = stats.histogramMs.reduce((n, b) => n + b.count, 0)
+    expect(total).toBe(stats.samples)
+    // 桶边界有序、右界 > 左界
+    for (let i = 0; i < stats.histogramMs.length; i++) {
+      const b = stats.histogramMs[i]!
+      expect(b.lo).toBeGreaterThanOrEqual(0)
+      expect(b.hi).toBeGreaterThan(b.lo)
+      if (i > 0) expect(b.lo).toBeGreaterThanOrEqual(stats.histogramMs[i - 1]!.hi)
+    }
+    // 全部样本都落在某个桶内(覆盖 [min, max])
+    expect(stats.histogramMs[0]!.lo).toBeLessThanOrEqual(stats.p50Ms!)
+    expect(stats.histogramMs[stats.histogramMs.length - 1]!.hi).toBeGreaterThanOrEqual(stats.maxMs!)
+  })
+
+  it('unavailable 时直方图为空(不编造分布)', () => {
+    const oneWay = [pkt(1, 0, 'c2s', { tcpFlags: PSHACK, tcpSeq: 1, tcpLen: 100 })]
+    const stats = computeRttStats(oneWay)
+    expect(stats.available).toBe(false)
+    expect(stats.histogramMs).toEqual([])
+  })
+
   it('确定性与空输入', () => {
     expect(computeRttStats([]).samples).toBe(0)
     expect(JSON.stringify(computeRttStats(sampleChain()))).toBe(JSON.stringify(computeRttStats(sampleChain())))

@@ -130,9 +130,6 @@ export function SummaryPanel() {
             <span title="frame.cap_len < frame.len 的帧:抓包工具没抓全(采集侧信号),不是网络丢包证据">
               截断帧 <b>{cq.available ? cq.truncatedCount : '—'}</b>
             </span>
-            <span title="frame.cap_len < frame.len 的帧:抓包工具没抓全(采集侧信号),不是网络丢包证据">
-              截断帧 <b>{cq.available ? cq.truncatedCount : '—'}</b>
-            </span>
             <span>
               截断占比 <b>{cq.available ? `${(cq.truncatedRatio! * 100).toFixed(1)}%` : 'unavailable'}</b>
             </span>
@@ -147,6 +144,22 @@ export function SummaryPanel() {
               </span>
             )}
           </div>
+          {/* RTT 分布直方图(评估空缺:分位数数值之外补分布形态 —— p90 接近 p50 还是长尾
+              一眼可见;对数桶 1/10/100ms,计数之和=样本数) */}
+          {rtt.available && rtt.histogramMs.length > 0 && (
+            <div className="rtt-hist" data-testid="summary-rtt-hist" title="RTT 分布(对数桶):每格一段数量级,高度=样本占比;长尾(右端非零)提示抖动/重传">
+              {rtt.histogramMs.map((b) => {
+                const pct = (b.count / rtt.samples) * 100
+                const label = b.lo === 0 ? '<1ms' : `${b.lo}-${b.hi}ms`
+                return (
+                  <span key={`${b.lo}-${b.hi}`} className="rtt-hist-bar" title={`${label}: ${b.count} 样本`}>
+                    <i style={{ height: `${Math.max(pct, 2)}%` }} />
+                    <em>{b.count > 0 ? label : ''}</em>
+                  </span>
+                )
+              })}
+            </div>
+          )}
           {cq.available && cq.truncatedCount > 0 && (
             <div className="issue-line" title={`截断帧:#${cq.truncatedPackets.join(', #')}`}>
               ⚠ 存在截断帧(snaplen/采集口限制):这些报文的载荷分析受限;截断是采集侧信号,不指示网络丢包

@@ -138,6 +138,9 @@ export function computeFlowLayout(packets: Packet[], opts: FlowLayoutOptions): F
     // rows 里已有尾包,此时不应再追加;rows.some 避免最后两行同号。
     const last = packets[total - 1]
     if (w > 0 && rows[w - 1] !== undefined && (rows[w - 1] as FlowRow).number !== last.number) {
+      // 替换行 seq 用 w(而非 w-1):rows[w++] = makeRow(..., w, ...) 里右值 w 是
+      // 递增后的值,被替换行原本的 seq 就是 w —— 用 w-1 会让替换行与倒数第二行
+      // y 相同(非单调);探针实证恢复 w 后 y 严格单调(对抗审查此条为误报)
       rows[w - 1] = makeRow(last, w, clientHost, serverHost)
     } else if (w < maxRows && !rows.some((r) => r !== undefined && r.number === last.number)) {
       rows[w++] = makeRow(last, w, clientHost, serverHost)

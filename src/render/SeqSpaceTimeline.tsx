@@ -171,8 +171,21 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
       const span = d.win.end - d.win.start
       const full = lane.axisMax - lane.axisMin
       if (span >= full) return // 未缩放时无可平移范围
-      d.moved = true
-      const dBytes = -(dx / Math.max(d.width, 1)) * span
+      if (!d.moved) {
+        // 首次越过阈值:确认是拖拽而非点击。捕获指针:拖出 svg 后 pointermove/up
+        // 仍派发到 svg,不冻结(审计 L3)。点击路径(未超阈值)不捕获,图元 onClick 不被劫持。
+        d.moved = true
+        try {
+          svgElRef.current?.setPointerCapture(e.pointerId)
+        } catch {
+          /* 已释放/不可捕获:拖拽仍可继续,仅失去越界跟随 */
+        }
+      }
+      // 位移统一扣阈值死区(d.x 保持 pointerdown 起点,effDx 是「扣除 4px 后的绝对位移」):
+      // 消除首次越过阈值时「把累积 >4px 位移一次性应用」的内容跳动;每帧从原始
+      // 窗口重算,不累积漂移
+      const effDx = dx - Math.sign(dx) * DRAG_THRESHOLD_PX
+      const dBytes = -(effDx / Math.max(d.width, 1)) * span
       let s0 = d.win.start + dBytes
       s0 = Math.min(Math.max(s0, lane.axisMin), lane.axisMax - span)
       setWindows((prev) => ({ ...prev, [d.laneKey]: { start: s0, end: s0 + span } }))
@@ -180,7 +193,14 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
     [layout.lanes],
   )
   const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
+    if (dragRef.current?.pointerId === e.pointerId) {
+      dragRef.current = null
+      try {
+        svgElRef.current?.releasePointerCapture(e.pointerId)
+      } catch {
+        /* 未捕获/已释放,忽略 */
+      }
+    }
   }, [])
 
   if (!conv) {
@@ -245,9 +265,13 @@ export function SeqSpaceTimeline({ conv, highlight, onSelect, svgRef, zoom }: Se
           const viewMin = win ? win.start : lane.axisMin
           const viewMax = win ? win.end : lane.axisMax
           const span = viewMax - viewMin || 1
-          // TCP 带预留左侧方向列(标注客户端/服务端→),回退带用窄边距
+          // TCP 带预留左侧方向列(标注客户端/服务端→),回退带用窄边距。
+          // plot 宽也随带型:TCP 扣 DIR_LABEL_COL,回退带不扣 —— 此前统一扣
+          // DIR_LABEL_COL 而回退带 plotLeft=W_PAD,图元右缘停在 width-70、
+          // 刻度轴画到 width-8,左右不对称(审计 L1)
           const plotLeft = lane.kind === 'tcp' ? DIR_LABEL_COL : W_PAD
-          const x = (v: number): number => ((v - viewMin) / span) * (width - W_PAD * 2 - DIR_LABEL_COL) + plotLeft
+          const plotW = width - W_PAD * 2 - (lane.kind === 'tcp' ? DIR_LABEL_COL : 0)
+          const x = (v: number): number => ((v - viewMin) / span) * plotW + plotLeft
           return (
             <g key={key} transform={`translate(0 ${top})`}>
               <LaneGraphic
@@ -478,8 +502,10 @@ function LaneGraphic({
           const tx = x(t)
           const anchor = tx < W_PAD + 20 ? 'start' : tx > width - W_PAD - 20 ? 'end' : 'middle'
           const ax = anchor === 'start' ? W_PAD : anchor === 'end' ? width - W_PAD : tx
-          // 时间轴的小数刻度四舍五入后可能撞值(0.2 与 0.25 → 同 0.2):key 带下标防撞
-          const tickLabel = lane.kind === 'fallback' ? (t < 1 ? t.toFixed(2) : String(t)) : String(t)
+          // 刻度文字:布局层 ticks 已按轴量纲量化(整数轴整步长、浮点轴按 step
+          // 动态小数位),直接 String 即干净 —— 此前 fallback 固定 toFixed(2)
+          // 在极小轴(step≈0.0002)把所有 tick 撞成同一值(审计 M4)
+          const tickLabel = String(t)
           return (
             <g key={`${t}-${ti}`}>
               <line x1={tx} y1={TICK_LINE_Y} x2={tx} y2={TICK_LINE_Y + 4} stroke={AXIS} />
@@ -494,16 +520,21 @@ function LaneGraphic({
   )
 }
 
-/** 窗口内 1/2/5 整步长刻度(与 seqSpace.ticksFor 同规则;组件内独立实现避免反向依赖) */
+/** 窗口内 1/2/5 整步长刻度(与 seqSpace.ticksFor 同规则;组件内独立实现避免反向依赖)。
+ *  浮点轴按 step 动态取小数位:固定 Math.round(t*10)/10 在极小窗口把所有 tick
+ *  量化成同一值(审计 M4) */
 function laneTicks(viewMin: number, viewMax: number): number[] {
   if (viewMax <= viewMin) return []
-  const rawStep = (viewMax - viewMin) / 5
+  const isIntegerAxis = Number.isInteger(viewMin) && Number.isInteger(viewMax)
+  let rawStep = (viewMax - viewMin) / 5
+  if (isIntegerAxis) rawStep = Math.max(1, Math.ceil(rawStep))
   const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
   const norm = rawStep / mag
   const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag
+  const decimals = isIntegerAxis ? 0 : step >= 1 ? 0 : step >= 0.01 ? 2 : step >= 0.001 ? 3 : 4
   const out: number[] = []
-  for (let t = Math.ceil(viewMin / step) * step; t <= viewMax; t += step) {
-    out.push(Math.round(t * 10) / 10)
+  for (let t = Math.ceil(viewMin / step) * step; t <= viewMax + 1e-9; t += step) {
+    out.push(decimals === 0 ? Math.round(t) : Number(t.toFixed(decimals)))
   }
   return out
 }

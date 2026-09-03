@@ -4,6 +4,7 @@ import {
   FLOW_CLIENT_X,
   FLOW_SERVER_X,
   FLOW_HEADER_H,
+  TIME_COL_X,
   type FlowLayoutOptions,
 } from './flowTimeline.ts' // 显式扩展名:与 FlowTimeline.tsx 仅大小写之差,无扩展名在 Win 大小写不敏感盘上会解析到本文件自身
 import { protocolColor } from '../model/protocolColors'
@@ -81,11 +82,13 @@ export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEver
     return <div className="empty">从左侧选择一个会话查看时序图</div>
   }
 
-  // 画布宽与生命线位置:容器更宽时拉开生命线(比例同 520 基准 110/470),
-  // 时间列与箭头文字都跟随;高度不变(纵向滚动)
+  // 画布宽与生命线位置:容器更宽时按比例拉开生命线(比例同 520 基准 110/470),
+  // 时间列与箭头文字都跟随;高度不变(纵向滚动)。
+  // client/server 都按 layout.width 等比 —— 此前 serverX 用「固定距右缘」,
+  // 加宽时只拉 client 端、server 端不动,中线右偏(审计 L2)
   const width = Math.max(layout.width, wrapWidth)
   const clientX = Math.round((FLOW_CLIENT_X / layout.width) * width)
-  const serverX = width - (layout.width - FLOW_SERVER_X)
+  const serverX = Math.round((FLOW_SERVER_X / layout.width) * width)
 
   const yOf = (i: number) => layout.rows[i].y
 
@@ -150,8 +153,8 @@ export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEver
                   <line x1={x1 + 6} y1={y} x2={x2 - 7} y2={y} stroke={stroke} strokeWidth={1.6} markerEnd="url(#flow-arr)" />
                 </>
               )}
-              {/* 左侧时间刻度:该包时刻(时间节点列) */}
-              <text x={TIME_TICK_RIGHT} y={y + 3} textAnchor="end" fill={r.anomaly ? '#ea580c' : '#64748b'} fontSize={9} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {/* 左侧时间刻度:该包时刻(时间节点列);右对齐基准与布局层 TIME_COL_X 同源(审计 L5 常量统一) */}
+              <text x={TIME_COL_X} y={y + 3} textAnchor="end" fill={r.anomaly ? '#ea580c' : '#64748b'} fontSize={9} style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {r.timeEpoch != null && r.timeEpoch > 0 ? `${formatEpoch(r.timeEpoch)}` : r.timeLabel}
               </text>
               {/* 行内标注:#帧号 协议概要 · 长度 */}
@@ -170,6 +173,3 @@ export function FlowTimeline({ conv, highlight, onSelect, svgRef, zoom, tickEver
     </div>
   )
 }
-
-/** 时间刻度文本右对齐基准 x(时间列宽度内) */
-const TIME_TICK_RIGHT = 52

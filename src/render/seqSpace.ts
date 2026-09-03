@@ -73,17 +73,26 @@ export interface SeqSpaceLayoutOptions {
 }
 
 /** 1/2/5 整步长刻度(与 m4 viewModel.ticksFor 同规则,单一定义搬到这里会导致
- *  m4 反向依赖 render,故此处复制实现 —— 两处注释放宽不一致属实现细节) */
+ *  m4 反向依赖 render,故此处复制实现 —— 两处注释放宽不一致属实现细节)。
+ *  量化护栏(审计 M4):
+ *  - 轴是整数(字节序号空间)时步长强制取整 ≥1:否则 span=1 的带出 step=0.2,
+ *    字节轴出现 100.2 这类小数刻度;
+ *  - 浮点轴(相对秒)按 step 动态取小数位:step≈0.0002 时固定 Math.round(t*10)/10
+ *    会把所有 tick 量化成同一值(撞值刷屏)。 */
 function ticksFor(axisMin: number, axisMax: number): number[] {
   if (axisMax <= axisMin) return []
-  const rawStep = (axisMax - axisMin) / 5
+  const isIntegerAxis = Number.isInteger(axisMin) && Number.isInteger(axisMax)
+  let rawStep = (axisMax - axisMin) / 5
+  if (isIntegerAxis) rawStep = Math.max(1, Math.ceil(rawStep))
   const mag = Math.pow(10, Math.floor(Math.log10(rawStep)))
   const norm = rawStep / mag
   const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag
+  // 浮点轴小数位:步长在 [1e-3,1) 时按数量级取 3/2/1 位,≥1 取整
+  const decimals = isIntegerAxis ? 0 : step >= 1 ? 0 : step >= 0.01 ? 2 : step >= 0.001 ? 3 : 4
   const ticks: number[] = []
-  // 浮点累积误差会把步长乘出 12.000000000000002 之类;按步长量化到整数/一位小数
-  for (let t = Math.ceil(axisMin / step) * step; t <= axisMax; t += step) {
-    ticks.push(Math.round(t * 10) / 10)
+  // 浮点累积误差会把步长乘出 12.000000000000002 之类;按步长量化到目标小数位
+  for (let t = Math.ceil(axisMin / step) * step; t <= axisMax + 1e-9; t += step) {
+    ticks.push(decimals === 0 ? Math.round(t) : Number(t.toFixed(decimals)))
   }
   return ticks
 }
@@ -293,7 +302,11 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
   // 装配每方向带
   const lanes: SeqSpaceLane[] = []
   for (const dir of ['c2s', 's2c'] as const) {
-    const segs = facts.segments.filter((sg) => sg.direction === dir && sg.seqLen > 0)
+    // 只取真正推进序列空间的段:rejected(未接纳)与 post-rst(RST 后不推进)不入轴,
+    // 否则外来 ISN/RST 后段的 seq 会把轴撑到十亿字节级幻影跨度
+    const segs = facts.segments.filter(
+      (sg) => sg.direction === dir && sg.seqLen > 0 && sg.classification !== 'rejected' && sg.classification !== 'post-rst',
+    )
     if (segs.length === 0) continue
     let axisMin = Infinity
     let axisMax = -Infinity
@@ -347,7 +360,9 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
         axisMax,
         seenRuns: coalesced.seen,
         gaps: coalesced.gaps,
-        sackBlocks: mergeRanges(sackRaw[dir]).slice(0, SEQ_SPACE_MAX_SACK),
+        // SACK 截断用 sampleMark(保留首尾)而非 slice(0,100):后者砍掉 seq 最大的
+        // 尾部块 —— 恰是「缺口之后乱序数据已到对端」的关键证据(审计 M2)
+        sackBlocks: sampleMark(mergeRanges(sackRaw[dir]), SEQ_SPACE_MAX_SACK),
         finalAck: finalAck[dir],
         retxMarks: sampleMark(retxMarks[dir], SEQ_SPACE_MAX_MARKS),
         marks: sampleMark(sortedMarks, SEQ_SPACE_MAX_MARKS),
@@ -366,7 +381,7 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       axisMax,
       seenRuns: mergedSeen,
       gaps: mergedGaps,
-      sackBlocks: mergeRanges(sackRaw[dir]).slice(0, SEQ_SPACE_MAX_SACK),
+      sackBlocks: sampleMark(mergeRanges(sackRaw[dir]), SEQ_SPACE_MAX_SACK),
       finalAck: finalAck[dir],
       retxMarks: sampleMark(retxMarks[dir], SEQ_SPACE_MAX_MARKS),
       marks: sampleMark(sortedMarks, SEQ_SPACE_MAX_MARKS),

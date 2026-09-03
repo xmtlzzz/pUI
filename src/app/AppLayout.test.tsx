@@ -415,6 +415,22 @@ describe('报告导出(格式选择 md/word/pdf,用户要求)', () => {
   })
 })
 
+describe('错误 banner 手动关闭', () => {
+  it('打开损坏文件出现 error banner;点 ✕ 后 error 消失(无需重新加载)', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    useApp.setState({ error: 'cannot parse capture: bad magic number' })
+    const { container } = render(<AppLayout />)
+    const banner = container.querySelector('.err')
+    expect(banner).toBeTruthy()
+    expect(banner!.textContent).toContain('cannot parse capture')
+
+    fireEvent.click(container.querySelector('[data-testid="dismiss-error"]')!)
+    expect(useApp.getState().error).toBeNull()
+    expect(container.querySelector('.err')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+})
+
 describe('解析遮罩(emotion-ball 官方球,emotion 32 处理中忙碌)', () => {
   it('loading=true 时渲染解析遮罩,帧数进度实时可见;loading=false 移除', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))

@@ -65,4 +65,28 @@ describe('SequenceBoard 时序图整页板块(用户要求:长会话交互整页
     })
     vi.unstubAllGlobals()
   })
+
+  it('localStorage 残留超大详情高度被钳制到 [120, 720],不把详情区撑出屏幕', () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('no server in jsdom'))))
+    const { packets, conversations, conv } = loadHttpFixture()
+    useApp.setState({
+      packets,
+      conversations,
+      filtered: conversations,
+      selectedId: conv.id,
+      diagramStyle: 'A',
+      timeMode: 'relative',
+    })
+    // 旧版本拖拽写值上限 720,但残留的超大值(如旧版本 bug/手改)不得生效
+    localStorage.setItem('pui:seqBoardDetailHeight', '5000')
+    const { container } = render(<SequenceBoard onClose={() => {}} />)
+    const detailBox = container.querySelector('[style*="height"]')
+    // 详情区高度被钳制到 720(而非 5000);负数/0/非法值落到默认 320
+    expect(detailBox).toBeTruthy()
+    const h = Number(detailBox?.getAttribute('style')?.match(/height:\s*(\d+(?:\.\d+)?)px/)?.[1])
+    expect(h).toBeLessThanOrEqual(720)
+    expect(h).toBeGreaterThanOrEqual(120)
+    vi.unstubAllGlobals()
+    localStorage.removeItem('pui:seqBoardDetailHeight')
+  })
 })

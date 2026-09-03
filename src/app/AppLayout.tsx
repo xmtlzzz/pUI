@@ -40,6 +40,7 @@ function clamp(v: number, min: number, max: number): number {
 export function AppLayout() {
   const openFile = useApp((s) => s.openFile)
   const error = useApp((s) => s.error)
+  const dismissError = useApp((s) => s.dismissError)
   const loading = useApp((s) => s.loading)
   const loadingFrames = useApp((s) => s.loadingFrames)
   const meta = useApp((s) => s.meta)
@@ -420,7 +421,20 @@ export function AppLayout() {
               导出 PNG(其 svgRef 在对照页指向已卸载的时序图,点它会静默空导出)
               /导出报告(对照页的导出走 FaultCompare 的「导出报告/证据 JSON」) */}
           <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
-          {error && <div className="err">{error}</div>}
+          {error && (
+            <div className="err" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span>{error}</span>
+              <button
+                type="button"
+                data-testid="dismiss-error"
+                aria-label="关闭错误提示"
+                onClick={dismissError}
+                style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '2px 4px', borderRadius: 4, flex: 'none' }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <ErrorBoundary name="故障分析">            <FaultCompare
               vm={compareVm}
               events={compare?.summaries}
@@ -443,7 +457,20 @@ export function AppLayout() {
           {/* 双点对照整页板块:优先级低于 compareFor(compareFor 分支在前);
               工具条只保留主工具条(打开文件仍可用),工作区让位给对照面板 */}
           <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
-          {error && <div className="err">{error}</div>}
+          {error && (
+            <div className="err" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span>{error}</span>
+              <button
+                type="button"
+                data-testid="dismiss-error"
+                aria-label="关闭错误提示"
+                onClick={dismissError}
+                style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '2px 4px', borderRadius: 4, flex: 'none' }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <ErrorBoundary name="双点对照">
             <DualComparePanel onClose={() => setShowDualBoard(false)} />
           </ErrorBoundary>
@@ -453,7 +480,20 @@ export function AppLayout() {
           {/* 时序图整页板块(用户要求 2026-08-31):主视图时序图区域太小,
               长会话交互看不清 —— 整页放大渲染 + 报文详情联动 */}
           <Toolbar zoom={zoom} setZoom={setZoom} hasConversation={!!selected} />
-          {error && <div className="err">{error}</div>}
+          {error && (
+            <div className="err" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span>{error}</span>
+              <button
+                type="button"
+                data-testid="dismiss-error"
+                aria-label="关闭错误提示"
+                onClick={dismissError}
+                style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '2px 4px', borderRadius: 4, flex: 'none' }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           <ErrorBoundary name="时序图整页">
             <SequenceBoard onClose={() => setShowSeqBoard(false)} />
           </ErrorBoundary>
@@ -473,7 +513,20 @@ export function AppLayout() {
             setAnomaliesOnly={setAnomaliesOnly}
             hasConversation={!!selected}
           />
-          {error && <div className="err">{error}</div>}
+          {error && (
+            <div className="err" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span>{error}</span>
+              <button
+                type="button"
+                data-testid="dismiss-error"
+                aria-label="关闭错误提示"
+                onClick={dismissError}
+                style={{ background: 'none', border: 'none', color: '#b91c1c', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '2px 4px', borderRadius: 4, flex: 'none' }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
           {selected && (
             <div style={{ padding: '4px 12px 0', display: 'flex', gap: 8 }}>
               <button type="button" className="btn" onClick={() => openCompare(selected.id)} data-testid="fault-analyze-entry">

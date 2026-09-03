@@ -31,7 +31,10 @@ export function SequenceBoard({ onClose }: { onClose: () => void }) {
   const DETAIL_KEY = 'pui:seqBoardDetailHeight'
   const [detailHeight, setDetailHeight] = useState(() => {
     const v = Number(localStorage.getItem(DETAIL_KEY))
-    return Number.isFinite(v) && v > 0 ? v : 320
+    // 与 AppLayout 的 loadNum+clamp 对齐:读取只查有限正数,再钳制到拖拽区间 [120,720]。
+    // 只用「>0」判断会让残留的超大旧值(如旧版本 bug/手改 localStorage)直接生效,
+    // 详情区撑出可视区;先钳制保证任何已持久化的值都落在合理区间
+    return Math.min(720, Math.max(120, Number.isFinite(v) && v > 0 ? v : 320))
   })
   const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()

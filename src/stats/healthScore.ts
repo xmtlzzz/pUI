@@ -48,9 +48,11 @@ export function computeHealthScore(packets: Packet[]): HealthScore {
     return { available: false, deductions: [], formula: HEALTH_FORMULA_VERSION }
   }
   const tcp = packets.filter((p) => p.transport === 'tcp')
-  const flagsOf = (p: Packet): number => {
+  const flagsOf = (p: Packet): number | null => {
     const n = Number.parseInt(p.tcpFlags ?? '', 16)
-    return Number.isNaN(n) ? 0 : n
+    // 解析失败返回 null:畸形 flags 报文不参与任何分支(RST 判定/ACK 推进/缺口检测),
+    // 静默当 0 会让它「既不算 RST 也不被当作确认」但 ack 照常推进 —— 畸形包应整体跳过
+    return Number.isNaN(n) ? null : n
   }
   const dirOf = (p: Packet): 'c2s' | 's2c' => {
     if (p.srcPort != null && p.dstPort != null) return p.dstPort < p.srcPort ? 'c2s' : 's2c'
@@ -76,6 +78,7 @@ export function computeHealthScore(packets: Packet[]): HealthScore {
   const ordered = [...tcp].sort((a, b) => a.time - b.time || a.number - b.number)
   for (const p of ordered) {
     const f = flagsOf(p)
+    if (f == null) continue // flags 无法判定:整包跳过
     if (f & F_RST) continue // RST 后确认不再可靠
     const dir = dirOf(p)
     // 本方向数据段:起点越过本方向确认沿 ≥ GAP_OVERSHOOT_BYTES → 缺口期开始
@@ -105,7 +108,10 @@ export function computeHealthScore(packets: Packet[]): HealthScore {
   }
 
   // ---- RST ----
-  const rst = tcp.find((p) => (flagsOf(p) & F_RST) !== 0)
+  const rst = tcp.find((p) => {
+    const f = flagsOf(p)
+    return f != null && (f & F_RST) !== 0
+  })
   if (rst) {
     deductions.push({ key: 'rst', points: 15, reason: `连接被 RST 终止(#${rst.number})` })
   }

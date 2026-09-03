@@ -47,6 +47,26 @@ describe('buildTopology', () => {
     expect(t.edges).toEqual([])
   })
 
+  it('displayHost 为 "?" 或空串的主机不产生节点/边(与 hostStats 守卫一致)', () => {
+    // 抓包含无 srcIp/dstIp 的报文(flowKey 退化为 '?'),aggregate 后 client/server 落 '?'。
+    // 旧实现节点侧虽有守卫,但边循环无守卫:造出指向 '?' 的边(再被 nodes 集过滤兜底)。
+    const convs = [
+      conv('1', '?', 'b:443', 100),
+      conv('2', '', 'b:443', 50),
+      conv('3', 'a:80', 'b:443', 10),
+    ]
+    const t = buildTopology(convs)
+    expect(t.nodes.map((n) => n.host)).not.toContain('?')
+    expect(t.nodes.map((n) => n.host)).not.toContain('')
+    for (const e of t.edges) {
+      expect(e.from).not.toBe('?')
+      expect(e.to).not.toBe('?')
+      expect(e.from).not.toBe('')
+      expect(e.to).not.toBe('')
+    }
+    expect(t.nodes.map((n) => n.host)).toEqual(expect.arrayContaining(['a', 'b']))
+  })
+
   it('边 key 含分隔符:无分隔符拼接会碰撞的 IP 对 key 各不相同', () => {
     // ("1.1.1.1","23.0.0.5") 与 ("1.1.1.12","3.0.0.5") 无分隔符拼接同为 "1.1.1.123.0.0.5"
     const SEP = String.fromCharCode(0)

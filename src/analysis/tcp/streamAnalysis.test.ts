@@ -346,6 +346,21 @@ describe('analyzeStream — 回绕排序、不可信输入与部分填补去重(
     expect(f.gaps).toHaveLength(0)
   })
 
+  it('外来 ISN 段被标 rejected,不落入 pure-duplicate(审计 P2 #6)', () => {
+    const packets = [
+      ...handshake(),
+      c2s({ number: 4, time: 0.03, tcpFlags: PSHACK, tcpSeq: 1, tcpAck: 1, tcpLen: 100 }),
+      c2s({ number: 5, time: 0.04, tcpFlags: PSHACK, tcpSeq: 2_500_000_000, tcpAck: 1, tcpLen: 100 }),
+    ]
+    const f = analyzeStream(packets)
+    const seg = f.segments.find((s) => s.packetNumber === 5)
+    // 该段从未被接纳进序列空间:分类必须如实为 rejected,而不是 pure-duplicate
+    // (pure-duplicate 会让事件层为它产出「伪重传」——它根本没进过序列空间)
+    expect(f.unorderableInput).toBe(true)
+    expect(seg?.classification).toBe('rejected')
+    expect(f.segments.filter((s) => s.classification === 'pure-duplicate')).toHaveLength(0)
+  })
+
   it('部分填补去重回归:宽空洞被缩小而非残留重复记录,缺失量如实为 700B', () => {
     const packets = [
       c2s({ number: 1, time: 0.0, tcpFlags: PSHACK, tcpSeq: 1000, tcpAck: 1, tcpLen: 100 }),

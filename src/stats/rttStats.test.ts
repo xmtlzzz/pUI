@@ -108,4 +108,16 @@ describe('computeRttStats — 单观察点 RTT 近似', () => {
     expect(stats.maxMs).toBe(2500)
     expect(stats.p50Ms).toBe(2500)
   })
+
+  it('畸形 tcpFlags(如 0xGG)解析失败:报文不参与 RST/ACK 分支,不当 0 处理', () => {
+    // 旧实现:parseInt('0xGG')=NaN → 0 → 畸形 ACK 报文被静默当作普通 ACK → 产生 100ms 样本。
+    // 修复后:flags 无法判定 → 整包跳过,不产生样本也不登记数据。
+    const packets = [
+      pkt(1, 0, 'c2s', { tcpFlags: PSHACK, tcpSeq: 1, tcpLen: 100 }),
+      pkt(2, 0.1, 's2c', { tcpFlags: '0xGG', tcpAck: 101 }),
+    ]
+    const stats = computeRttStats(packets)
+    expect(stats.samples).toBe(0) // 旧实现为 1(畸形 ACK 被当作确认事件)
+    expect(stats.available).toBe(false)
+  })
 })

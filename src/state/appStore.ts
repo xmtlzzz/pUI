@@ -324,6 +324,12 @@ export const useApp = create<AppState>((set, get) => ({
         // 高亮仅用于视觉定位,窗口内命中报文超过上限时只保留前 2000 个报文号;
         // 截断只作用于写入 highlight 的数组,bestCount 判定仍用完整计数
         patch.highlight = bestNums.length > HIGHLIGHT_LIMIT ? bestNums.slice(0, HIGHLIGHT_LIMIT) : bestNums
+      } else {
+        // 筛选/窗口内无命中会话:清空选中与高亮,避免时序图继续渲染
+        // 不在当前列表/时间窗内的会话(列表空但图有内容的视觉分裂)
+        patch.selectedId = null
+        patch.selectedPacket = null
+        patch.highlight = []
       }
     } else {
       patch.highlight = [] // 清除区间时一并清掉高亮,避免残留

@@ -130,4 +130,27 @@ describe('computeHealthScore — 透明健康分(仅筛选用)', () => {
     expect(h.available).toBe(true)
     expect(h.score).toBeGreaterThanOrEqual(0)
   })
+
+  it('畸形 tcpFlags(如 0xGG)解析失败:报文不参与 RST/ACK 判定,不当 0 处理', () => {
+    // 旧实现:parseInt('0xGG')=NaN → 0 → 畸形报文既不算 RST 也不被当作 ACK,
+    // 而是静默被当作"普通报文":这里畸形 RST 报文因 flags=0 不触发 rst 扣分。
+    // 修复后:flags 无法判定 → 该报文被跳过,同样不触发 rst 扣分。
+    const malformedRst: Packet[] = [
+      C({ number: 1, time: 0, tcpFlags: '0x0002', tcpLen: 0 }),
+      S({ number: 2, time: 0.5, tcpFlags: '0xGG' }),
+    ]
+    const hRst = computeHealthScore(malformedRst)
+    expect(hRst.deductions.some((d) => d.key === 'rst')).toBe(false)
+
+    // 畸形 ACK 报文不得推进确认沿:数据段 101-200 确认缺失 → 缺口未恢复。
+    // 旧实现:flags=0 报文的 tcpAck 仍会被消费 → ackedTo=101 → 缺口被闭合,不扣分。
+    const malformedAck: Packet[] = [
+      C({ number: 1, time: 0, tcpFlags: '0x0002', tcpLen: 0 }),
+      S({ number: 2, time: 0.01, tcpFlags: '0x0012', tcpAck: 0 }),
+      C({ number: 3, time: 0.1, tcpSeq: 101, tcpLen: 100 }), // 距确认沿 101B ≥ 阈值 → 真实缺口
+      S({ number: 4, time: 0.2, tcpFlags: '0xGG', tcpAck: 201 }), // 畸形 ACK:不得闭合缺口
+    ]
+    const hAck = computeHealthScore(malformedAck)
+    expect(hAck.deductions.some((d) => d.key === 'unrecovered-gap')).toBe(true)
+  })
 })

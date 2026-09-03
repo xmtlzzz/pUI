@@ -36,4 +36,22 @@ describe('deriveSummary', () => {
     expect(s.topHosts).toHaveLength(2)
     expect(s.topHosts[0].bytes).toBe(400)
   })
+
+  it('displayHost 为 "?" 或空串的主机不进 topHosts(与 hostStats 守卫一致)', () => {
+    // 抓包含无 srcIp/dstIp 的报文(flowKey 退化为 '?'),aggregate 后 client/server 落 '?'。
+    // 旧实现:'?' 主机仍进 hosts map,可能占据 topHosts 名额。
+    const q: Conversation = {
+      id: 'q', client: '?', server: '?', protocol: 'tcp', packetCount: 2, bytes: 9000,
+      start: 0, end: 1, duration: 1, packets: [], issues: [],
+    }
+    const emptyHost: Conversation = {
+      id: 'e', client: '', server: '', protocol: 'tcp', packetCount: 2, bytes: 9000,
+      start: 0, end: 1, duration: 1, packets: [], issues: [],
+    }
+    const s = deriveSummary([conv('1', 'http', 100, 0, 1, []), q, emptyHost])
+    expect(s.topHosts).toHaveLength(2) // a、b 来自正常会话
+    expect(s.topHosts.map((h) => h.host)).not.toContain('?')
+    expect(s.topHosts.map((h) => h.host)).not.toContain('')
+    expect(s.topHosts[0].bytes).toBe(100)
+  })
 })

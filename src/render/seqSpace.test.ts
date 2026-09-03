@@ -216,6 +216,46 @@ describe('computeSeqSpaceLayout', () => {
     for (let i = 1; i < l2.seenRuns.length; i++) expect(l2.seenRuns[i][0]).toBeGreaterThan(l2.seenRuns[i - 1][0])
   })
 
+  it('跨 2^32 回绕流:轴展开跨度守卫(降级为最大连续块,无 4GB 幻影缺口)', () => {
+    // 跨回绕的连续数据:W 端 [4294967000,4294967100] 与回绕后 [0,100] 环上相邻
+    const f = facts({
+      segments: [
+        { packetNumber: 1, time: 0, direction: 'c2s', seq: 4294967000, seqLen: 100 },
+        { packetNumber: 2, time: 1, direction: 'c2s', seq: 0, seqLen: 100 }, // 回绕后紧邻
+      ],
+      gaps: [],
+    })
+    const lay = computeSeqSpaceLayout(packets, { client: 'x:1', factsOverride: f })
+    const lane = lay.lanes[0]
+    // 降级生效:轴跨度是环上连续块的真实跨度(百字节级),不是数值跨度 ~4e9
+    expect(lane.axisMax - lane.axisMin).toBeLessThan(1e8)
+    // 无巨大 gap:合并后的可见 gap 都不会是 4GB 级
+    for (const [s, e] of lane.gaps) expect(e - s).toBeLessThan(1e8)
+    expect(lane.wrapAround).toBe(true)
+  })
+
+  it('跨回绕流:轴外散落段(外来 ISN)被裁剪,不撑大轴', () => {
+    const f = facts({
+      segments: [
+        { packetNumber: 1, time: 0, direction: 'c2s', seq: 4294967000, seqLen: 100 },
+        { packetNumber: 2, time: 1, direction: 'c2s', seq: 0, seqLen: 100 },
+        { packetNumber: 3, time: 2, direction: 'c2s', seq: 5000000, seqLen: 100 }, // 环上远处的散落段
+      ],
+      gaps: [{ direction: 'c2s', start: 4294967200, end: 4294967295, byteCount: 95 }],
+    })
+    const lay = computeSeqSpaceLayout(packets, { client: 'x:1', factsOverride: f })
+    const lane = lay.lanes[0]
+    // 轴仍以主连续块为基准,不被散落段撑到 4e9
+    expect(lane.axisMax - lane.axisMin).toBeLessThan(1e8)
+    for (const [s, e] of lane.gaps) expect(e - s).toBeLessThan(1e8)
+  })
+
+  it('非回绕流不受影响:轴跨度正常,wrapAround 为假', () => {
+    const lay = computeSeqSpaceLayout(packets, { client: '10.0.0.1:1000', server: '10.0.0.2:80' })
+    for (const lane of lay.lanes) expect(lane.wrapAround).toBeFalsy()
+    expect(lay.lanes[0].axisMax - lay.lanes[0].axisMin).toBeLessThan(1e8)
+  })
+
   it('性能护栏:高缺口率 23k 包全布局 < 1.5s(卡死回归)', () => {
     const N = 23000
     const ps: Packet[] = []

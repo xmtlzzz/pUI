@@ -50,15 +50,19 @@ export function computeRttStats(packets: Packet[]): RttStats {
     if (p.srcPort != null && p.dstPort != null) return p.dstPort < p.srcPort ? 'c2s' : 's2c'
     return 'c2s'
   }
-  const flags = (p: Packet): number => {
+  const flags = (p: Packet): number | null => {
     const n = Number.parseInt(p.tcpFlags ?? '', 16)
-    return Number.isNaN(n) ? 0 : n
+    // 解析失败(NaN)返回 null:畸形 flags 报文既不是 RST 也不是 ACK,
+    // 静默当 0 会让它「既不算 RST 也不被当作确认」但数据登记/ACK 推进照常
+    // —— 畸形包不应参与任何分支(审计 A6)
+    return Number.isNaN(n) ? null : n
   }
 
   const samples: number[] = []
   for (const p of ordered) {
     const dir = dirOf(p)
     const f = flags(p)
+    if (f == null) continue // flags 无法判定:整包跳过
     if (f & 0x04) continue // RST:之后不再有可靠确认
     // 数据段:登记字节沿首次发出时刻(Karn 单观察点近似 —— 只保留首次发送时刻,
     // 重传段不得覆盖:否则 ACK 落在重传后会把 RTT 算成「重传→ACK」的低估)

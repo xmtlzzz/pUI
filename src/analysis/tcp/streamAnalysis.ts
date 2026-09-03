@@ -16,6 +16,10 @@ export type SegmentClassification =
   | 'out-of-order-fill'
   /** 不占序列空间(纯 ACK / keep-alive) */
   | 'no-payload'
+  /** 候选带拒收(外来 ISN / 无法定序):该段未被接纳进序列空间。
+   *  与 pure-duplicate 的关键区别:pure-duplicate 是「字节已见过」的重发,
+   *  rejected 是「从未见过也不能定序」的段 —— 事件层不得为它生成伪重传。 */
+  | 'rejected'
 
 /** 方向:c2s = 发起方→对端,s2c = 反向。以流内首个观察到的报文源端点为 c2s。 */
 export type StreamDirection = 'c2s' | 's2c'
@@ -183,7 +187,24 @@ export function analyzeStream(packets: Packet[]): StreamAnalysisFacts {
     // 落位不同的候选 —— 跨回绕长流的续传段会被误判为纯重传(newBytes=0),
     // 从而跳过下方的空洞对账、漏报 Gap。差值口径永远以 add 的权威落位为准。
     const bytesBefore = ranges.totalBytes()
-    ranges.add(start, end)
+    const accepted = ranges.add(start, end)
+    if (!accepted) {
+      // 候选带拒收(外来 ISN / 无法定序):该段未被接纳进序列空间。
+      // 不得落入 pure-duplicate(事件层会为它生成「伪重传」——它根本没进过
+      // 序列空间,「重发的字节此前已观察到」不是事实);如实标 rejected,
+      // unorderableInput 由 ranges 置位,上层据此降级。rejected 段不参与对账。
+      segments.push({
+        packetNumber: p.number,
+        time: p.time,
+        direction: dir,
+        seq: start,
+        payloadLen,
+        seqLen: sl,
+        classification: 'rejected',
+        newBytes: 0,
+      })
+      continue
+    }
     const newBytes = ranges.totalBytes() - bytesBefore
 
     // 分类:先判重复/重叠,再判是否越洞或补洞

@@ -163,6 +163,45 @@ describe('appStore 加载一致性', () => {
     expect(st.highlight).toEqual([4])
   })
 
+  it('setTimeRange 筛选无命中(filtered 为空)时清空 selectedId/highlight,不残留窗口外会话', async () => {
+    const packets = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets, path: p }))
+    await useApp.getState().openFile('x.pcap')
+    const convId = useApp.getState().conversations[0].id
+    useApp.getState().select(convId)
+    useApp.getState().setHighlight([1])
+    // 激活筛选把唯一会话过滤掉 → filtered 为空(筛选本身不清选中)
+    useApp.getState().setFilter({ protocol: ['dns'] })
+    expect(useApp.getState().filtered).toHaveLength(0)
+    expect(useApp.getState().selectedId).toBe(convId)
+    // 下钻时间窗:filtered 为空无从定位 → 选中与高亮必须清空,时序图不得继续渲染窗口外会话
+    useApp.getState().setTimeRange({ start: 0, end: 10 })
+    const st = useApp.getState()
+    expect(st.selectedId).toBeNull()
+    expect(st.highlight).toEqual([])
+    expect(st.selectedPacket).toBeNull()
+  })
+
+  it('setTimeRange 窗口内无命中报文(best 为空)时清空 selectedId/highlight', async () => {
+    // 会话时间跨 [1,5],窗口 [2.5,3.5] 与区间重叠(filtered 非空)但无报文落在窗口内 → best 为空
+    const packets = [
+      { ...pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80), time: 1 },
+      { ...pkt(2, 'http', '2.2.2.2', 80, '1.1.1.1', 5000), time: 5 },
+    ] as Packet[]
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets, path: p }))
+    await useApp.getState().openFile('x.pcap')
+    const convId = useApp.getState().conversations[0].id
+    useApp.getState().select(convId)
+    useApp.getState().setHighlight([1])
+    // 窗口 [2.5,3.5]:会话区间重叠被保留,但窗口内无报文 → best==null,bestCount==0
+    useApp.getState().setTimeRange({ start: 2.5, end: 3.5 })
+    const st = useApp.getState()
+    expect(st.filtered).toHaveLength(1)
+    expect(st.selectedId).toBeNull()
+    expect(st.highlight).toEqual([])
+    expect(st.selectedPacket).toBeNull()
+  })
+
   it('hexCache 超过上限按 LRU 逐出最旧条目', async () => {
     vi.mocked(fetchHex).mockImplementation((_p: string, n: number) => Promise.resolve(`hex${n}`))
     useApp.setState({ currentPath: 'x.pcap' })

@@ -30,8 +30,11 @@ export function deriveSummary(convs: Conversation[]): SummaryStats {
     if (c.issues.length) issueConvs++
     protos.set(c.protocol, (protos.get(c.protocol) ?? 0) + 1)
     for (const i of c.issues) issues.set(i.type, (issues.get(i.type) ?? 0) + 1)
-    hosts.set(displayHost(c.client), (hosts.get(displayHost(c.client)) ?? 0) + c.bytes)
-    hosts.set(displayHost(c.server), (hosts.get(displayHost(c.server)) ?? 0) + c.bytes)
+    // 与 hostStats 同守卫:'?'(无 srcIp/dstIp 报文的 flowKey 退化值)与空串不进 topHosts
+    const ch = displayHost(c.client)
+    const sh = displayHost(c.server)
+    if (ch && ch !== '?') hosts.set(ch, (hosts.get(ch) ?? 0) + c.bytes)
+    if (sh && sh !== '?') hosts.set(sh, (hosts.get(sh) ?? 0) + c.bytes)
   }
   const byDesc = <T,>(m: Map<string, T>) => [...m.entries()].sort((a, b) => (b[1] as number) - (a[1] as number))
   return {

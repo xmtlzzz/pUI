@@ -53,6 +53,9 @@ export interface SeqSpaceLane {
   kind: 'tcp' | 'fallback'
   /** 带的协议名(回退带显示;TCP 带恒 'tcp') */
   proto: string
+  /** 该带是否检测到 2^32 序列号回绕(轴已降级为最大连续块;UI 可据此提示)。
+   *  跨回绕流的 32 位原始 seq 数值跨度可达 4e9,直接画会造出十亿字节级幻影缺口。 */
+  wrapAround?: boolean
 }
 
 export interface SeqSpaceLayout {
@@ -315,6 +318,26 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
     // 采样会丢区间,合并不丢 —— 事实边界仍在轴上。
     const mergedSeen = mergeRanges(seenRaw)
     const mergedGaps = laneGaps
+    // 2^32 回绕守卫:32 位原始 seq 的数值跨度跨过半空间(0x7fffffff)时,环上相邻的
+    // 数据在数值轴上相距 ~4e9,直接画会造出十亿字节级幻影缺口(数据被挤到两端、
+    // 中间全是红斜纹)。与 m4 viewModel.buildPanoramaView 同款守卫 —— 降级为
+    // 最大连续已见块(轴收窄到该块,事实边界保留,wrapAround 置位供 UI 提示)。
+    let wrapAround = false
+    if (axisMax - axisMin > 0x7fffffff) {
+      wrapAround = true
+      // 降级为最大连续已见块:从 seenRuns 中选最宽的一段作为轴(初始化用首块,
+      // 不能从原始轴跨度起算 —— 那正是要降级的 4e9 跨度,永远不会被替换)
+      let bestStart = mergedSeen.length ? mergedSeen[0][0] : axisMin
+      let bestEnd = mergedSeen.length ? mergedSeen[0][1] : axisMax
+      for (const [s, e] of mergedSeen) {
+        if (e - s > bestEnd - bestStart) {
+          bestStart = s
+          bestEnd = e
+        }
+      }
+      axisMin = bestStart
+      axisMax = bestEnd
+    }
     if (mergedSeen.length > SEQ_SPACE_MAX_RANGES || mergedGaps.length > SEQ_SPACE_MAX_RANGES) {
       const coalesced = coalesceRanges(mergedSeen, mergedGaps, SEQ_SPACE_MAX_RANGES)
       lanes.push({
@@ -332,6 +355,7 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
         messages: [],
         kind: 'tcp',
         proto: 'tcp',
+        wrapAround,
       })
       continue
     }
@@ -350,6 +374,7 @@ export function computeSeqSpaceLayout(packets: Packet[], opts: SeqSpaceLayoutOpt
       messages: [],
       kind: 'tcp',
       proto: 'tcp',
+      wrapAround,
     })
   }
 

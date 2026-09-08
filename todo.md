@@ -69,7 +69,7 @@ M5 剩余(按优先级):
 - [x] RTT 分位数/variation、窗口变化、Capture Quality(截断统计;丢包统计受单观察点限制不做断言)
 - [x] 完整 Sequence Space View(缩放/筛选):全景视图(panorama,回绕流降级隐藏)+ clipSeqSpaceView/zoomStep 纯函数缩放;控件 +/−/重置、滚轮以指针为锚缩放、拖拽平移;图例升级为图层开关(已见/未收到/SACK/重传)
 - [x] Health Score(透明版本化公式+扣分明细,仅筛选用,覆盖不足显示 unavailable)
-- [ ] 性能:10 万包 Worker 化解析、tshark 分批/流式、事件虚拟化
+- [x] 性能:Worker 化解析中段完成 —— Worker 回传列式瘦身(packetCodec:Packet[]↔列数组,结构化克隆对象数从包数降为字段数,PacketLens 借鉴;公共 API 零变化)。tshark 分批/流式此前已完成(run_capture_stream);10 万包量级端到端打磨与事件虚拟化仍待做
 
 **M6 业务体验关联(全部完成)**:
 - [x] `ApplicationAnalyzer` 插件接口;第一批 HTTP/DNS/TLS(复用现有字段,不声明解密);摘要面板应用层事件区+慢响应下钻

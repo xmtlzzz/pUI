@@ -25,7 +25,7 @@ cargo test --manifest-path src-tauri/Cargo.toml  # Rust 侧(tshark 桥)
 
 | 路径 | 职责 |
 |---|---|
-| `src/parse/` | tshark JSON 解析:字段契约 `captureFields.ts`、`parsePackets.ts`(平铺键优先/协议树回落)、Worker 化调度 `parseAsync.ts` |
+| `src/parse/` | tshark JSON 解析:字段契约 `captureFields.ts`、`parsePackets.ts`(平铺键优先/协议树回落)、Worker 化调度 `parseAsync.ts`、列式传输瘦身 `packetCodec.ts`/`parseWorker.ts`(PacketLens 借鉴) |
 | `src/analysis/tcp/` | TCP 序列空间引擎:`seq.ts`(RFC1982 序号算术)、`streamAnalysis.ts`(Gap 生命周期/段分类)、`events.ts`(M3 事件)、`m5Events.ts`(M5 新检测器)、`stages.ts`(故障阶段推导)、`scenarios.e2e.test.ts`(真实 tshark 端到端) |
 | `src/analysis/app/` | 应用层插件分析器(HTTP/DNS/TLS/SSH/RDP/VNC/SMB2,只消费已解析字段) |
 | `src/model/` | 数据模型与主机形态工具:`ipNum`(IPv4↔32 位整数、网络序比较,PacketLens 借鉴)/`displayHost`(host:port 剥端口) |

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parsePacketsAsync, resetParseWorkerForTest, cancelParse, ParseCancelledError, poolSizeFor } from './parseAsync'
 import { parsePackets, parsePacketsBatchPush } from './parsePackets'
 import { handleParseMessage } from './parseWorker'
-import type { Packet } from '../model/types'
+import { columnsToPackets } from './packetCodec'
+import type { PacketColumns } from './packetCodec'
 
 /**
  * 与 parsePackets.test.ts 同构的最小平铺帧构造
@@ -29,14 +30,15 @@ const tcpFrame = (): string =>
 
 /** 直接驱动真实 parseWorker.ts 的处理函数(handleParseMessage)并以 post 回调
  *  捕获回传 —— 验证 Worker 端回传协议本身(requestId 是否原样带回),
- *  不再是标了 requestId 的假 Worker 的自证循环。 */
+ *  不再是标了 requestId 的假 Worker 的自证循环。
+ *  回传为列式形态(见 parseWorker.ts):ok 携带 columns,packets 已废止。 */
 function realWorkerReply(msg: { kind: string; jsonText?: string; requestId?: number }): {
   kind: string
-  packets?: Packet[]
+  columns?: PacketColumns
   error?: string
   requestId?: number
 } | null {
-  let out: { kind: string; packets?: Packet[]; error?: string; requestId?: number } | null = null
+  let out: { kind: string; columns?: PacketColumns; error?: string; requestId?: number } | null = null
   handleParseMessage(msg, (resp) => {
     out = resp
   })
@@ -252,11 +254,15 @@ describe('parsePacketsAsync — Worker 池(M6 并发解析)', () => {
 
   it('真实 parseWorker 处理函数回传 requestId(回传协议非自证循环)', async () => {
     // 直接驱动 parseWorker.ts 的 onmessage 处理函数:验证 Worker 端回传响应
-    // 确实带上了主线程派发时的 requestId —— 不再依赖假 Worker 手动 echo
+    // 确实带上了主线程派发时的 requestId —— 不再依赖假 Worker 手动 echo。
+    // 回传协议为列式(PacketLens 借鉴 #1):ok 携带 columns 而非 packets,
+    // 断言经 columnsToPackets 重建后与 parsePackets 逐字段一致
     const text = makeBigText('10.9.0.1', '99')
     // 模拟主线程派发带 requestId 的请求(parseAsync 的真实派发形态)
     const out1 = realWorkerReply({ kind: 'parse', jsonText: text, requestId: 42 })
-    expect(out1).toEqual({ kind: 'ok', packets: parsePackets(text), requestId: 42 })
+    expect(out1?.kind).toBe('ok')
+    expect(out1?.requestId).toBe(42)
+    expect(columnsToPackets(out1!.columns!)).toEqual(parsePackets(text))
     // err 分支同样回传 requestId
     const out2 = realWorkerReply({ kind: 'parse', jsonText: '{broken', requestId: 7 })
     expect(out2).toEqual({ kind: 'err', error: expect.any(String), requestId: 7 })

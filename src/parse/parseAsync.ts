@@ -1,4 +1,6 @@
 import { parsePackets, parsePacketsBatchPush } from './parsePackets'
+import { columnsToPackets } from './packetCodec'
+import type { PacketColumns } from './packetCodec'
 import type { Packet } from '../model/types'
 
 /**
@@ -118,7 +120,7 @@ function spawnEntry(): PoolEntry | null {
     const worker = new Worker(new URL('./parseWorker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike
     const entry: PoolEntry = { worker, pending: new Map(), busy: false }
     worker.onmessage = (ev: { data: unknown }) => {
-      const msg = ev.data as { kind: 'ok' | 'err'; packets?: Packet[]; error?: string; requestId?: number }
+      const msg = ev.data as { kind: 'ok' | 'err'; packets?: Packet[]; columns?: PacketColumns; error?: string; requestId?: number }
       // 回传协议契约:Worker 必须原样带回 requestId,否则并发关联键失效
       // (曾因 parseWorker 未回传 requestId,首个并发请求永久挂起)。这里显式断言,
       // 缺失即视为该请求失败并走回落 —— 比静默落到 id=-1 更早暴露协议漂移。
@@ -134,8 +136,15 @@ function spawnEntry(): PoolEntry | null {
       entry.pending.delete(id)
       entry.busy = entry.pending.size > 0
       if (!p) return // 未知 requestId(崩溃重建后的迟来消息):丢弃,不串扰
-      if (msg.kind === 'ok' && msg.packets) p.resolve(msg.packets)
-      else p.reject(new Error(msg.error ?? 'worker parse failed'))
+      if (msg.kind === 'ok') {
+        // 列式回传(PacketLens 借鉴 #1):Worker 侧 packetColumns 打包、此处一次性重建;
+        // 兼容旧 packets 形态(测试假 Worker 的 replyOk 构造器),协议迁移期双分支
+        if (msg.columns) p.resolve(columnsToPackets(msg.columns))
+        else if (msg.packets) p.resolve(msg.packets)
+        else p.reject(new Error('worker ok response missing columns/packets'))
+      } else {
+        p.reject(new Error(msg.error ?? 'worker parse failed'))
+      }
       drainQueue()
     }
     worker.onerror = () => {

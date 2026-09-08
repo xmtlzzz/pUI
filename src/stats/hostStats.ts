@@ -1,5 +1,6 @@
 import type { Conversation } from '../model/types'
 import { displayHost } from '../model/types'
+import { compareHosts } from '../model/ipNum'
 
 export interface HostStat {
   host: string
@@ -12,7 +13,9 @@ export interface HostStat {
 }
 
 /** 主机(Endpoint)视角:按 displayHost 归并涉及该主机的会话(竞品研究借鉴清单 #5,差异化点)。
- *  同一会话两侧同主机(如组播/回环)不重复计数;按涉及字节降序。 */
+ *  同一会话两侧同主机(如组播/回环)不重复计数;按涉及字节降序。
+ *  并列(同字节同异常数)时按端点网络序兜底(IPv4 数值序,PacketLens 借鉴 #2),
+ *  避免词法序让同分主机错序且不稳定。 */
 export function aggregateHosts(convs: Conversation[]): HostStat[] {
   const map = new Map<string, HostStat>()
   for (const c of convs) {
@@ -36,5 +39,7 @@ export function aggregateHosts(convs: Conversation[]): HostStat[] {
     add(displayHost(c.client), 'client')
     add(displayHost(c.server), 'server')
   }
-  return [...map.values()].sort((a, b) => b.bytes - a.bytes || b.issues - a.issues)
+  return [...map.values()].sort(
+    (a, b) => b.bytes - a.bytes || b.issues - a.issues || compareHosts(a.host, b.host),
+  )
 }

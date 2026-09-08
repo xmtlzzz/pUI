@@ -112,6 +112,24 @@ describe('collectFilterOptions', () => {
     expect(o.srcIps).toContain('aa:bb:cc:dd:ee:01')
     expect(o.dstIps).toContain('aa:bb:cc:dd:ee:02')
   })
+
+  it('IP 候选列表按 IPv4 网络序排序(PacketLens 借鉴 #2:词法序在跨网段时是错的)', () => {
+    const o = collectFilterOptions([
+      pkt(1, 'tcp', '192.168.1.3', 1, '10.0.0.10', 80),
+      pkt(2, 'tcp', '10.0.0.2', 2, '192.168.1.3', 80),
+      pkt(3, 'tcp', '10.0.0.10', 3, '10.0.0.9', 80),
+    ])
+    expect(o.srcIps).toEqual(['10.0.0.2', '10.0.0.10', '192.168.1.3'])
+    expect(o.dstIps).toEqual(['10.0.0.9', '10.0.0.10', '192.168.1.3'])
+  })
+
+  it('混合形态候选:IPv4 在前(网络序),MAC/IPv6 在后保持 locale 序', () => {
+    const arp: Packet = { number: 1, time: 0, len: 42, transport: 'arp', proto: 'arp', srcMac: 'ff:ee:dd:cc:bb:aa', dstMac: 'aa:00:00:00:00:02', direction: 'other' }
+    const v6: Packet = { number: 2, time: 1, len: 80, transport: 'tcp', proto: 'tcp', srcIp: '2001:db8::1', dstIp: '2001:db8::2', srcPort: 1, dstPort: 2, direction: 'other' }
+    const o = collectFilterOptions([arp, v6, pkt(3, 'tcp', '10.0.0.1', 4, '10.0.0.2', 80)])
+    expect(o.srcIps).toEqual(['10.0.0.1', '2001:db8::1', 'ff:ee:dd:cc:bb:aa'])
+    expect(o.dstIps).toEqual(['10.0.0.2', '2001:db8::2', 'aa:00:00:00:00:02'])
+  })
 })
 
 describe('filterConversations · mac', () => {

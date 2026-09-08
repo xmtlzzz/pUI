@@ -28,6 +28,7 @@ cargo test --manifest-path src-tauri/Cargo.toml  # Rust 侧(tshark 桥)
 | `src/parse/` | tshark JSON 解析:字段契约 `captureFields.ts`、`parsePackets.ts`(平铺键优先/协议树回落)、Worker 化调度 `parseAsync.ts` |
 | `src/analysis/tcp/` | TCP 序列空间引擎:`seq.ts`(RFC1982 序号算术)、`streamAnalysis.ts`(Gap 生命周期/段分类)、`events.ts`(M3 事件)、`m5Events.ts`(M5 新检测器)、`stages.ts`(故障阶段推导)、`scenarios.e2e.test.ts`(真实 tshark 端到端) |
 | `src/analysis/app/` | 应用层插件分析器(HTTP/DNS/TLS/SSH/RDP/VNC/SMB2,只消费已解析字段) |
+| `src/model/` | 数据模型与主机形态工具:`ipNum`(IPv4↔32 位整数、网络序比较,PacketLens 借鉴)/`displayHost`(host:port 剥端口) |
 | `src/render/` | 时序图四种形态(斜线/行式/序号空间/时间流)与时间格式、布局纯函数 |
 | `src/stats/` | 统计纯函数(全部无副作用、确定性):`summaryStats`/`histogram`(时间桶)/`throughputBuckets`(吞吐字节)/`rttStats`(RTT 分位数+对数桶)/`windowStats`(窗口通告统计+时间线)/`hostStats`/`topology`/`captureQuality`/`healthScore` |
 | `src/app/` | 面板组件(Filter/List/Host/Summary/SequenceBoard/Topology/DualCompare) |

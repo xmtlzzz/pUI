@@ -38,4 +38,14 @@ describe('aggregateHosts', () => {
     expect(hosts.find((h) => h.host === '?')).toBeUndefined()
     expect(hosts.find((h) => h.host === 'b')?.protocols).toEqual(['http'])
   })
+
+  it('同字节同异常数并列时,IPv4 端点按网络序排前(稳定兜底;主排序仍是字节降序)', () => {
+    const list = [
+      conv('1', '192.168.1.3:80', '10.0.0.10:53', 100, []),
+      conv('2', '10.0.0.2:80', '10.0.0.9:53', 100, []),
+    ]
+    const hosts = aggregateHosts(list)
+    // 全部同分并列:词法序会把 192.168.1.3 排最前(错误),网络序应 10.0.0.2 最前
+    expect(hosts.map((h) => h.host)).toEqual(['10.0.0.2', '10.0.0.9', '10.0.0.10', '192.168.1.3'])
+  })
 })

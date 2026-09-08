@@ -1,4 +1,5 @@
 import type { Conversation, FilterCondition, FilterOptions, Packet } from '../model/types'
+import { withIp4Sort } from '../model/ipNum'
 
 export function filterConversations(convs: Conversation[], cond: FilterCondition): Conversation[] {
   const issueTypes = cond.issueTypes ?? []
@@ -41,8 +42,10 @@ export function collectFilterOptions(packets: Packet[]): FilterOptions {
   }
   return {
     protocols: [...protocols].sort(),
-    srcIps: [...srcIps].sort(),
-    dstIps: [...dstIps].sort(),
+    // IP 候选按 IPv4 网络序(PacketLens 借鉴 #2):词法序跨网段时错序,
+    // MAC/IPv6 等非 IPv4 形态排在 IPv4 之后,内部保持 locale 序
+    srcIps: withIp4Sort([...srcIps]),
+    dstIps: withIp4Sort([...dstIps]),
     ports: [...ports].sort((a, b) => a - b),
   }
 }

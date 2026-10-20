@@ -9,8 +9,8 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 875 用例全绿(`npx vitest run`,86 文件) |
-| Rust 测试 | 29 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`,含真实 tshark e2e) |
+| 前端测试 | 877 用例全绿(`npx vitest run`,86 文件) |
+| Rust 测试 | 30 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`,含真实 tshark e2e) |
 | 示例抓包 | http/dns/mixed/lossy/**remote**(remote=SSH/VNC/RDP/SMB2 四协议演示,gen-fixtures 可复现) |
 | 打开格式 | pcap/pcapng/cap/dmp/gz(透明解压)/5views/NetMon/nettl/snoop/CommView/Sniffer/ERF/btsnoop 等(tshark 按内容魔数识别,实测锚点 e2eFlat) |
 | 构建 | `npm run build` 通过(主 chunk gzip ≈117KB;docx 为懒加载 chunk ≈119KB gzip,仅导出 Word 时加载) |
@@ -90,7 +90,7 @@ M5 剩余(按优先级):
 - [x] **解析主线程**:`parseAsync` 调度层已落地(<1MB 主线程直解,≥1MB 走 parseWorker,失败自动回落);Rust 侧 tshark 分批/流式已完成,桌面主路径走流式批解析
 - [ ] seqSpace 的 `ackTrack` 每次 build 全量扫描 packets(单会话 O(n),VDI 规模无感;Worker 化后自然消解)
 - [ ] 报文详情「查看事件上下文」点击时同步运行 analyzeStream+detectTcpEvents(有 perfGuard 护栏;若 VDI 会话点击感到顿挫,可在后台异步后跳转)
-- [ ] Tauri 流式解析取消:切换文件时旧 `open_capture` 会继续跑到 tshark 结束(loadSeq 丢弃结果但未中止子进程);后续可加 `cancel_capture` 令牌
+- [x] Tauri 流式解析取消:按 `requestId` 注册取消令牌,切换文件/示例时 `cancel_capture` 置位,看门狗 kill+wait 旧 tshark;主/副抓包 id 隔离
 
 ## 六、验证命令
 

@@ -127,6 +127,22 @@ describe('bridge 命令路由(流式打开,Tauri 分支)', () => {
     await expect(openCapture('C:/x.pcap')).rejects.toThrow(/帧数不符/)
   })
 
+  it('openCapture 透传 requestId,并可调用 cancel_capture 取消', async () => {
+    const { openCapture, cancelCapture } = await import('./tauri')
+    invokeMock.mockImplementation(async (_cmd, args) => {
+      const channel = (args as { onChunk: { onmessage: (msg: unknown) => void } }).onChunk
+      channel.onmessage({ seq: 0, text: '[', done: false })
+      return { size: 100, path: 'C:/x.pcap', frames: 0 }
+    })
+    await openCapture('C:/x.pcap', undefined, 'main-3')
+    const [, args] = invokeMock.mock.calls[0] as [string, Record<string, unknown>]
+    expect(args.requestId).toBe('main-3')
+
+    invokeMock.mockResolvedValue(true)
+    await cancelCapture('main-3')
+    expect(invokeMock).toHaveBeenLastCalledWith('cancel_capture', { requestId: 'main-3' })
+  })
+
   it('setTsharkPath → set_tshark_path,携带路径(tshark 设置入口接线)', async () => {
     const { setTsharkPath } = await import('./tauri')
     invokeMock.mockResolvedValue(undefined)

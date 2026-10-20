@@ -22,7 +22,7 @@
 - **事件引擎**:疑似丢失/延迟、乱序、疑似 ACK 丢失/伪重传、零窗口、RST、SYN 重传——每类事件附证据链(观察/推断/限制三层)、确定性 id、未恢复优先排序
 - **故障/正常对照页**:序列空间图形化(已见字节条、缺口斜纹、SACK 块、重传回补箭头、ACK 游标静态终态驻留)、缺口邻域/全景双视图、滚轮指针锚点缩放 + 拖拽平移、图例即图层开关、阶段带(每阶段名称/起止包号/时刻/要点常驻可见)、多事件切换器(>60 事件窗口虚拟化)、关键报文跳包与阶段恢复、同期应用层事件时间窗关联(限定措辞:可能相关,不构成因果)
 - **应用层分析器**:HTTP / DNS / TLS / **SSH / RDP / VNC / SMB2** 插件式注册——加密协议只观察明文握手/命令字段,不重组、不解密
-- **性能**:大文件走 Rust 帧边界流式分批(前端逐批解析、实时帧数进度);浏览器 fixture/非流式回退路径的 JSON 解析 Worker 池化(并发解析,池大小 = min(4, 运行时并行度));5000 段重传风暴(~1.5 万包)分析 <3s
+- **性能**:大文件走 Rust 帧边界流式分批(前端逐批解析、实时帧数进度);浏览器 fixture/非流式回退路径的 JSON 解析 Worker 池化(并发解析,池大小 = min(4, 运行时并行度));切换文件时按 requestId 取消旧 Tauri 流式 tshark 子进程;5000 段重传风暴(~1.5 万包)分析 <3s
 
 ### 双观测点对照分析
 
@@ -46,7 +46,7 @@
 | 前端 | React 19 · TypeScript(strict)· Vite 7 · Zustand 5 |
 | 解析引擎 | tshark(Wireshark CLI,4.6+ 实测) |
 | 动画/文档 | 启动层 emotion-ball(官方引擎原样嵌入,见 NOTICE)· `docx` 懒加载 |
-| 测试 | Vitest 4(875 用例)· Rust `cargo test`(29 用例,含真实 tshark e2e) |
+| 测试 | Vitest 4(877 用例)· Rust `cargo test`(30 用例,含真实 tshark e2e) |
 
 ## 📦 环境依赖
 
@@ -61,8 +61,8 @@ npm install
 npm run tauri dev      # 开发模式(热更新)
 npm run tauri build    # 打包发布(msi / nsis)
 
-npm test               # 前端测试(当前 875 用例)
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust 测试(当前 29 用例)
+npm test               # 前端测试(当前 877 用例)
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust 测试(当前 30 用例)
 npx vitest run src/analysis/tcp/perfGuard.test.ts # 性能护栏(无 tshark 自动跳过 e2e)
 ```
 

@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -210,6 +211,7 @@ fn stream_stdout_with_timeout<F>(
     child: &mut std::process::Child,
     max_stdout: u64,
     timeout: Duration,
+    cancel: &AtomicBool,
     mut on_chunk: F,
 ) -> Result<(), String>
 where
@@ -228,9 +230,21 @@ where
 
     let mut deadline = Instant::now() + timeout;
     loop {
+        if cancel.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err("tshark cancelled".into());
+        }
         match rx.recv_timeout(Duration::from_millis(20)) {
             Ok(Ok(chunk)) if chunk.is_empty() => break,
             Ok(Ok(chunk)) => {
+                if cancel.load(Ordering::SeqCst) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err("tshark cancelled".into());
+                }
                 if let Err(e) = on_chunk(&chunk) {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -440,7 +454,9 @@ pub fn run_hex_streaming<F: FnMut(&str) -> Result<(), String>>(
     let stderr_thread = spawn_stderr_drainer(child.stderr.take());
 
     // 读到块即回调:UTF-8 损失转换(lossy)与整段路径语义一致(tshark hex 输出恒为 ASCII)
-    let read_result = stream_stdout_with_timeout(&mut child, MAX_HEX_TEXT, COMMAND_TIMEOUT, |c| {
+    // hex 单帧请求很短,不需要外部取消;传一个本地 false 令牌复用同一看门狗。
+    let cancel = AtomicBool::new(false);
+    let read_result = stream_stdout_with_timeout(&mut child, MAX_HEX_TEXT, COMMAND_TIMEOUT, &cancel, |c| {
         on_chunk(&String::from_utf8_lossy(c))
     });
     let status = if read_result.is_ok() { wait_with_grace(&mut child) } else { None };
@@ -476,11 +492,26 @@ pub fn run_hex(bin: &Path, file: &str, number: u32) -> Result<String, String> {
 /// 返回值只含元信息;抓包数据全部经 on_chunk 交付。
 /// 超时/上限/排空语义与 run_stream_with_timeout 完全一致(复用同一套守护),
 /// 区别仅在于:读到帧边界即回调,而不是攒到最后。
+/// 兼容入口:无取消令牌的流式抓包(测试/一次性调用)。
 pub fn run_capture_stream<F: FnMut(&str) -> Result<(), String>>(
     bin: &Path,
     file: &str,
     max_stdout: u64,
     timeout: Duration,
+    on_chunk: F,
+) -> Result<(), String> {
+    let cancel = AtomicBool::new(false);
+    run_capture_stream_cancellable(bin, file, max_stdout, timeout, &cancel, on_chunk)
+}
+
+/// 可取消的流式抓包:open_capture 通过 AppState 注册的令牌调用;切换文件时
+/// cancel_capture 置位令牌,看门狗在 20ms 轮询内 kill+wait 旧 tshark。
+pub fn run_capture_stream_cancellable<F: FnMut(&str) -> Result<(), String>>(
+    bin: &Path,
+    file: &str,
+    max_stdout: u64,
+    timeout: Duration,
+    cancel: &AtomicBool,
     mut on_chunk: F,
 ) -> Result<(), String> {
     if file.starts_with('-') {
@@ -504,7 +535,7 @@ pub fn run_capture_stream<F: FnMut(&str) -> Result<(), String>>(
 
     // 读线程负责阻塞 read;主线程按 chunk 处理帧边界。零输出挂死由 helper 的
     // deadline 看门狗 kill+wait,回调失败同样立即回收子进程。
-    let read_result = stream_stdout_with_timeout(&mut child, max_stdout, timeout, |chunk| {
+    let read_result = stream_stdout_with_timeout(&mut child, max_stdout, timeout, cancel, |chunk| {
         buf.extend_from_slice(chunk);
         drain_complete_frames(&mut buf, &mut batch, |text| on_chunk(text))
     });
@@ -893,7 +924,7 @@ mod tests {
         };
         let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
         let started = Instant::now();
-        let out = stream_stdout_with_timeout(&mut child, 1024 * 1024, Duration::from_millis(800), |_| Ok(()));
+        let out = stream_stdout_with_timeout(&mut child, 1024 * 1024, Duration::from_millis(800), &std::sync::atomic::AtomicBool::new(false), |_| Ok(()));
         assert!(out.is_err(), "silent child must time out: {out:?}");
         assert!(started.elapsed() < Duration::from_secs(10), "timeout kill too slow: {:?}", started.elapsed());
         assert!(child.try_wait().unwrap().is_some(), "child should be reaped");
@@ -911,9 +942,40 @@ mod tests {
             c
         };
         let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-        let out = stream_stdout_with_timeout(&mut child, 1024 * 1024, Duration::from_secs(5), |_| Err("stop".into()));
+        let out = stream_stdout_with_timeout(&mut child, 1024 * 1024, Duration::from_secs(5), &std::sync::atomic::AtomicBool::new(false), |_| Err("stop".into()));
         assert_eq!(out.unwrap_err(), "stop");
         assert!(child.try_wait().unwrap().is_some(), "child should be killed and reaped");
+    }
+
+    #[test]
+    fn stream_stdout_with_timeout_cancels_silent_child() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("powershell.exe");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"]);
+            c
+        } else {
+            let mut c = Command::new("/bin/sh");
+            c.args(["-c", "sleep 60"]);
+            c
+        };
+        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let signal = cancel.clone();
+        let trigger = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            signal.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let out = stream_stdout_with_timeout(
+            &mut child,
+            1024 * 1024,
+            Duration::from_secs(5),
+            &cancel,
+            |_| Ok(()),
+        );
+        trigger.join().unwrap();
+        let err = out.unwrap_err();
+        assert!(err.contains("cancelled"), "expected cancellation, got {err:?}");
+        assert!(child.try_wait().unwrap().is_some(), "cancelled child should be reaped");
     }
 
     #[test]

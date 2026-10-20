@@ -40,6 +40,13 @@ interface CaptureStreamedResult {
   frames: number
 }
 
+/** 未显式传 requestId 的调用(测试/旧调用方)也获得唯一 id,避免并发互取消。 */
+let captureRequestSeq = 0
+function nextCaptureRequestId(): string {
+  captureRequestSeq += 1
+  return `capture-${captureRequestSeq}`
+}
+
 /** 打开抓包(流式):Rust 按帧边界分块经 Channel 回传,前端逐块解析追加,
  *  onProgress 每块回调一次(帧数进度)。Tauri 缺席时回落浏览器 fixture 路径。
  *  数据完整性红线:分块解析出错绝不能静默 —— onmessage 里没有 await 链,
@@ -50,6 +57,7 @@ interface CaptureStreamedResult {
 async function receiveStreamedCapture(
   command: 'open_capture' | 'open_capture_data',
   invokeArgs: Record<string, unknown>,
+  requestId: string,
   onProgress?: (frames: number) => void,
 ): Promise<{ packets: Packet[]; out: CaptureStreamedResult }> {
   const packets: Packet[] = []
@@ -67,7 +75,7 @@ async function receiveStreamedCapture(
     }
     onProgress?.(state.count)
   }
-  const out = await invoke<CaptureStreamedResult>(command, { ...invokeArgs, onChunk: channel })
+  const out = await invoke<CaptureStreamedResult>(command, { ...invokeArgs, requestId, onChunk: channel })
   if (parseError) throw parseError
   if (out.frames > 0 && packets.length === 0) {
     throw new Error(`分块解析未产出任何报文(Rust 报告 ${out.frames} 帧):批格式契约不匹配`)
@@ -83,9 +91,10 @@ async function receiveStreamedCapture(
 export async function openCapture(
   path: string,
   onProgress?: (frames: number) => void,
+  requestId: string = nextCaptureRequestId(),
 ): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   if (isTauri()) {
-    const { packets, out } = await receiveStreamedCapture('open_capture', { path }, onProgress)
+    const { packets, out } = await receiveStreamedCapture('open_capture', { path }, requestId, onProgress)
     return { meta: computeMeta(path.split(/[\\/]/).pop() ?? path, packets, out.size), packets, path: out.path }
   }
   // browser dev fallback: 读取已提交的解析产物
@@ -100,6 +109,7 @@ export async function openCapture(
 export async function openSample(
   name: string,
   onProgress?: (frames: number) => void,
+  requestId: string = nextCaptureRequestId(),
 ): Promise<{ meta: CaptureMeta; packets: Packet[]; path: string }> {
   const url = `/fixtures/examples/${name}.pcapng`
   const res = await fetch(url)
@@ -112,6 +122,7 @@ export async function openSample(
     const { packets, out } = await receiveStreamedCapture(
       'open_capture_data',
       { fileName: `${name}.pcapng`, base64Data: base64 },
+      requestId,
       onProgress,
     )
     return { meta: computeMeta(`${name}.pcapng`, packets, out.size), packets, path: out.path }
@@ -121,6 +132,16 @@ export async function openSample(
   const raw = await jres.text()
   const packets = await parsePacketsAsync(raw)
   return { meta: computeMeta(`${name}.pcapng`, packets), packets, path: name }
+}
+
+/** 取消指定 request_id 的 Tauri 流式抓包(切换文件/示例时调用);浏览器回退无操作。 */
+export async function cancelCapture(requestId: string): Promise<void> {
+  if (!isTauri()) return
+  try {
+    await invoke('cancel_capture', { requestId })
+  } catch {
+    // 取消失败不应阻塞新文件加载;旧流仍会被 loadSeq 丢弃
+  }
 }
 
 export async function fetchHex(path: string, frameNumber: number): Promise<string> {

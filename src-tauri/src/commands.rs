@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -12,6 +14,27 @@ pub struct AppState {
     pub resolved_path: Mutex<Option<PathBuf>>,
     /// open_capture_data 写入的临时抓包文件,应用退出时统一清理(敏感数据不残留 %TEMP%)
     pub temp_files: Mutex<Vec<PathBuf>>,
+    /// 正在运行的流式抓包:request_id → 取消令牌。切换文件时置位旧令牌,
+    /// run_capture_stream 的看门狗会在 20ms 轮询内 kill+wait 旧 tshark。
+    pub capture_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+/// 取消指定 request_id 的流式抓包(前端切换文件/示例时调用)。
+/// 返回是否找到正在运行的令牌;令牌由 open_capture_blocking 在结束时清理。
+#[tauri::command]
+pub fn cancel_capture(request_id: String, state: tauri::State<'_, Arc<AppState>>) -> bool {
+    let token = state
+        .capture_cancels
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&request_id)
+        .cloned();
+    if let Some(token) = token {
+        token.store(true, Ordering::SeqCst);
+        true
+    } else {
+        false
+    }
 }
 
 /// 命令全部 async + spawn_blocking:Tauri 同步命令跑在主线程,
@@ -67,13 +90,14 @@ pub struct CaptureChunk {
 #[tauri::command]
 pub async fn open_capture(
     path: String,
+    request_id: String,
     on_chunk: tauri::ipc::Channel<CaptureChunk>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<CaptureStreamed, String> {
     let app = app.clone();
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || open_capture_blocking(&path, &app, &state, &on_chunk))
+    tauri::async_runtime::spawn_blocking(move || open_capture_blocking(&path, &request_id, &app, &state, &on_chunk))
         .await
         .map_err(|e| format!("open_capture task failed: {e}"))?
 }
@@ -102,6 +126,7 @@ fn check_capture_path(path: &str) -> Result<u64, String> {
 
 fn open_capture_blocking(
     path: &str,
+    request_id: &str,
     app: &tauri::AppHandle,
     state: &Arc<AppState>,
     on_chunk: &tauri::ipc::Channel<CaptureChunk>,
@@ -111,19 +136,41 @@ fn open_capture_blocking(
     // 流式:tshark stdout 按帧边界分批,逐批经 Channel 回传;内存不积整段 JSON。
     // run_capture_stream 保证每批只含完整帧对象(无外层 [ ]、无帧间逗号残缺),
     // 批与批之间在帧边界对齐 —— 前端把批修补为对象数组即可逐批解析。
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut cancels = state.capture_cancels.lock().unwrap_or_else(|e| e.into_inner());
+        // 同 request_id 重入:先取消旧流,再登记新令牌
+        if let Some(previous) = cancels.insert(request_id.to_string(), cancel.clone()) {
+            previous.store(true, Ordering::SeqCst);
+        }
+    }
     let mut seq: u32 = 0;
     let mut frames: u64 = 0;
-    tshark::run_capture_stream(&bin, path, tshark::MAX_CAPTURE_JSON, tshark::COMMAND_TIMEOUT, |batch| {
-        frames += count_frames(batch);
-        let msg = CaptureChunk {
-            seq,
-            text: batch.to_string(),
-            done: false,
-        };
-        seq += 1;
-        on_chunk.send(msg).map_err(|e| format!("chunk send failed: {e}"))?;
-        Ok(())
-    })?;
+    let result = tshark::run_capture_stream_cancellable(
+        &bin,
+        path,
+        tshark::MAX_CAPTURE_JSON,
+        tshark::COMMAND_TIMEOUT,
+        &cancel,
+        |batch| {
+            frames += count_frames(batch);
+            let msg = CaptureChunk {
+                seq,
+                text: batch.to_string(),
+                done: false,
+            };
+            seq += 1;
+            on_chunk.send(msg).map_err(|e| format!("chunk send failed: {e}"))?;
+            Ok(())
+        },
+    );
+    {
+        let mut cancels = state.capture_cancels.lock().unwrap_or_else(|e| e.into_inner());
+        if cancels.get(request_id).is_some_and(|token| Arc::ptr_eq(token, &cancel)) {
+            cancels.remove(request_id);
+        }
+    }
+    result?;
     Ok(CaptureStreamed {
         size,
         path: path.to_string(),
@@ -216,6 +263,7 @@ fn sanitize_capture_name(file_name: &str) -> Option<String> {
 pub async fn open_capture_data(
     file_name: String,
     base64_data: String,
+    request_id: String,
     on_chunk: tauri::ipc::Channel<CaptureChunk>,
     app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
@@ -238,7 +286,7 @@ pub async fn open_capture_data(
         let tmp = std::env::temp_dir().join(format!("pui-{token}-{name}"));
         std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
         state.temp_files.lock().unwrap_or_else(|e| e.into_inner()).push(tmp.clone());
-        open_capture_blocking(&tmp.to_string_lossy().into_owned(), &app, &state, &on_chunk)
+        open_capture_blocking(&tmp.to_string_lossy().into_owned(), &request_id, &app, &state, &on_chunk)
     })
     .await
     .map_err(|e| format!("open_capture_data task failed: {e}"))?

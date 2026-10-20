@@ -4,12 +4,13 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 vi.mock('../bridge/tauri', () => ({
   openCapture: vi.fn(),
   openSample: vi.fn(),
+  cancelCapture: vi.fn(),
   fetchHex: vi.fn(),
   getTsharkVersion: vi.fn(),
   setTsharkPath: vi.fn(),
 }))
 
-import { openCapture, openSample, fetchHex, getTsharkVersion, setTsharkPath } from '../bridge/tauri'
+import { openCapture, openSample, cancelCapture, fetchHex, getTsharkVersion, setTsharkPath } from '../bridge/tauri'
 import { useApp } from './appStore'
 import type { Conversation, Packet } from '../model/types'
 
@@ -40,6 +41,15 @@ describe('appStore 加载一致性', () => {
     expect(useApp.getState().currentPath).toBe('b.pcap')
     expect(useApp.getState().hexCache).toEqual({})
     expect(useApp.getState().packets).toHaveLength(1)
+  })
+
+  it('openFile 取消上一主抓包流并传递新 requestId', async () => {
+    const packets = [pkt(1, 'http', '1.1.1.1', 5000, '2.2.2.2', 80)]
+    vi.mocked(openCapture).mockImplementation((p: string) => Promise.resolve({ meta: meta(p), packets, path: p }))
+    vi.mocked(cancelCapture).mockClear()
+    await useApp.getState().openFile('b.pcap')
+    expect(cancelCapture).toHaveBeenCalledWith('main-0')
+    expect(openCapture).toHaveBeenCalledWith('b.pcap', expect.any(Function), 'main-1')
   })
 
   it('openFile 记录解析耗时 parseMs', async () => {

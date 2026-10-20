@@ -35,6 +35,7 @@ pub fn run() {
             tshark_path: Default::default(),
             resolved_path: Default::default(),
             temp_files: Default::default(),
+            capture_cancels: Default::default(),
         }))
         .setup(|app| {
             // 窗口默认隐藏(visible:false),前端 React 首帧后主动 show()——
@@ -54,6 +55,7 @@ pub fn run() {
             commands::set_tshark_path,
             commands::open_capture,
             commands::open_capture_data,
+            commands::cancel_capture,
             commands::fetch_hex,
             commands::tshark_version,
             commands::save_text,

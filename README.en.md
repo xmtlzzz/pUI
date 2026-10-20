@@ -22,7 +22,7 @@
 - **Event engine**: suspected loss/delay, reordering, suspected ACK-loss/spurious retransmission, zero window, RST, SYN retransmission — each event carries an evidence chain (Observed / Inference / Limitation), deterministic ids, unrecovered-first ordering
 - **Fault/normal comparison page**: sequence-space graphics (seen-bytes bar, gap hatching, SACK blocks, retransmission arrow, ACK cursor resting at its final position), gap-neighborhood/panorama views, pointer-anchored wheel zoom + drag pan, legend-as-layer-toggle, stage band (name / packet range / timing / summary always visible), multi-event switcher (windowed virtualization beyond 60 events), key-packet jump with stage restore, time-window correlation with application-layer events (limited wording: may be related, does not imply causation)
 - **Application analyzers**: HTTP / DNS / TLS / **SSH / RDP / VNC / SMB2** as pluggable analyzers — encrypted protocols are observed only through plaintext handshake/command fields; no reassembly, no decryption
-- **Performance**: Rust-side frame-boundary streaming for large files (frontend parses per batch with live frame-count progress); worker-pooled JSON parsing on the browser-fixture/non-streaming fallback path (pool = min(4, runtime parallelism)); a 5000-retransmission storm (~15k packets) analyzes in <3s
+- **Performance**: Rust-side frame-boundary streaming for large files (frontend parses per batch with live frame-count progress); worker-pooled JSON parsing on the browser-fixture/non-streaming fallback path (pool = min(4, runtime parallelism)); switching files cancels the previous Tauri streaming tshark child by requestId; a 5000-retransmission storm (~15k packets) analyzes in <3s
 
 ### Dual-probe comparison
 
@@ -46,7 +46,7 @@
 | Frontend | React 19 · TypeScript (strict) · Vite 7 · Zustand 5 |
 | Parsing engine | tshark (Wireshark CLI; tested against 4.6+) |
 | Extras | Boot-screen emotion-ball (official engine vendored verbatim, see NOTICE) · `docx` lazy-loaded |
-| Tests | Vitest 4 (875 cases) · Rust `cargo test` (29 cases incl. real-tshark e2e) |
+| Tests | Vitest 4 (877 cases) · Rust `cargo test` (30 cases incl. real-tshark e2e) |
 
 ## 📦 Prerequisites
 
@@ -61,8 +61,8 @@ npm install
 npm run tauri dev      # development (HMR)
 npm run tauri build    # production bundle (msi / nsis)
 
-npm test               # frontend tests (currently 875 cases)
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust tests (currently 29 cases)
+npm test               # frontend tests (currently 877 cases)
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust tests (currently 30 cases)
 npx vitest run src/analysis/tcp/perfGuard.test.ts # performance guard (e2e skipped without tshark)
 ```
 

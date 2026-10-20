@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { aggregateConversations } from '../aggregate/aggregateConversations'
 import { filterConversations, collectFilterOptions } from '../filter/filterConversations'
 import { searchConversations } from '../search/searchPackets'
-import { openCapture, openSample, fetchHex, getTsharkVersion, setTsharkPath as setTsharkPathCmd } from '../bridge/tauri'
+import { openCapture, openSample, cancelCapture, fetchHex, getTsharkVersion, setTsharkPath as setTsharkPathCmd } from '../bridge/tauri'
 import { cancelParse } from '../parse/parseAsync'
 import { emptyFilter } from '../model/types'
 import { overlapRange } from '../stats/histogram'
@@ -262,12 +262,14 @@ export const useApp = create<AppState>((set, get) => ({
   // ---- 双点对照:副抓包加载。模式与主抓包完全同构(独立 seq 防过期、流式进度),
   //      但不触碰主视图任何状态 —— 两侧是两个平行的观察点,加载互不干扰 ----
   async openDualFile(path) {
-    const seq = get().dualLoadSeq + 1
+    const prevSeq = get().dualLoadSeq
+    void cancelCapture(`dual-${prevSeq}`)
+    const seq = prevSeq + 1
     set({ dualLoading: true, dualLoadingFrames: 0, dualError: null, dualLoadSeq: seq })
     try {
       const { meta, packets, path: realPath } = await openCapture(path, (frames) => {
         if (get().dualLoadSeq === seq) set({ dualLoadingFrames: frames })
-      })
+      }, `dual-${seq}`)
       if (get().dualLoadSeq !== seq) return // 已被更新的副抓包加载覆盖
       set({
         dualMeta: { ...meta, parseMs: undefined },
@@ -282,12 +284,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async openDualExample(name) {
-    const seq = get().dualLoadSeq + 1
+    const prevSeq = get().dualLoadSeq
+    void cancelCapture(`dual-${prevSeq}`)
+    const seq = prevSeq + 1
     set({ dualLoading: true, dualLoadingFrames: 0, dualError: null, dualLoadSeq: seq })
     try {
       const { meta, packets, path } = await openSample(name, (frames) => {
         if (get().dualLoadSeq === seq) set({ dualLoadingFrames: frames })
-      })
+      }, `dual-${seq}`)
       if (get().dualLoadSeq !== seq) return
       set({ dualMeta: meta, dualPackets: packets, dualPath: path, dualLoading: false })
     } catch (e) {
@@ -301,17 +305,20 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async openFile(path) {
-    // 切换文件:终止在途 Worker 解析(浏览器回退路径的 Worker 池;生产走主线程
-    // 批解析不受影响),避免旧文件解析继续占用 CPU/内存、结果被 loadSeq 丢弃
+    // 切换文件:同时终止浏览器 Worker 与 Tauri 流式 tshark 子进程,避免旧文件
+    // 继续占用 CPU/内存、结果被 loadSeq 丢弃。requestId 按 loadSeq 唯一化,
+    // 只取消上一主抓包,不会误杀并行的双点对照 B 侧。
+    const prevSeq = get().loadSeq
     cancelParse()
-    const seq = get().loadSeq + 1
+    void cancelCapture(`main-${prevSeq}`)
+    const seq = prevSeq + 1
     set({ loading: true, loadingFrames: 0, error: null, loadSeq: seq })
     const t0 = performance.now()
     try {
       const { meta, packets, path: realPath } = await openCapture(path, (frames) => {
         // 流式进度:仅在本次加载仍有效时更新(过期加载的回调静默丢弃)
         if (get().loadSeq === seq) set({ loadingFrames: frames })
-      })
+      }, `main-${seq}`)
       if (get().loadSeq !== seq) return // 已被更新的加载覆盖
       const conversations = aggregateConversations(packets, { slowResponseThreshold: get().slowThreshold })
       const filter = emptyFilter()
@@ -336,14 +343,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   async openExample(name) {
+    const prevSeq = get().loadSeq
     cancelParse()
-    const seq = get().loadSeq + 1
+    void cancelCapture(`main-${prevSeq}`)
+    const seq = prevSeq + 1
     set({ loading: true, loadingFrames: 0, error: null, loadSeq: seq })
     const t0 = performance.now()
     try {
       const { meta, packets, path } = await openSample(name, (frames) => {
         if (get().loadSeq === seq) set({ loadingFrames: frames })
-      })
+      }, `main-${seq}`)
       if (get().loadSeq !== seq) return
       const conversations = aggregateConversations(packets, { slowResponseThreshold: get().slowThreshold })
       const filter = emptyFilter()

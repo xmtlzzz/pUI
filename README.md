@@ -8,7 +8,7 @@
 
 ### 会话分析主线
 
-- **打开抓包**:pcap / pcapng / **cap**(tcpdump 与现网设备导出常见格式)及 gzip 压缩变体、5views / NetMon / nettl / snoop / CommView / Sniffer / ERF / btsnoop 等常见格式——tshark 按内容魔数识别,与扩展名无关;拖拽或对话框打开,内置 5 个示例;概览显示真实接口数、解析耗时与 tshark 版本
+- **打开抓包**:pcap / pcapng / **cap**(tcpdump 与现网设备导出常见格式)及 gzip 压缩变体、5views / NetMon / nettl / snoop / CommView / Sniffer / ERF / btsnoop 等常见格式——tshark 按内容魔数识别,与扩展名无关;拖拽或对话框打开,内置 7 个示例;概览显示真实接口数、解析耗时与 tshark 版本
 - **会话级筛选**:协议、源/目的 IP、源/目的端口,取反,仅看异常,并按异常类型细化(重传/乱序/重复ACK/丢段/零窗口/SYN重传/慢响应/未关闭/被重置/请求无响应/连接未建立/单向),慢响应阈值可调
 - **双向会话聚合**:五元组归一化(含 `tcp.stream` 流身份)、自动判定客户端/服务端(IPv4 / IPv6 / MAC),中途接入/缺端口等畸形数据不致会话错分
 - **时序图**:A 斜线 / B 行式双风格,相对/绝对时间戳,长会话按空闲间隔自动分段,>2000 报文自动抽稀降级,搜索/时间窗命中高亮
@@ -22,7 +22,7 @@
 - **事件引擎**:疑似丢失/延迟、乱序、疑似 ACK 丢失/伪重传、零窗口、RST、SYN 重传——每类事件附证据链(观察/推断/限制三层)、确定性 id、未恢复优先排序
 - **故障/正常对照页**:序列空间图形化(已见字节条、缺口斜纹、SACK 块、重传回补箭头、ACK 游标静态终态驻留)、缺口邻域/全景双视图、滚轮指针锚点缩放 + 拖拽平移、图例即图层开关、阶段带(每阶段名称/起止包号/时刻/要点常驻可见)、多事件切换器(>60 事件窗口虚拟化)、关键报文跳包与阶段恢复、同期应用层事件时间窗关联(限定措辞:可能相关,不构成因果)
 - **应用层分析器**:HTTP / DNS / TLS / **SSH / RDP / VNC / SMB2** 插件式注册——加密协议只观察明文握手/命令字段,不重组、不解密
-- **性能**:大文件走 Rust 帧边界流式分批(前端逐批解析、实时帧数进度);前端 JSON 解析 Worker 池化(并发解析,池大小 = min(4, CPU 核数));5000 段重传风暴(~1.5 万包)分析 <3s
+- **性能**:大文件走 Rust 帧边界流式分批(前端逐批解析、实时帧数进度);浏览器 fixture/非流式回退路径的 JSON 解析 Worker 池化(并发解析,池大小 = min(4, 运行时并行度));5000 段重传风暴(~1.5 万包)分析 <3s
 
 ### 双观测点对照分析
 
@@ -46,12 +46,12 @@
 | 前端 | React 19 · TypeScript(strict)· Vite 7 · Zustand 5 |
 | 解析引擎 | tshark(Wireshark CLI,4.6+ 实测) |
 | 动画/文档 | 启动层 emotion-ball(官方引擎原样嵌入,见 NOTICE)· `docx` 懒加载 |
-| 测试 | Vitest 4(593 用例)· Rust `cargo test`(25 用例,含真实 tshark e2e) |
+| 测试 | Vitest 4(875 用例)· Rust `cargo test`(29 用例,含真实 tshark e2e) |
 
 ## 📦 环境依赖
 
 - **tshark**(Wireshark 命令行解析器)——按「用户设置路径 → 随包资源 → PATH → 常见安装目录」顺序查找;需安装 Wireshark 或在设置中指定 tshark 路径
-- **Rust**(cargo)与 **Node.js**(≥ 18),以及平台的 WebView2
+- **Rust**(cargo)与 **Node.js**(≥ 20.19),以及平台的 WebView2
 
 ## 🚀 构建与运行
 
@@ -61,8 +61,8 @@ npm install
 npm run tauri dev      # 开发模式(热更新)
 npm run tauri build    # 打包发布(msi / nsis)
 
-npm test               # 前端测试(当前 593 用例)
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust 测试(当前 25 用例)
+npm test               # 前端测试(当前 875 用例)
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust 测试(当前 29 用例)
 npx vitest run src/analysis/tcp/perfGuard.test.ts # 性能护栏(无 tshark 自动跳过 e2e)
 ```
 

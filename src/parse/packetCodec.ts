@@ -94,41 +94,48 @@ const VAR_STR_FIELDS = ['tcpAnalysis'] as const
 /** FieldValue 读取:Record 直取(字段名即属性键) */
 type PacketKey = keyof Packet
 
-function pushVar(col: VarColumn, values: Array<number | string | boolean> | undefined): void {
+const STR_ALL = [...STR_FIELDS, ...ENUM_STR_FIELDS] as const
+
+/** 变长列写入第 i 包:widths 预分配,values 只追加,避免逐包复制整列。 */
+function pushVarAt(col: VarColumn, values: Array<number | string | boolean> | undefined, i: number): void {
   if (values == null) {
-    col.widths.push(0)
+    col.widths[i] = 0
     return
   }
-  col.widths.push(values.length)
+  col.widths[i] = values.length
   for (const v of values) col.values.push(v)
 }
 
 /** Packet[] → 列式(Worker 端调用;纯函数,不改入参) */
 export function packetColumns(packets: Packet[]): PacketColumns {
+  const n = packets.length
+  if (n === 0) return { columns: {} }
+
   const columns: PacketColumns['columns'] = {}
   const numCols: Record<string, Array<number | undefined>> = {}
   const boolCols: Record<string, Array<boolean | undefined>> = {}
   const strCols: Record<string, Array<string | undefined>> = {}
   const varStrCols: Record<string, VarColumn> = {}
-  const sack: VarColumn = { values: [], widths: [] }
+  const sack: VarColumn = { values: [], widths: new Array<number>(n) }
 
-  for (const p of packets) {
-    for (const f of NUM_FIELDS) numCols[f] = (numCols[f] ?? []).concat(p[f as PacketKey] as number | undefined)
-    for (const f of BOOL_FIELDS) boolCols[f] = (boolCols[f] ?? []).concat(p[f as PacketKey] as boolean | undefined)
-    const strAll = [...STR_FIELDS, ...ENUM_STR_FIELDS] as const
-    for (const f of strAll) strCols[f] = (strCols[f] ?? []).concat(p[f as PacketKey] as string | undefined)
-    for (const f of VAR_STR_FIELDS) {
-      if (!varStrCols[f]) varStrCols[f] = { values: [], widths: [] }
-      pushVar(varStrCols[f], p[f as PacketKey] as string[] | undefined)
-    }
+  // 预分配每列长度:逐包 concat 会复制整列,5000 包即退化为 O(n²)。
+  for (const f of NUM_FIELDS) numCols[f] = new Array<number | undefined>(n)
+  for (const f of BOOL_FIELDS) boolCols[f] = new Array<boolean | undefined>(n)
+  for (const f of STR_ALL) strCols[f] = new Array<string | undefined>(n)
+  for (const f of VAR_STR_FIELDS) varStrCols[f] = { values: [], widths: new Array<number>(n) }
+
+  for (let i = 0; i < n; i++) {
+    const p = packets[i]
+    for (const f of NUM_FIELDS) numCols[f][i] = p[f as PacketKey] as number | undefined
+    for (const f of BOOL_FIELDS) boolCols[f][i] = p[f as PacketKey] as boolean | undefined
+    for (const f of STR_ALL) strCols[f][i] = p[f as PacketKey] as string | undefined
+    for (const f of VAR_STR_FIELDS) pushVarAt(varStrCols[f], p[f as PacketKey] as string[] | undefined, i)
     const blocks = p.tcpSackBlocks
     if (blocks == null) {
-      sack.widths.push(0)
+      sack.widths[i] = 0
     } else {
-      sack.widths.push(blocks.length * VAR_NESTED.tcpSackBlocks.step)
-      for (const [l, r] of blocks) {
-        sack.values.push(l, r)
-      }
+      sack.widths[i] = blocks.length * VAR_NESTED.tcpSackBlocks.step
+      for (const [l, r] of blocks) sack.values.push(l, r)
     }
   }
 
@@ -138,17 +145,23 @@ export function packetColumns(packets: Packet[]): PacketColumns {
   for (const [f, col] of Object.entries(boolCols)) columns[f] = col as boolean[]
   for (const [f, col] of Object.entries(strCols)) columns[f] = col as string[]
   for (const [f, col] of Object.entries(varStrCols)) columns[f] = col
-  if (packets.length > 0) columns.tcpSackBlocks = sack
+  columns.tcpSackBlocks = sack
   return { columns }
 }
 
-/** 从变宽列取第 i 包的取值数组 */
-function takeVar(col: VarColumn, i: number): Array<number | string | boolean> {
-  // 前缀和按需重算(O(列宽) 每包):重建是单次线性扫描,避免额外累积状态
-  let before = 0
-  for (let k = 0; k < i; k++) before += col.widths[k]
-  const w = col.widths[i]
-  return col.values.slice(before, before + w)
+/** 变长列前缀和:每个包只取一次,避免 takeVar 每包从 0 累加造成 O(n²)。 */
+function prefixOffsets(widths: number[]): number[] {
+  const offsets = new Array<number>(widths.length + 1)
+  offsets[0] = 0
+  for (let i = 0; i < widths.length; i++) offsets[i + 1] = offsets[i] + (widths[i] ?? 0)
+  return offsets
+}
+
+/** 从变宽列取第 i 包的取值数组(offsets 为预先计算的前缀和) */
+function takeVar(col: VarColumn, i: number, offsets: number[]): Array<number | string | boolean> {
+  const before = offsets[i] ?? 0
+  const after = offsets[i + 1] ?? before
+  return col.values.slice(before, after)
 }
 
 /** 列式 → Packet[](主线程端调用;纯函数) */
@@ -171,6 +184,14 @@ export function columnsToPackets(cols: PacketColumns): Packet[] {
     width('tcpSackBlocks'),
     0,
   )
+  const varOffsets: Record<string, number[]> = {}
+  for (const f of VAR_STR_FIELDS) {
+    const col = columns[f] as VarColumn | undefined
+    if (col) varOffsets[f] = prefixOffsets(col.widths)
+  }
+  const sack = columns.tcpSackBlocks as VarColumn | undefined
+  const sackOffsets = sack ? prefixOffsets(sack.widths) : undefined
+
   const out: Packet[] = []
   for (let i = 0; i < n; i++) {
     const p = {} as Record<string, unknown>
@@ -181,18 +202,16 @@ export function columnsToPackets(cols: PacketColumns): Packet[] {
     }
     for (const f of NUM_FIELDS) put(f, (columns[f] as Array<number | undefined> | undefined)?.[i])
     for (const f of BOOL_FIELDS) put(f, (columns[f] as Array<boolean | undefined> | undefined)?.[i])
-    const strAll = [...STR_FIELDS, ...ENUM_STR_FIELDS] as const
-    for (const f of strAll) put(f, (columns[f] as Array<string | undefined> | undefined)?.[i])
+    for (const f of STR_ALL) put(f, (columns[f] as Array<string | undefined> | undefined)?.[i])
     for (const f of VAR_STR_FIELDS) {
       const col = columns[f] as VarColumn | undefined
       if (col) {
-        const vals = takeVar(col, i).map((x) => String(x))
+        const vals = takeVar(col, i, varOffsets[f]).map((x) => String(x))
         put(f, vals.length ? vals : undefined)
       }
     }
-    const sack = columns.tcpSackBlocks as VarColumn | undefined
-    if (sack) {
-      const flat = takeVar(sack, i).map((x) => Number(x))
+    if (sack && sackOffsets) {
+      const flat = takeVar(sack, i, sackOffsets).map((x) => Number(x))
       const blocks: Array<[number, number]> = []
       for (let k = 0; k + 1 < flat.length; k += 2) blocks.push([flat[k], flat[k + 1]])
       put('tcpSackBlocks', blocks.length ? blocks : undefined)

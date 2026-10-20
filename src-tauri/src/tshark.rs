@@ -203,6 +203,66 @@ fn read_stdout_chunks<R: Read>(
     }
 }
 
+/// 流式 stdout + 零输出看门狗:读线程负责阻塞 read,主线程按 chunk 回调并检查
+/// 墙钟。这样 tshark 完全不输出时也能在 timeout 内 kill+wait,不会卡在 read。
+/// 回调/读线程/超时任一失败都会立即终止并回收子进程,再返回错误。
+fn stream_stdout_with_timeout<F>(
+    child: &mut std::process::Child,
+    max_stdout: u64,
+    timeout: Duration,
+    mut on_chunk: F,
+) -> Result<(), String>
+where
+    F: FnMut(&[u8]) -> Result<(), String>,
+{
+    let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
+    let (tx, rx) = mpsc::channel::<Result<Vec<u8>, String>>();
+    let reader = std::thread::spawn(move || {
+        let result = read_stdout_chunks(&mut stdout, max_stdout, timeout, |c| {
+            tx.send(Ok(c.to_vec()))
+                .map_err(|_| "tshark reader channel closed".to_string())
+        });
+        // EOF 用空 Vec 作为哨兵;Err 原样交给主线程。
+        let _ = tx.send(result.map(|_| Vec::new()));
+    });
+
+    let mut deadline = Instant::now() + timeout;
+    loop {
+        match rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(Ok(chunk)) if chunk.is_empty() => break,
+            Ok(Ok(chunk)) => {
+                if let Err(e) = on_chunk(&chunk) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(e);
+                }
+                deadline = Instant::now() + timeout;
+            }
+            Ok(Err(e)) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(e);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err("tshark timed out".into());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = reader.join();
+                return Err("tshark reader channel closed".into());
+            }
+        }
+    }
+    let _ = reader.join();
+    Ok(())
+}
+
 fn run_stream_with_timeout(
     bin: &Path,
     args: &[&str],
@@ -377,22 +437,17 @@ pub fn run_hex_streaming<F: FnMut(&str) -> Result<(), String>>(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("failed to run tshark: {e}"))?;
-    let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
-
     let stderr_thread = spawn_stderr_drainer(child.stderr.take());
 
     // 读到块即回调:UTF-8 损失转换(lossy)与整段路径语义一致(tshark hex 输出恒为 ASCII)
-    let read_result = read_stdout_chunks(&mut stdout, MAX_HEX_TEXT, COMMAND_TIMEOUT, |c| {
+    let read_result = stream_stdout_with_timeout(&mut child, MAX_HEX_TEXT, COMMAND_TIMEOUT, |c| {
         on_chunk(&String::from_utf8_lossy(c))
     });
-    let status = wait_with_grace(&mut child);
-    let _ = stdout;
-    read_result.map_err(|e| {
-        let _ = child.kill();
-        let _ = child.wait();
-        e
-    })?;
+    let status = if read_result.is_ok() { wait_with_grace(&mut child) } else { None };
     let err = truncate_err(&stderr_thread.map(|h| h.join().ok()).unwrap_or_default().unwrap_or_default());
+    if let Err(e) = read_result {
+        return Err(e);
+    }
     if let Some(st) = status {
         if !st.success() {
             return Err(err.trim().to_string());
@@ -441,105 +496,21 @@ pub fn run_capture_stream<F: FnMut(&str) -> Result<(), String>>(
     hide_console(&mut cmd);
     cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("failed to run tshark: {e}"))?;
-    let mut stdout = child.stdout.take().ok_or("tshark: no stdout")?;
+    let mut stderr_thread = spawn_stderr_drainer(child.stderr.take());
 
-    // stderr 并发排空(与 run_stream_with_timeout 同守护)
-    let stderr_thread = child.stderr.take().map(|mut stderr| {
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let mut chunk = [0u8; 8192];
-            let mut total = 0usize;
-            loop {
-                match stderr.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if total < MAX_STDERR {
-                            let take = n.min(MAX_STDERR - total);
-                            let _ = s.push_str(&String::from_utf8_lossy(&chunk[..take]));
-                            total += take;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-            s
-        })
-    });
-
-    // 主循环:分块读 stdout → 在缓冲里找「完整帧对象」边界(顶层数组内的 `},`)
-    // → 每凑够一批(或 EOF 冲尾)回调一次。
-    // 帧边界判定:tshark -T json 输出形如 [\n  {...},\n  {...}\n],帧对象内部
-    // 不会有顶层的 `}` 后紧跟 `,`+换行+空格+`{` 的序列 —— 以 "\n  }" 行尾(2 空格
-    // 缩进的闭括号)为帧分隔标记,这是 tshark 固定的 pretty-print 缩进。
-    const FRAME_CLOSE: &[u8] = b"\n  }";
     const BATCH_TARGET: usize = 4 * 1024 * 1024; // 单批目标 ~4MB(千帧级)
     let mut buf: Vec<u8> = Vec::with_capacity(BATCH_TARGET * 2);
-    let mut chunk = [0u8; 65536];
-    let mut total: u64 = 0;
     let mut batch: Vec<u8> = Vec::with_capacity(BATCH_TARGET + 65536);
-    // 墙钟截止:首个读循环内立即被「有进展即重置」覆盖,初值在此无读取路径
-    #[allow(unused_assignments)]
-    let mut deadline = Instant::now() + timeout;
-    let mut io_err: Option<String> = None;
 
-    loop {
-        // 先处理已有缓冲中所有完整帧(读到 EOF 前尽力回传,不积压)
-        loop {
-            match find_frame_close(&buf) {
-                Some(pos) => {
-                    // pos 指向 "\n  }" 的起始;帧对象含闭括号到 pos+FRAME_CLOSE.len()
-                    let take = pos + FRAME_CLOSE.len();
-                    batch.extend_from_slice(&buf[..take]);
-                    buf.drain(..take);
-                    // 批满(或即将满):回传一批。批内容 = 帧对象文本,
-                    // 以 '[' 开头、去掉帧间逗号后的对象序列 —— 前端按
-                    // 「对象流」修补为合法 JSON 数组(见 parseAsync)。
-                    if batch.len() >= BATCH_TARGET {
-                        let text = String::from_utf8_lossy(&batch).to_string();
-                        on_chunk(&text)?;
-                        batch.clear();
-                    }
-                }
-                None => break,
-            }
-        }
-        if io_err.is_some() {
-            break;
-        }
-        // 缓冲不足一批:继续读
-        match stdout.read(&mut chunk) {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                total += n as u64;
-                if total > max_stdout {
-                    io_err = Some(format!(
-                        "抓包解析输出超过 {}MB 上限:请先用显示过滤器缩小范围,或用 editcap/traceshark 分割后打开",
-                        max_stdout / 1024 / 1024
-                    ));
-                    break;
-                }
-                buf.extend_from_slice(&chunk[..n]);
-                // 有进展则重置墙钟(长时间大文件解析不应被总时长误杀;无进展才累计超时)
-                deadline = Instant::now() + timeout;
-            }
-            Err(e) => {
-                io_err = Some(format!("tshark stdout: {e}"));
-                break;
-            }
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stderr_thread.map(|h| h.join());
-            return Err("tshark timed out".into());
-        }
-    }
-    let _ = stdout; // stdout 已由 loop 内 drop 语义管理,显式绑定避免未使用告警
+    // 读线程负责阻塞 read;主线程按 chunk 处理帧边界。零输出挂死由 helper 的
+    // deadline 看门狗 kill+wait,回调失败同样立即回收子进程。
+    let read_result = stream_stdout_with_timeout(&mut child, max_stdout, timeout, |chunk| {
+        buf.extend_from_slice(chunk);
+        drain_complete_frames(&mut buf, &mut batch, |text| on_chunk(text))
+    });
 
-    if let Some(e) = io_err {
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = stderr_thread.map(|h| h.join());
+    if let Err(e) = read_result {
+        let _ = stderr_thread.take().map(|h| h.join());
         return Err(e);
     }
 
@@ -551,30 +522,50 @@ pub fn run_capture_stream<F: FnMut(&str) -> Result<(), String>>(
     }
     if !batch.is_empty() {
         let text = String::from_utf8_lossy(&batch).to_string();
-        on_chunk(&text)?;
-        batch.clear();
+        if let Err(e) = on_chunk(&text) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_thread.take().map(|h| h.join());
+            return Err(e);
+        }
     }
 
     // 等子进程退出(拿退出码),宽限后 kill —— 与 run_stream_with_timeout 同语义
-    let mut status: Option<std::process::ExitStatus> = None;
-    let grace = Instant::now() + EXIT_GRACE;
-    while status.is_none() && Instant::now() < grace {
-        if let Ok(Some(st)) = child.try_wait() {
-            status = Some(st);
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    if status.is_none() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    let _ = stderr_thread.map(|h| h.join());
+    let status = wait_with_grace(&mut child);
+    let err = truncate_err(&stderr_thread.take().map(|h| h.join().ok()).unwrap_or_default().unwrap_or_default());
     if let Some(st) = status {
         if !st.success() {
-            return Err("tshark exited with error".into());
+            return Err(if err.trim().is_empty() { "tshark exited with error".into() } else { err.trim().to_string() });
         }
     } else {
         return Err("tshark did not exit after output end".into());
+    }
+    Ok(())
+}
+
+
+/// 把 buf 中所有完整帧搬到 batch;达到 4MB 目标时回调一批。
+/// 与旧 run_capture_stream 内联逻辑一致,抽成纯函数便于单测边界。
+fn drain_complete_frames<F>(buf: &mut Vec<u8>, batch: &mut Vec<u8>, mut on_chunk: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    const FRAME_CLOSE: &[u8] = b"\n  }";
+    const BATCH_TARGET: usize = 4 * 1024 * 1024;
+    loop {
+        match find_frame_close(buf) {
+            Some(pos) => {
+                let take = pos + FRAME_CLOSE.len();
+                batch.extend_from_slice(&buf[..take]);
+                buf.drain(..take);
+                if batch.len() >= BATCH_TARGET {
+                    let text = String::from_utf8_lossy(batch).to_string();
+                    on_chunk(&text)?;
+                    batch.clear();
+                }
+            }
+            None => break,
+        }
     }
     Ok(())
 }
@@ -871,5 +862,80 @@ mod tests {
         assert_eq!(first_existing(&[&abs]).as_deref(), Some(abs.as_str()));
         assert_eq!(first_existing(&["/nonexistent/a.exe", "/nonexistent/b"]), None);
         std::fs::remove_file(&f).unwrap();
+    }
+
+    #[test]
+    fn drain_complete_frames_emits_only_complete_frames() {
+        let mut buf = b"[\n  {\n    \"frame.number\": \"1\"\n  },\n  {\n    \"frame.number\": \"2\"\n  },\n  {\n    \"frame.number\": \"3\"".to_vec();
+        let mut batch: Vec<u8> = Vec::new();
+        let mut emitted: Vec<String> = Vec::new();
+        drain_complete_frames(&mut buf, &mut batch, |text| {
+            emitted.push(text.to_string());
+            Ok(())
+        })
+        .unwrap();
+        // 未达到 4MB 批目标:两个完整帧留在 batch,第三个半帧留在 buf
+        assert!(emitted.is_empty());
+        assert!(String::from_utf8_lossy(&batch).contains("\"frame.number\": \"2\""));
+        assert!(String::from_utf8_lossy(&buf).contains("\"frame.number\": \"3\""));
+    }
+
+    #[test]
+    fn stream_stdout_with_timeout_kills_silent_child() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("powershell.exe");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"]);
+            c
+        } else {
+            let mut c = Command::new("/bin/sh");
+            c.args(["-c", "sleep 60"]);
+            c
+        };
+        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let started = Instant::now();
+        let out = stream_stdout_with_timeout(&mut child, 1024 * 1024, Duration::from_millis(800), |_| Ok(()));
+        assert!(out.is_err(), "silent child must time out: {out:?}");
+        assert!(started.elapsed() < Duration::from_secs(10), "timeout kill too slow: {:?}", started.elapsed());
+        assert!(child.try_wait().unwrap().is_some(), "child should be reaped");
+    }
+
+    #[test]
+    fn stream_stdout_with_timeout_callback_error_kills_child() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd.exe");
+            c.args(["/C", "echo abc & ping -n 60 127.0.0.1 >NUL"]);
+            c
+        } else {
+            let mut c = Command::new("/bin/sh");
+            c.args(["-c", "echo abc; sleep 60"]);
+            c
+        };
+        let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let out = stream_stdout_with_timeout(&mut child, 1024 * 1024, Duration::from_secs(5), |_| Err("stop".into()));
+        assert_eq!(out.unwrap_err(), "stop");
+        assert!(child.try_wait().unwrap().is_some(), "child should be killed and reaped");
+    }
+
+    #[test]
+    fn run_capture_stream_real_tshark_yields_frame_batches() {
+        let Some(bin) = find_in_path().or_else(find_common_install) else { return; };
+        let path = Path::new("../public/fixtures/examples/http.pcapng");
+        if !path.exists() {
+            return;
+        }
+        let mut batches: Vec<String> = Vec::new();
+        let result = run_capture_stream(
+            Path::new(&bin),
+            path.to_str().unwrap(),
+            MAX_CAPTURE_JSON,
+            COMMAND_TIMEOUT,
+            |batch| {
+                batches.push(batch.to_string());
+                Ok(())
+            },
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert!(!batches.is_empty(), "expected at least one batch");
+        assert!(batches.join("").contains("frame.number"));
     }
 }

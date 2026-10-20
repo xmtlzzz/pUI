@@ -14,16 +14,19 @@ import type { Packet } from '../model/types'
  *
  * Worker 池(M6 并发化):现网用户会快速连续打开两份抓包、或对比场景同时解析
  * 两份 —— 单只 Worker 的串行 pending 会让第二个请求排队甚至被拒。
- * 池大小 = min(4, os.availableParallelism()):
- * - availableParallelism 优先:某些 worker 沙箱里 os.cpus() 返回空数组
- *   (perfGuard.test.ts 有先例,uv_available_parallelism 不受此影响);
+ * 池大小 = min(4, 运行时并行度):
+ * - Node 环境优先 availableParallelism/cpus;浏览器 WebView 用 hardwareConcurrency;
+ *   前端入口不能 import node:os(Vite 会替换为空对象,池会退化为 1);
  * - 上限 4:解析是低频操作,更多并发只增内存与调度复杂度。
  * 调度:空闲 Worker 优先,无空闲则请求入队 FIFO。
  * 并发正确性:每只 Worker 项持有自己的 pending map,自增 requestId 关联
  * 消息与请求 —— 消息错序/穿插也不会串扰。
  * Worker 崩溃:reject 该 Worker 上所有 in-flight(由调用方的回落路径兜底主线程重解),
- * 池缩容并按需重建;队列中的请求改派其他 Worker。
+ * 池缩容并按需重建;队列中的请求由 drainQueue 重建 Worker 接管。
  * Worker 创建失败(极端环境/CSP)自动回落主线程 —— 解析结果比线程形态重要。
+ *
+ * 路径说明:当前 Tauri 桌面主路径由 bridge 使用 Rust 流式分批 + 主线程逐批解析;
+ * 本 Worker 池服务于浏览器 fixture/非流式回退路径,并保留为后续接入点。
  */
 
 const WORKER_THRESHOLD = 1024 * 1024 // 1MB
@@ -54,21 +57,37 @@ export class ParseQueueFullError extends Error {
   }
 }
 
-/** 池大小:min(4, os.availableParallelism())。vitest worker 沙箱里
- *  os.cpus() 可能返回空数组(perfGuard.test.ts 先例),故 availableParallelism
- *  优先;两者都不可用时保守按 1(行为退化为单 Worker,仍正确)。 */
-export function poolSizeFor(osLike: Pick<typeof import('node:os'), 'availableParallelism' | 'cpus'> = os): number {
+/** 池大小:min(4, 运行时并行度)。优先 Node 的 availableParallelism/cpus(测试与
+ *  Node 环境),其次浏览器 WebView 的 navigator.hardwareConcurrency。
+ *  注意:前端入口不能 import node:os —— Vite 会把它替换成空对象,桌面端池会永远退化为 1。
+ *  两者都不可用时保守按 1(行为退化为单 Worker,仍正确)。 */
+interface ParallelismHost {
+  availableParallelism?: () => number
+  cpus?: () => ArrayLike<unknown>
+  hardwareConcurrency?: number
+}
+
+function runtimeParallelismHost(): ParallelismHost {
+  const nav = typeof navigator !== 'undefined' ? navigator : undefined
+  return { hardwareConcurrency: nav?.hardwareConcurrency }
+}
+
+export function poolSizeFor(host: ParallelismHost = runtimeParallelismHost()): number {
   try {
-    const n = osLike.availableParallelism?.() ?? 0
+    const n = host.availableParallelism?.() ?? 0
     if (n > 0) return Math.min(MAX_POOL, n)
   } catch {
     /* fallthrough */
   }
-  const cpus = osLike.cpus?.() ?? []
-  return Math.min(MAX_POOL, Math.max(1, cpus.length || 1))
+  let cpus = 0
+  try {
+    cpus = host.cpus?.()?.length ?? 0
+  } catch {
+    /* fallthrough */
+  }
+  const browser = host.hardwareConcurrency ?? 0
+  return Math.min(MAX_POOL, Math.max(1, cpus || browser || 1))
 }
-
-import os from 'node:os'
 
 interface WorkerLike {
   onmessage: ((ev: { data: unknown }) => void) | null
@@ -175,16 +194,26 @@ function dispatch(entry: PoolEntry, jsonText: string, requestId: number, p: Pend
   entry.worker.postMessage({ kind: 'parse', jsonText, requestId } satisfies ParseRequestMsg)
 }
 
-/** 把队列中的请求尽量派给空闲 Worker(无空闲则留在队列,FIFO 保证不饿死) */
+/** 把队列中的请求尽量派给空闲 Worker(无空闲则留在队列,FIFO 保证不饿死)。
+ *  池为空(全部崩溃)时必须按需重建,否则排队 Promise 永远没有 Worker 接管。 */
 function drainQueue(): void {
   while (queue.length > 0) {
-    const idleIdx = pickIdle(pool)
-    if (idleIdx < 0) return // 无空闲:留在队列,等任一 onmessage/回调释放
+    let idleIdx = pickIdle(pool)
+    if (idleIdx < 0) {
+      if (pool.length > 0) return // 有 Worker 在忙:等它释放
+      const entry = spawnEntry()
+      if (!entry) {
+        // 无法重建:显式失败,让 parsePacketsAsync 的回落路径接管
+        queue.shift()!.reject(new Error('worker create failed'))
+        continue
+      }
+      pool.push(entry)
+      idleIdx = pool.length - 1
+    }
     const entry = pool[idleIdx]
     const req = queue.shift()!
     req.start(entry)
   }
-  // 队列已空且池为空(全部崩溃):不预建,下次请求按需重建
 }
 
 function parseInWorker(jsonText: string): Promise<Packet[]> {

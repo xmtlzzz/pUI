@@ -8,7 +8,7 @@
 
 ### Core conversation analysis
 
-- **Open captures**: pcap / pcapng / **cap** (the classic suffix exported by tcpdump and network devices) plus gzip-compressed variants, 5views / NetMon / nettl / snoop / CommView / Sniffer / ERF / btsnoop and more — tshark detects formats by content magic, regardless of extension; drag-and-drop or dialog, 5 built-in examples; real interface count, parse time and tshark version in the overview
+- **Open captures**: pcap / pcapng / **cap** (the classic suffix exported by tcpdump and network devices) plus gzip-compressed variants, 5views / NetMon / nettl / snoop / CommView / Sniffer / ERF / btsnoop and more — tshark detects formats by content magic, regardless of extension; drag-and-drop or dialog, 7 built-in examples; real interface count, parse time and tshark version in the overview
 - **Conversation-level filtering**: protocol, src/dst IP, src/dst port, negation, issues-only, per-issue-type refinement (retransmission / out-of-order / dup-ACK / lost segment / zero window / SYN retransmission / slow response / no-close / RST / unanswered request / connection never established / one-way), configurable slow-response threshold
 - **Bidirectional aggregation**: 5-tuple normalization (with `tcp.stream` identity), automatic client/server detection (IPv4 / IPv6 / MAC), robust to mid-stream captures and missing ports
 - **Sequence diagram**: styles A (diagonal) / B (lifeline), relative/absolute timestamps, idle-gap segment navigation for long captures, auto-downsampling beyond 2000 packets, search & time-window highlight
@@ -22,7 +22,7 @@
 - **Event engine**: suspected loss/delay, reordering, suspected ACK-loss/spurious retransmission, zero window, RST, SYN retransmission — each event carries an evidence chain (Observed / Inference / Limitation), deterministic ids, unrecovered-first ordering
 - **Fault/normal comparison page**: sequence-space graphics (seen-bytes bar, gap hatching, SACK blocks, retransmission arrow, ACK cursor resting at its final position), gap-neighborhood/panorama views, pointer-anchored wheel zoom + drag pan, legend-as-layer-toggle, stage band (name / packet range / timing / summary always visible), multi-event switcher (windowed virtualization beyond 60 events), key-packet jump with stage restore, time-window correlation with application-layer events (limited wording: may be related, does not imply causation)
 - **Application analyzers**: HTTP / DNS / TLS / **SSH / RDP / VNC / SMB2** as pluggable analyzers — encrypted protocols are observed only through plaintext handshake/command fields; no reassembly, no decryption
-- **Performance**: Rust-side frame-boundary streaming for large files (frontend parses per batch with live frame-count progress); worker-pooled JSON parsing on the frontend (pool = min(4, CPU cores)); a 5000-retransmission storm (~15k packets) analyzes in <3s
+- **Performance**: Rust-side frame-boundary streaming for large files (frontend parses per batch with live frame-count progress); worker-pooled JSON parsing on the browser-fixture/non-streaming fallback path (pool = min(4, runtime parallelism)); a 5000-retransmission storm (~15k packets) analyzes in <3s
 
 ### Dual-probe comparison
 
@@ -46,12 +46,12 @@
 | Frontend | React 19 · TypeScript (strict) · Vite 7 · Zustand 5 |
 | Parsing engine | tshark (Wireshark CLI; tested against 4.6+) |
 | Extras | Boot-screen emotion-ball (official engine vendored verbatim, see NOTICE) · `docx` lazy-loaded |
-| Tests | Vitest 4 (593 cases) · Rust `cargo test` (25 cases incl. real-tshark e2e) |
+| Tests | Vitest 4 (875 cases) · Rust `cargo test` (29 cases incl. real-tshark e2e) |
 
 ## 📦 Prerequisites
 
 - **tshark** (Wireshark CLI) — resolved in order: user-set path → bundled resource → `PATH` → common install locations. Install Wireshark or point the app at tshark in settings.
-- **Rust** (cargo) and **Node.js** (≥ 18), plus the platform's WebView2.
+- **Rust** (cargo) and **Node.js** (≥ 20.19), plus the platform's WebView2.
 
 ## 🚀 Build & run
 
@@ -61,8 +61,8 @@ npm install
 npm run tauri dev      # development (HMR)
 npm run tauri build    # production bundle (msi / nsis)
 
-npm test               # frontend tests (currently 593 cases)
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust tests (currently 25 cases)
+npm test               # frontend tests (currently 875 cases)
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust tests (currently 29 cases)
 npx vitest run src/analysis/tcp/perfGuard.test.ts # performance guard (e2e skipped without tshark)
 ```
 

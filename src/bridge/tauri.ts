@@ -57,11 +57,13 @@ async function receiveStreamedCapture(
   let parseError: Error | null = null
   const channel = new Channel<CaptureChunkMsg>()
   channel.onmessage = (msg) => {
-    try {
-      parsePacketsBatch(state, msg.text, packets)
-    } catch (e) {
-      // 首个错误生效;后续块跳过解析但继续消费(保持消息序,防状态错乱)
-      parseError = parseError ?? (e instanceof Error ? e : new Error(String(e)))
+    // 首个错误生效;后续块跳过解析但继续消费(保持消息序,防状态错乱)
+    if (!parseError) {
+      try {
+        parsePacketsBatch(state, msg.text, packets)
+      } catch (e) {
+        parseError = e instanceof Error ? e : new Error(String(e))
+      }
     }
     onProgress?.(state.count)
   }
@@ -70,8 +72,9 @@ async function receiveStreamedCapture(
   if (out.frames > 0 && packets.length === 0) {
     throw new Error(`分块解析未产出任何报文(Rust 报告 ${out.frames} 帧):批格式契约不匹配`)
   }
-  if (packets.length > 0 && out.frames > 0 && Math.abs(packets.length - out.frames) > out.frames * 0.5 + 8) {
-    // 帧数严重偏差(>50%+8)视为传输/解析损坏;小偏差容忍(畸形帧被跳过)
+  if (packets.length !== out.frames) {
+    // Rust 按帧边界计数、前端按批解析;正常情况必须逐帧一致。
+    // 不再容忍 50% 偏差:证据工具宁可显式报错,也不能静默接受截断数据。
     throw new Error(`分块解析帧数不符(前端 ${packets.length} / Rust ${out.frames}):数据可能不完整`)
   }
   return { packets, out }

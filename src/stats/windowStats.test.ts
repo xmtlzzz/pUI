@@ -39,6 +39,15 @@ describe('computeWindowStats — 接收窗口变化', () => {
     expect(stats.changes).toBe(3) // 65535→8760、8760→17520、17520→65535;重复通告(8760)不计
   })
 
+  it('乱序输入按时间/帧号排序统计:changes 与时间线一致,不随输入顺序漂移', () => {
+    const packets = [Sw(3, 2), Sw(1, 1), Sw(2, 2)]
+    const stats = computeWindowStats(packets)
+    const timeline = windowTimeline(packets)
+    expect(stats.changes).toBe(1) // 时间序 1→2→2:只发生一次变化
+    expect(timeline.map((s) => s.windowBytes)).toEqual([1, 2])
+    expect(stats.changes).toBe(timeline.length - 1)
+  })
+
   it('窗口归零事件次数单列(零窗口语义由 m5Events 权威判定,这里只计数)', () => {
     const packets = [
       C({ number: 1, time: 0, tcpFlags: '0x0018', tcpLen: 100 }),

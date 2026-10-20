@@ -172,6 +172,12 @@ describe('parsePacketsAsync — Worker 池(M6 并发解析)', () => {
 
   afterEach(() => resetParseWorkerForTest())
 
+  it('poolSizeFor 不依赖 Node os:浏览器 hardwareConcurrency 生效', () => {
+    expect(poolSizeFor({ hardwareConcurrency: 8 })).toBe(4)
+    expect(poolSizeFor({ hardwareConcurrency: 2 })).toBe(2)
+    expect(poolSizeFor({ hardwareConcurrency: 0 })).toBe(1)
+  })
+
   it('并发 3 个请求:各自结果正确、互不串扰(红测试:requestId 关联)', async () => {
     stubWorkerClass()
     // 回应脚本:echo 回所收到的 jsonText 的解析结果 + 原样 requestId
@@ -352,6 +358,28 @@ describe('parsePacketsAsync — Worker 池(M6 并发解析)', () => {
     cancelParse() // 已完成之后取消:无挂起项,静默
     expect(r[0].srcIp).toBe('10.9.10.1')
   }, 30_000)
+
+  it('Worker 全部崩溃:队列请求重建 Worker 后完成,不永久挂起', async () => {
+    vi.stubGlobal('navigator', { hardwareConcurrency: 1 })
+    stubWorkerClass()
+    const texts = [
+      makeBigText('10.9.8.1', '81'),
+      makeBigText('10.9.8.2', '82'),
+      makeBigText('10.9.8.3', '83'),
+    ]
+    const ps = texts.map((t) => parsePacketsAsync(t))
+    await Promise.resolve()
+    const first = FakeWorker.instances[0]
+    expect(first).toBeDefined()
+    // 1 只在途 + 2 个排队;崩溃后 drainQueue 必须重建 Worker 接管队列
+    first.onerror?.(new Error('all workers crashed'))
+    const rebuilt = FakeWorker.instances[FakeWorker.instances.length - 1]
+    expect(rebuilt).toBeDefined()
+    expect(rebuilt).not.toBe(first)
+    rebuilt.responder = (req) => setTimeout(() => rebuilt.replyOk(req.jsonText ?? '', req.requestId ?? -1), 0)
+    const results = await Promise.all(ps)
+    expect(results.map((r) => r[0].srcIp)).toEqual(['10.9.8.1', '10.9.8.2', '10.9.8.3'])
+  }, 15_000)
 })
 
 describe('parsePacketsBatch — M5 流式分批解析(Rust 帧边界批)', () => {

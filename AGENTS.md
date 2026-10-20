@@ -11,7 +11,7 @@ Tauri + React 抓包分析工具:把 PCAP 中分散的报文还原为可验证�
 ## 测试与验证命令
 
 ```bash
-npx vitest run                                   # 前端全量(基线 ~774 用例;无 tshark 时 e2e 自动 skip)
+npx vitest run                                   # 前端全量(基线 ~875 用例;无 tshark 时 e2e 自动 skip)
 npx vitest run src/stats/                        # 只跑统计层(纯函数,多数改动先跑这里)
 npx vitest run src/app/SummaryPanel.test.tsx     # 摘要面板组件(jsdom)
 npm run build                                    # tsc strict + vite 构建

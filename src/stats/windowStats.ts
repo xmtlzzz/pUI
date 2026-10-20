@@ -26,12 +26,14 @@ export interface WindowStats {
 }
 
 export function computeWindowStats(packets: Packet[]): WindowStats {
+  // 与 windowTimeline 使用同一时间序:输入乱序时 changes 不能随调用顺序漂移。
+  const ordered = [...packets].sort((a, b) => a.time - b.time || a.number - b.number)
   const samples: number[] = []
   let zeroCount = 0
   let changes = 0
   let prev: number | null = null
   let inZero = false
-  for (const p of packets) {
+  for (const p of ordered) {
     const w = p.tcpWindow
     if (w === undefined) continue // 字段缺失 ≠ 0
     samples.push(w)

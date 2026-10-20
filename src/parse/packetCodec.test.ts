@@ -113,4 +113,15 @@ describe('packetColumns / columnsToPackets(Worker 传输瘦身,PacketLens 借鉴
     const through = JSON.parse(JSON.stringify(packetColumns(packets)))
     expect(columnsToPackets(through)).toEqual(packets)
   })
+
+  it('5000 包列式往返保持线性量级(防止 concat/前缀和 O(n²) 回归)', () => {
+    const packets = Array.from({ length: 5000 }, (_, i) => fullPacket(i + 1))
+    const started = performance.now()
+    const columns = packetColumns(packets)
+    const restored = columnsToPackets(columns)
+    const elapsed = performance.now() - started
+    expect(restored).toHaveLength(5000)
+    // 修复前 5000 包约 3.8s;修复后本机约几十毫秒。阈值留足 CI 抖动余量。
+    expect(elapsed).toBeLessThan(1500)
+  }, 30_000)
 })

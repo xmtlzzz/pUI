@@ -17,6 +17,8 @@ src-tauri/target/
 prototype/
 
 # misc
+.birdview/*.html
+.claude/
 *.log
 .DS_Store
 Thumbs.db

@@ -1,0 +1,657 @@
+{
+  "schemaVersion": 1,
+  "language": "zh",
+  "mapId": "pui-overview",
+  "revision": 1,
+  "project": {
+    "id": "pui",
+    "name": "pUI 抓包分析工具",
+    "revision": "eedc782070f8e689763b16153a8c6ead21978605"
+  },
+  "groups": [
+    {
+      "id": "frontend-experience",
+      "name": "前端体验层",
+      "role": "interaction",
+      "members": [
+        "app-shell",
+        "visualization",
+        "stats-insights",
+        "export-report"
+      ],
+      "evidence": [
+        {
+          "path": "src/app/App.tsx",
+          "note": "应用入口与主布局"
+        },
+        {
+          "path": "README.md",
+          "note": "产品功能说明"
+        }
+      ]
+    },
+    {
+      "id": "analysis-core",
+      "name": "分析核心",
+      "role": "runtime",
+      "members": [
+        "capture-parse",
+        "tcp-analysis",
+        "app-analysis"
+      ],
+      "evidence": [
+        {
+          "path": "src/parse/parsePackets.ts",
+          "note": "tshark JSON 投影入口"
+        },
+        {
+          "path": "src/analysis/tcp/streamAnalysis.ts",
+          "note": "TCP 序列空间引擎"
+        }
+      ]
+    },
+    {
+      "id": "desktop-platform",
+      "name": "桌面平台与工具",
+      "role": "runtime",
+      "members": [
+        "tauri-backend",
+        "fixture-tooling"
+      ],
+      "evidence": [
+        {
+          "path": "src-tauri/src/lib.rs",
+          "note": "Tauri 命令注册"
+        },
+        {
+          "path": "scripts/gen-parsed.mjs",
+          "note": "fixture 再生成脚本"
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "id": "app-shell",
+      "name": "应用外壳与交互状态",
+      "kind": "local",
+      "role": "frontend",
+      "responsibility": "承载 React 布局、筛选/列表/详情/多视角交互,以及导航性 UI 状态;不保存分析派生数据。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/app"
+        },
+        {
+          "kind": "directory",
+          "path": "src/state"
+        },
+        {
+          "kind": "directory",
+          "path": "src/boot"
+        },
+        {
+          "kind": "file",
+          "path": "src/main.tsx"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/app/App.tsx",
+          "note": "应用组件入口"
+        },
+        {
+          "path": "src/state/appStore.ts",
+          "note": "Zustand 应用状态与加载流程"
+        },
+        {
+          "path": "src/app/AppLayout.tsx",
+          "note": "主布局与拖拽打开"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 0,
+        "column": 0
+      }
+    },
+    {
+      "id": "capture-parse",
+      "name": "抓包解析与桥接",
+      "kind": "local",
+      "role": "frontend",
+      "responsibility": "把 tshark JSON 解析为 Packet,负责 Worker/分批调度、Tauri 与浏览器回退桥接、字段契约与列式编解码。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/parse"
+        },
+        {
+          "kind": "directory",
+          "path": "src/bridge"
+        },
+        {
+          "kind": "directory",
+          "path": "src/model"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/parse/parsePackets.ts",
+          "note": "平铺键/协议树字段投影"
+        },
+        {
+          "path": "src/parse/parseAsync.ts",
+          "note": "Worker 池与分批解析调度"
+        },
+        {
+          "path": "src/bridge/tauri.ts",
+          "note": "Tauri IPC 与 fixture 回退"
+        },
+        {
+          "path": "src/parse/packetCodec.ts",
+          "note": "列式传输编解码"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 1,
+        "column": 0
+      }
+    },
+    {
+      "id": "tcp-analysis",
+      "name": "TCP 序列与故障分析",
+      "kind": "local",
+      "role": "backend",
+      "responsibility": "从 Packet 构建会话、TCP 序列空间、Gap/事件/阶段,并输出可导出的证据链;所有分析为纯函数。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/analysis/tcp"
+        },
+        {
+          "kind": "directory",
+          "path": "src/aggregate"
+        },
+        {
+          "kind": "directory",
+          "path": "src/filter"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/analysis/tcp/streamAnalysis.ts",
+          "note": "序列空间与 Gap 生命周期"
+        },
+        {
+          "path": "src/analysis/tcp/events.ts",
+          "note": "M3 事件引擎"
+        },
+        {
+          "path": "src/aggregate/aggregateConversations.ts",
+          "note": "双向会话聚合与异常标注"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 1,
+        "column": 1
+      }
+    },
+    {
+      "id": "app-analysis",
+      "name": "应用层协议分析器",
+      "kind": "local",
+      "role": "backend",
+      "responsibility": "以插件方式分析 HTTP/DNS/TLS/SSH/RDP/VNC/SMB2 等已解析字段,只观察明文边界,不重组或解密。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/analysis/app"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/analysis/app/analyzers.ts",
+          "note": "应用层分析器注册与事件模型"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 1,
+        "column": 2
+      }
+    },
+    {
+      "id": "visualization",
+      "name": "时序与序列空间视图",
+      "kind": "local",
+      "role": "frontend",
+      "responsibility": "把会话/事件/阶段投影为时序图、序列空间图与对照页视图模型,提供导航和可访问的静态信息。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/render"
+        },
+        {
+          "kind": "directory",
+          "path": "src/m4"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/render/SequenceDiagram.tsx",
+          "note": "斜线/行式时序图"
+        },
+        {
+          "path": "src/render/SeqSpaceTimeline.tsx",
+          "note": "序号空间视图"
+        },
+        {
+          "path": "src/m4/viewModel.ts",
+          "note": "故障对照页视图模型"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 0,
+        "column": 1
+      }
+    },
+    {
+      "id": "stats-insights",
+      "name": "统计与摘要",
+      "kind": "local",
+      "role": "frontend",
+      "responsibility": "提供摘要、RTT/窗口/吞吐/主机/拓扑/健康分等确定性统计,并标注样本不足与观察限制。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/stats"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/stats/summaryStats.ts",
+          "note": "摘要统计"
+        },
+        {
+          "path": "src/stats/healthScore.ts",
+          "note": "透明健康分公式"
+        },
+        {
+          "path": "src/stats/hostStats.ts",
+          "note": "主机视角聚合"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 0,
+        "column": 2
+      }
+    },
+    {
+      "id": "export-report",
+      "name": "报告与证据导出",
+      "kind": "local",
+      "role": "frontend",
+      "responsibility": "把同一报告模型导出为 Markdown/Word/PDF/HTML/JSON,保证确定性、转义与证据口径一致。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src/export"
+        },
+        {
+          "kind": "directory",
+          "path": "src/compare"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src/export/report/reportModel.ts",
+          "note": "会话报告模型"
+        },
+        {
+          "path": "src/export/evidenceReport.ts",
+          "note": "版本化 JSON 证据"
+        },
+        {
+          "path": "src/compare/report.ts",
+          "note": "双点对照报告"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 0,
+        "column": 3
+      }
+    },
+    {
+      "id": "tauri-backend",
+      "name": "Tauri 命令与 tshark 进程",
+      "kind": "local",
+      "role": "backend",
+      "responsibility": "提供打开抓包、流式分批、hex 获取与文件导出命令;管理 tshark 进程、超时、输出上限和临时文件生命周期。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "src-tauri/src"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "src-tauri/src/commands.rs",
+          "note": "Tauri 命令与路径校验"
+        },
+        {
+          "path": "src-tauri/src/tshark.rs",
+          "note": "tshark 子进程与流式读取"
+        },
+        {
+          "path": "src-tauri/src/lib.rs",
+          "note": "命令注册与单实例"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 2,
+        "column": 0
+      }
+    },
+    {
+      "id": "fixture-tooling",
+      "name": "Fixture 与字段契约工具",
+      "kind": "local",
+      "role": "generic",
+      "roleAssessment": {
+        "basis": "out-of-taxonomy",
+        "note": "这是构建/测试数据工具,不承担产品运行时职责,现有 frontend/backend/cache/database/queue/security 角色均不贴切。"
+      },
+      "responsibility": "生成合成 pcapng 与 parsed fixture,并从字段契约提取 tshark 字段清单,支撑契约一致性测试。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "scripts"
+        },
+        {
+          "kind": "directory",
+          "path": "public/fixtures"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "scripts/gen-fixtures.mjs",
+          "note": "合成抓包生成"
+        },
+        {
+          "path": "scripts/gen-parsed.mjs",
+          "note": "用 tshark 再生成 parsed fixture"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 2,
+        "column": 1
+      }
+    },
+    {
+      "id": "tshark-cli",
+      "name": "tshark 命令行",
+      "kind": "external",
+      "role": "generic",
+      "roleAssessment": {
+        "basis": "out-of-taxonomy",
+        "note": "外部解析引擎,不属于本仓库的前端/后端/存储角色分类;仅通过子进程契约连接。"
+      },
+      "responsibility": "Wireshark 的命令行解析器,按内容魔数读取抓包并输出 JSON/hex。",
+      "ownership": [],
+      "evidence": [],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 2,
+        "column": 2
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "shell-open-capture",
+      "from": "app-shell",
+      "to": "capture-parse",
+      "label": "请求打开抓包/示例",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/state/appStore.ts",
+          "note": "openFile/openExample 调用 bridge"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "parse-invoke-tauri",
+      "from": "capture-parse",
+      "to": "tauri-backend",
+      "label": "invoke open_capture/fetch_hex",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/bridge/tauri.ts",
+          "note": "Tauri 分支调用 invoke"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "tauri-stream-parse",
+      "from": "tauri-backend",
+      "to": "capture-parse",
+      "label": "流式批次/hex 回传",
+      "kind": "result",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/bridge/tauri.ts",
+          "note": "Channel.onmessage 逐批解析"
+        },
+        {
+          "path": "src-tauri/src/tshark.rs",
+          "note": "run_capture_stream/run_hex_streaming"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "tauri-spawn-tshark",
+      "from": "tauri-backend",
+      "to": "tshark-cli",
+      "label": "spawn -T json / -x",
+      "kind": "dependency",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src-tauri/src/tshark.rs",
+          "note": "Command::new(bin) 与参数拼装"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "parse-to-tcp",
+      "from": "capture-parse",
+      "to": "tcp-analysis",
+      "label": "Packet[] 输入",
+      "kind": "result",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/state/appStore.ts",
+          "note": "aggregateConversations(packets)"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "parse-to-app-analysis",
+      "from": "capture-parse",
+      "to": "app-analysis",
+      "label": "Packet[] 输入",
+      "kind": "result",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/app/SummaryPanel.tsx",
+          "note": "应用层分析器消费已解析字段"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "tcp-to-visualization",
+      "from": "tcp-analysis",
+      "to": "visualization",
+      "label": "事件/阶段/序列事实",
+      "kind": "result",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/m4/viewModel.ts",
+          "note": "从事件证据链构建对照视图"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "tcp-to-stats",
+      "from": "tcp-analysis",
+      "to": "stats-insights",
+      "label": "会话/事件统计输入",
+      "kind": "result",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/stats/summaryStats.ts",
+          "note": "消费 Conversation/Issue"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "tcp-to-export",
+      "from": "tcp-analysis",
+      "to": "export-report",
+      "label": "证据链与关键报文",
+      "kind": "result",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/export/evidenceReport.ts",
+          "note": "事件证据导出"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "shell-to-visualization",
+      "from": "app-shell",
+      "to": "visualization",
+      "label": "选中会话/切换视图",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/app/AppLayout.tsx",
+          "note": "根据 store 选中渲染视图"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "shell-to-stats",
+      "from": "app-shell",
+      "to": "stats-insights",
+      "label": "摘要/主机/拓扑请求",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/app/SummaryPanel.tsx",
+          "note": "摘要面板"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "shell-to-export",
+      "from": "app-shell",
+      "to": "export-report",
+      "label": "导出报告请求",
+      "kind": "request",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "src/app/Toolbar.tsx",
+          "note": "导出格式选择与调用"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "visualization-to-export",
+      "from": "visualization",
+      "to": "export-report",
+      "label": "对照页证据视图模型",
+      "kind": "result",
+      "visibility": "detail",
+      "evidence": [
+        {
+          "path": "src/app/FaultCompare.tsx",
+          "note": "导出按钮使用对照页数据"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "fixture-to-parse",
+      "from": "fixture-tooling",
+      "to": "capture-parse",
+      "label": "字段契约与 parsed fixture",
+      "kind": "dependency",
+      "visibility": "detail",
+      "evidence": [
+        {
+          "path": "scripts/gen-parsed.mjs",
+          "note": "生成 parsed fixture 供解析测试"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    }
+  ]
+}

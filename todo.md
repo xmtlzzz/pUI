@@ -1,6 +1,6 @@
 # pUI 项目状态 TODO
 
-> 更新:2026-08-31(第 11 次,可选项清零 + 格式扩展) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
+> 更新:2026-10-20(第 12 次,审查修复:Worker 池/列式编解码性能、Rust 流式看门狗、帧数完整性、文档基线) · 依据 `docs/specs/2026-08-25-pUI-报文分析能力升级计划.md`(M0-M7 路线)
 > 产品目标:把 PCAP 中分散的报文,还原为可验证的网络故障事件和证据链 —— 观察与推断分离,不过度归因。
 
 ---
@@ -9,8 +9,8 @@
 
 | 项 | 值 |
 |---|---|
-| 前端测试 | 593 用例全绿(`npx vitest run`,70 文件) |
-| Rust 测试 | 25 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`,含真实 tshark e2e) |
+| 前端测试 | 875 用例全绿(`npx vitest run`,86 文件) |
+| Rust 测试 | 29 用例全绿(`cargo test --manifest-path src-tauri/Cargo.toml`,含真实 tshark e2e) |
 | 示例抓包 | http/dns/mixed/lossy/**remote**(remote=SSH/VNC/RDP/SMB2 四协议演示,gen-fixtures 可复现) |
 | 打开格式 | pcap/pcapng/cap/dmp/gz(透明解压)/5views/NetMon/nettl/snoop/CommView/Sniffer/ERF/btsnoop 等(tshark 按内容魔数识别,实测锚点 e2eFlat) |
 | 构建 | `npm run build` 通过(主 chunk gzip ≈117KB;docx 为懒加载 chunk ≈119KB gzip,仅导出 Word 时加载) |
@@ -69,7 +69,7 @@ M5 剩余(按优先级):
 - [x] RTT 分位数/variation、窗口变化、Capture Quality(截断统计;丢包统计受单观察点限制不做断言)
 - [x] 完整 Sequence Space View(缩放/筛选):全景视图(panorama,回绕流降级隐藏)+ clipSeqSpaceView/zoomStep 纯函数缩放;控件 +/−/重置、滚轮以指针为锚缩放、拖拽平移;图例升级为图层开关(已见/未收到/SACK/重传)
 - [x] Health Score(透明版本化公式+扣分明细,仅筛选用,覆盖不足显示 unavailable)
-- [x] 性能:Worker 化解析中段完成 —— Worker 回传列式瘦身(packetCodec:Packet[]↔列数组,结构化克隆对象数从包数降为字段数,PacketLens 借鉴;公共 API 零变化)。tshark 分批/流式此前已完成(run_capture_stream);10 万包量级端到端打磨与事件虚拟化仍待做
+- [x] 性能:Worker 化解析中段完成 —— Worker 回传列式瘦身(packetCodec:Packet[]↔列数组,结构化克隆对象数从包数降为字段数,PacketLens 借鉴;公共 API 零变化)。tshark 分批/流式此前已完成(run_capture_stream);桌面主路径走 Rust 流式 + 主线程逐批解析,Worker 池用于浏览器 fixture/非流式回退;10 万包量级端到端打磨与事件虚拟化仍待做
 
 **M6 业务体验关联(全部完成)**:
 - [x] `ApplicationAnalyzer` 插件接口;第一批 HTTP/DNS/TLS(复用现有字段,不声明解密);摘要面板应用层事件区+慢响应下钻
@@ -87,9 +87,10 @@ M5 剩余(按优先级):
 - [x] **bundle 体积**:gsap 已随播放功能移除删除(主 chunk ~127KB→~117KB gzip);新增 docx 为动态 import 懒加载 chunk,仅导出 Word 时加载,不进首屏
 - [x] **FaultCompare 单文件偏大**:已拆出 SeqSpaceGraphic/StageBand/EventCard 子组件(919 行,编排聚焦)
 - [x] **CI 缺位**:GitHub Actions(win: vitest+build+cargo test)+ .githooks/pre-push(同源门槛,已启用 core.hooksPath)
-- [x] **解析主线程**:`parseAsync` 调度层已落地(<1MB 主线程直解,≥1MB 走 parseWorker,失败自动回落);Rust 侧 tshark 分批/流式仍在第二批
+- [x] **解析主线程**:`parseAsync` 调度层已落地(<1MB 主线程直解,≥1MB 走 parseWorker,失败自动回落);Rust 侧 tshark 分批/流式已完成,桌面主路径走流式批解析
 - [ ] seqSpace 的 `ackTrack` 每次 build 全量扫描 packets(单会话 O(n),VDI 规模无感;Worker 化后自然消解)
 - [ ] 报文详情「查看事件上下文」点击时同步运行 analyzeStream+detectTcpEvents(有 perfGuard 护栏;若 VDI 会话点击感到顿挫,可在后台异步后跳转)
+- [ ] Tauri 流式解析取消:切换文件时旧 `open_capture` 会继续跑到 tshark 结束(loadSeq 丢弃结果但未中止子进程);后续可加 `cancel_capture` 令牌
 
 ## 六、验证命令
 

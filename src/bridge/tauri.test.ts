@@ -62,6 +62,19 @@ describe('bridge 命令路由(流式打开,Tauri 分支)', () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
   })
 
+  const frameJson = (n: number): string =>
+    JSON.stringify({
+      _source: {
+        layers: {
+          'frame.number': String(n),
+          'frame.time_relative': String((n - 1) / 10),
+          'frame.len': '60',
+          'frame.protocols': 'eth:ethertype:ip:tcp',
+        },
+      },
+    })
+  const streamText = `[${frameJson(1)},${frameJson(2)}]`
+
   it('openCapture → open_capture,携带 path 与 onChunk', async () => {
     const { openCapture } = await import('./tauri')
     invokeMock.mockResolvedValue({ size: 100, path: 'C:/x.pcap', frames: 0 })
@@ -91,6 +104,27 @@ describe('bridge 命令路由(流式打开,Tauri 分支)', () => {
     expect(typeof args.base64Data).toBe('string')
     expect(args.onChunk).toBeTruthy()
     vi.unstubAllGlobals()
+  })
+
+  it('流式帧数完全一致:正常返回解析结果', async () => {
+    const { openCapture } = await import('./tauri')
+    invokeMock.mockImplementation(async (_cmd, args) => {
+      const channel = (args as { onChunk: { onmessage: (msg: unknown) => void } }).onChunk
+      channel.onmessage({ seq: 0, text: streamText, done: false })
+      return { size: 100, path: 'C:/x.pcap', frames: 2 }
+    })
+    const out = await openCapture('C:/x.pcap')
+    expect(out.packets).toHaveLength(2)
+  })
+
+  it('流式帧数不一致:即使只差 1 帧也拒绝,不静默接受截断', async () => {
+    const { openCapture } = await import('./tauri')
+    invokeMock.mockImplementation(async (_cmd, args) => {
+      const channel = (args as { onChunk: { onmessage: (msg: unknown) => void } }).onChunk
+      channel.onmessage({ seq: 0, text: streamText, done: false })
+      return { size: 100, path: 'C:/x.pcap', frames: 3 }
+    })
+    await expect(openCapture('C:/x.pcap')).rejects.toThrow(/帧数不符/)
   })
 
   it('setTsharkPath → set_tshark_path,携带路径(tshark 设置入口接线)', async () => {

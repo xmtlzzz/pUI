@@ -1,6 +1,8 @@
 # dependencies / build
 node_modules/
 dist/
+dist-site/
+.wrangler/
 target/
 src-tauri/target/
 

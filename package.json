@@ -8,6 +8,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "dev:site": "vite --config vite.site.config.ts",
+    "build:site": "tsc && vite build --config vite.site.config.ts",
+    "preview:site": "vite preview --config vite.site.config.ts",
+    "deploy:site": "npm run build:site && npx wrangler@4.125.0 deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri"

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.125.0/config-schema.json",
+  "name": "pui-home",
+  "compatibility_date": "2026-10-27",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist-site",
+    "not_found_handling": "404-page"
+  }
+}

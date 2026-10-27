@@ -4,6 +4,10 @@
 
 [English](README.en.md) · 简体中文
 
+[产品首页与交互示例](https://pui-home.xmtlzloveasuka.workers.dev) · [下载桌面版](https://github.com/xmtlzzz/pUI/releases/latest)
+
+官网位于 `site/`，使用现有解析器运行内置合成抓包示例，不接收用户抓包。`npm run dev:site` 启动本地预览，`npm run build:site` 输出独立的 `dist-site/`，`npm run deploy:site` 发布到 Cloudflare Workers。桌面构建继续使用原来的 `npm run build`。部署方式及验证边界见 [Cloudflare 部署说明](docs/deployment/cloudflare.md)。
+
 ## ✨ 特性
 
 ### 会话分析主线

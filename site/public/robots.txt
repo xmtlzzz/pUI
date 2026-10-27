@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://pui-home.xmtlzloveasuka.workers.dev/sitemap.xml

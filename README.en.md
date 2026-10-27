@@ -4,6 +4,10 @@
 
 简体中文 · [English](README.en.md)
 
+[Product website and interactive examples](https://pui-home.xmtlzloveasuka.workers.dev) · [Download desktop app](https://github.com/xmtlzzz/pUI/releases/latest)
+
+The standalone website lives in `site/`. It runs built-in synthetic captures through the existing parser and does not accept user captures. Use `npm run dev:site` for preview, `npm run build:site` for the separate `dist-site/` output, and `npm run deploy:site` to deploy to Cloudflare Workers. The desktop app keeps its existing build entry. See the [deployment notes](docs/deployment/cloudflare.md).
+
 ## ✨ Features
 
 ### Core conversation analysis

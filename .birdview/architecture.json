@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "language": "zh",
   "mapId": "pui-overview",
-  "revision": 1,
+  "revision": 4,
   "project": {
     "id": "pui",
     "name": "pUI 抓包分析工具",
-    "revision": "eedc782070f8e689763b16153a8c6ead21978605"
+    "revision": "8fed3ea4a7168ac86e727967c2ab0a2d34b6106e"
   },
   "groups": [
     {
@@ -422,6 +422,112 @@
         "row": 2,
         "column": 2
       }
+    },
+    {
+      "id": "product-website",
+      "name": "产品首页与交互示例",
+      "kind": "local",
+      "role": "frontend",
+      "responsibility": "独立静态首页，介绍已实现功能，以内置合成抓包展示真实解析与报文时序，提供下载和源码入口。",
+      "ownership": [
+        {
+          "kind": "directory",
+          "path": "site"
+        },
+        {
+          "kind": "file",
+          "path": "vite.site.config.ts"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "site/index.html",
+          "note": "独立产品首页、交互预览入口与能力说明"
+        },
+        {
+          "path": "site/demo.ts",
+          "note": "复用产品解析器和会话聚合，缺失字段保真"
+        },
+        {
+          "path": "site/main.test.ts",
+          "note": "真实合成抓包与点选行为契约"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 3,
+        "column": 0
+      }
+    },
+    {
+      "id": "website-delivery",
+      "name": "网站构建与 Cloudflare 发布",
+      "kind": "local",
+      "role": "generic",
+      "roleAssessment": {
+        "basis": "out-of-taxonomy",
+        "note": "网站构建与交付配置不承担产品运行时分析职责。"
+      },
+      "responsibility": "隔离桌面和官网构建产物，声明 Cloudflare 静态部署并在 CI 检查首页构建。",
+      "ownership": [
+        {
+          "kind": "file",
+          "path": "package.json"
+        },
+        {
+          "kind": "file",
+          "path": ".github/workflows/ci.yml"
+        },
+        {
+          "kind": "file",
+          "path": ".gitignore"
+        },
+        {
+          "kind": "file",
+          "path": "wrangler.jsonc"
+        },
+        {
+          "kind": "file",
+          "path": "README.md"
+        },
+        {
+          "kind": "file",
+          "path": "README.en.md"
+        },
+        {
+          "kind": "directory",
+          "path": "docs/deployment"
+        },
+        {
+          "kind": "file",
+          "path": "vitest.config.ts"
+        },
+        {
+          "kind": "file",
+          "path": "tsconfig.json"
+        }
+      ],
+      "evidence": [
+        {
+          "path": "vite.site.config.ts",
+          "note": "独立官网构建输出"
+        },
+        {
+          "path": "wrangler.jsonc",
+          "note": "Cloudflare Workers Static Assets 配置"
+        },
+        {
+          "path": "docs/deployment/verification-2026-10-27.md",
+          "note": "真实部署、HTTPS 比对和浏览器验收证据"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": [],
+      "layout": {
+        "row": 3,
+        "column": 1
+      }
     }
   ],
   "relationships": [
@@ -648,6 +754,38 @@
         {
           "path": "scripts/gen-parsed.mjs",
           "note": "生成 parsed fixture 供解析测试"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "website-parse-demo",
+      "from": "product-website",
+      "to": "capture-parse",
+      "label": "复用解析器读取合成示例",
+      "kind": "dependency",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "site/demo.ts",
+          "note": "官网通过现有解析器和聚合器消费内置合成示例"
+        }
+      ],
+      "status": "supported",
+      "openQuestions": []
+    },
+    {
+      "id": "website-delivery-build",
+      "from": "website-delivery",
+      "to": "product-website",
+      "label": "构建并发布独立静态资源",
+      "kind": "control",
+      "visibility": "overview",
+      "evidence": [
+        {
+          "path": "package.json",
+          "note": "build:site / deploy:site 为独立网站构建和发布命令"
         }
       ],
       "status": "supported",
